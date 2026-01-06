@@ -26,7 +26,26 @@
 
     <div class="container">
         <div class="card">
-            <div class="card-header">📁 数据集列表</div>
+            <div class="card-header card-header-flex">
+                <span>📁 数据集列表</span>
+                <div class="card-actions">
+                    <button class="btn btn-ghost btn-xs" id="refresh-datasets">刷新列表</button>
+                </div>
+            </div>
+            <div id="dataset-summary" class="grid grid-3 dataset-summary" style="display: none;">
+                <div class="stat-card stat-card-neutral">
+                    <div class="stat-value" id="summary-total-datasets">0</div>
+                    <div class="stat-label">数据集数量</div>
+                </div>
+                <div class="stat-card stat-card-neutral">
+                    <div class="stat-value" id="summary-total-images">0</div>
+                    <div class="stat-label">图片总数</div>
+                </div>
+                <div class="stat-card stat-card-neutral">
+                    <div class="stat-value" id="summary-total-classes">0</div>
+                    <div class="stat-label">类别总数</div>
+                </div>
+            </div>
             <div id="datasets-list">
                 <p>加载中...</p>
             </div>
@@ -35,43 +54,129 @@
 
     <script src="/static/js/api.js"></script>
     <script>
-        async function loadDatasets() {
-            try {
-                const data = await API.listDatasets();
-                const datasetsList = document.getElementById('datasets-list');
-                
-                if (data.datasets && data.datasets.length > 0) {
-                    datasetsList.innerHTML = `
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>名称</th>
-                                    <th>图片数量</th>
-                                    <th>类别数量</th>
-                                    <th>类别</th>
-                                    <th>创建时间</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${data.datasets.map(ds => `
-                                    <tr>
-                                        <td>${ds.name}</td>
-                                        <td>${ds.num_images}</td>
-                                        <td>${ds.num_classes}</td>
-                                        <td>${ds.classes.join(', ')}</td>
-                                        <td>${formatDate(ds.created_at)}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    `;
-                } else {
-                    datasetsList.innerHTML = '<p style="color: var(--secondary-color);">暂无数据集</p>';
-                }
-            } catch (error) {
-                console.error('Failed to load datasets:', error);
+        const datasetsListEl = document.getElementById('datasets-list');
+        const datasetSummaryEl = document.getElementById('dataset-summary');
+        const refreshBtn = document.getElementById('refresh-datasets');
+        const summaryDatasetsEl = document.getElementById('summary-total-datasets');
+        const summaryImagesEl = document.getElementById('summary-total-images');
+        const summaryClassesEl = document.getElementById('summary-total-classes');
+
+        function renderSplit(split = {}) {
+            const entries = Object.entries(split || {});
+            if (entries.length === 0) {
+                return '<span class="empty-text">未统计</span>';
+            }
+            return entries.map(([key, value]) => `<span class="split-item">${key}: ${value}</span>`).join('<br>');
+        }
+
+        function renderClasses(classes = []) {
+            if (!Array.isArray(classes) || classes.length === 0) {
+                return '<span class="empty-text">未提供</span>';
+            }
+            const limited = classes.slice(0, 6);
+            const chips = limited.map(cls => `<span class="chip"><span class="chip-dot"></span>${cls}</span>`).join('');
+            if (classes.length > limited.length) {
+                return chips + `<span class="chip chip-more">+${classes.length - limited.length}</span>`;
+            }
+            return chips;
+        }
+
+        function renderTable(datasets) {
+            return `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>路径</th>
+                            <th>图片数量</th>
+                            <th>数据划分</th>
+                            <th>类别</th>
+                            <th>创建时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${datasets.map(ds => `
+                            <tr>
+                                <td>${ds.name}</td>
+                                <td>
+                                    <code class="dataset-path" title="${ds.path}">${ds.path}</code>
+                                    <button class="btn btn-ghost btn-xs copy-path" data-copy-path="${ds.path}">复制</button>
+                                </td>
+                                <td>${ds.num_images ?? 0}</td>
+                                <td>${renderSplit(ds.split)}</td>
+                                <td>${renderClasses(ds.classes)}</td>
+                                <td>${formatDate(ds.created_at)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function updateSummary(datasets) {
+            const totalDatasets = datasets.length;
+            const totalImages = datasets.reduce((sum, item) => sum + (item.num_images || 0), 0);
+            const classSet = new Set();
+            datasets.forEach(item => (item.classes || []).forEach(cls => classSet.add(cls)));
+
+            summaryDatasetsEl.textContent = totalDatasets;
+            summaryImagesEl.textContent = totalImages;
+            summaryClassesEl.textContent = classSet.size;
+        }
+
+        function attachCopyHandlers() {
+            document.querySelectorAll('[data-copy-path]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const path = btn.dataset.copyPath;
+                    try {
+                        await navigator.clipboard.writeText(path);
+                        showAlert(`已复制路径: ${path}`, 'success');
+                    } catch (error) {
+                        console.warn('复制路径失败:', error);
+                        showAlert('复制失败，请手动复制路径', 'warning');
+                    }
+                });
+            });
+        }
+
+        function renderDatasets(datasets) {
+            if (datasets.length > 0) {
+                updateSummary(datasets);
+                datasetSummaryEl.style.display = 'grid';
+                datasetsListEl.innerHTML = renderTable(datasets);
+                attachCopyHandlers();
+            } else {
+                datasetSummaryEl.style.display = 'none';
+                datasetsListEl.innerHTML = '<p style="color: var(--secondary-color);">暂无数据集</p>';
             }
         }
+
+        async function loadDatasets({ force = false } = {}) {
+            try {
+                const { datasets } = await API.listDatasets({ force });
+                renderDatasets(datasets);
+            } catch (error) {
+                console.error('加载数据集失败:', error);
+                datasetSummaryEl.style.display = 'none';
+                datasetsListEl.innerHTML = '<p style="color: var(--danger-color);">加载数据集失败，请稍后重试</p>';
+            }
+        }
+
+        refreshBtn.addEventListener('click', async () => {
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<span class="loading"></span> 刷新中...';
+            try {
+                const { datasets } = await API.refreshDatasets();
+                renderDatasets(datasets);
+                showAlert('数据集列表已刷新', 'success');
+            } catch (error) {
+                console.error('刷新数据集失败:', error);
+                showAlert('刷新数据集失败: ' + error.message, 'danger');
+            } finally {
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = '刷新列表';
+            }
+        });
 
         loadDatasets();
     </script>

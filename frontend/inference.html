@@ -33,17 +33,7 @@
                 <div class="form-group">
                     <label class="form-label">模型选择</label>
                     <select id="model-select" class="form-control">
-                        <option value="yolo11n.pt" selected>YOLO11n (nano) ⭐</option>
-                        <option value="yolo11s.pt">YOLO11s (small)</option>
-                        <option value="yolo11m.pt">YOLO11m (medium)</option>
-                        <option value="yolo11l.pt">YOLO11l (large)</option>
-                        <option value="yolo11x.pt">YOLO11x (extra large)</option>
-                        <option disabled>─────────────</option>
-                        <option value="yolov8n.pt">YOLOv8n (nano)</option>
-                        <option value="yolov8s.pt">YOLOv8s (small)</option>
-                        <option value="yolov8m.pt">YOLOv8m (medium)</option>
-                        <option value="yolov8l.pt">YOLOv8l (large)</option>
-                        <option value="yolov8x.pt">YOLOv8x (extra large)</option>
+                        <option value="" disabled selected>加载模型列表...</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -109,6 +99,7 @@
     <script>
         const uploadArea = document.getElementById('upload-area');
         const fileInput = document.getElementById('file-input');
+        const modelSelect = document.getElementById('model-select');
         const inferBtn = document.getElementById('infer-btn');
         const clearBtn = document.getElementById('clear-btn');
         const resultsContainer = document.getElementById('results-container');
@@ -116,6 +107,72 @@
         const ctx = canvas.getContext('2d');
 
         let currentFile = null;
+        let localModelMap = new Map();
+
+        const BUILTIN_MODELS = [
+            { value: 'yolo11n.pt', label: 'YOLO11n (nano) ⭐', modelType: 'yolo11n' },
+            { value: 'yolo11s.pt', label: 'YOLO11s (small)', modelType: 'yolo11s' },
+            { value: 'yolo11m.pt', label: 'YOLO11m (medium)', modelType: 'yolo11m' },
+            { value: 'yolo11l.pt', label: 'YOLO11l (large)', modelType: 'yolo11l' },
+            { value: 'yolo11x.pt', label: 'YOLO11x (extra large)', modelType: 'yolo11x' },
+            { value: 'yolov8n.pt', label: 'YOLOv8n (nano)', modelType: 'yolov8n' },
+            { value: 'yolov8s.pt', label: 'YOLOv8s (small)', modelType: 'yolov8s' },
+            { value: 'yolov8m.pt', label: 'YOLOv8m (medium)', modelType: 'yolov8m' },
+            { value: 'yolov8l.pt', label: 'YOLOv8l (large)', modelType: 'yolov8l' },
+            { value: 'yolov8x.pt', label: 'YOLOv8x (extra large)', modelType: 'yolov8x' }
+        ];
+
+        async function populateModelOptions() {
+            let localModels = [];
+            try {
+                localModels = await API.listModels();
+            } catch (error) {
+                console.warn('加载本地模型失败:', error);
+            }
+
+            localModelMap = new Map(localModels.map(model => [model.name, model.path]));
+            modelSelect.innerHTML = '';
+
+            if (localModels.length > 0) {
+                const localGroup = document.createElement('optgroup');
+                localGroup.label = '已下载模型';
+                localModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.name;
+                    option.textContent = `${model.name} (${formatBytes(model.size || 0)})`;
+                    option.dataset.source = 'local';
+                    option.dataset.path = model.path;
+                    option.dataset.task = model.task || '';
+                    localGroup.appendChild(option);
+                });
+                modelSelect.appendChild(localGroup);
+            }
+
+            const builtinGroup = document.createElement('optgroup');
+            builtinGroup.label = 'Ultralytics 预训练模型';
+            BUILTIN_MODELS.forEach(item => {
+                const option = document.createElement('option');
+                option.value = item.value;
+                option.textContent = item.label;
+                option.dataset.source = 'builtin';
+                option.dataset.modelType = item.modelType;
+                const cachedPath = localModelMap.get(item.value);
+                if (cachedPath) {
+                    option.dataset.fallbackPath = cachedPath;
+                    option.textContent = `${item.label} · 已缓存`;
+                }
+                builtinGroup.appendChild(option);
+            });
+            modelSelect.appendChild(builtinGroup);
+
+            if (localModels.length > 0) {
+                modelSelect.value = localModels[0].name;
+            } else if (BUILTIN_MODELS.length > 0) {
+                modelSelect.value = BUILTIN_MODELS[0].value;
+            }
+        }
+
+        populateModelOptions();
 
         // 上传区域点击
         uploadArea.addEventListener('click', () => fileInput.click());
@@ -159,11 +216,31 @@
             inferBtn.innerHTML = '<span class="loading"></span> 推理中...';
 
             try {
+                const selectedOption = modelSelect.selectedOptions[0];
                 const options = {
-                    model_name: document.getElementById('model-select').value,
                     confidence: parseFloat(document.getElementById('confidence').value),
                     iou_threshold: parseFloat(document.getElementById('iou').value)
                 };
+
+                if (selectedOption) {
+                    if (selectedOption.dataset.source === 'local') {
+                        options.model_path = selectedOption.dataset.path;
+                    } else {
+                        const fallbackPath = selectedOption.dataset.fallbackPath || localModelMap.get(selectedOption.value);
+                        if (fallbackPath) {
+                            options.model_path = fallbackPath;
+                        } else {
+                            options.model_name = selectedOption.value;
+                        }
+                    }
+                } else {
+                    const fallbackPath = localModelMap.get(modelSelect.value);
+                    if (fallbackPath) {
+                        options.model_path = fallbackPath;
+                    } else {
+                        options.model_name = modelSelect.value;
+                    }
+                }
 
                 const result = await API.inferImage(currentFile, options);
 

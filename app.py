@@ -3,6 +3,7 @@ OpenCV Platform - 主应用入口
 基于 Ultralytics YOLO 的开源计算机视觉平台
 """
 import sys
+import asyncio
 from pathlib import Path
 from datetime import datetime
 
@@ -19,6 +20,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from config.config import settings
 from backend.api.routes import router
+from backend.services.dataset_service import dataset_service
+from backend.services.yolo_service import yolo_service
 
 # 版本戳 - 用于缓存破坏
 APP_VERSION_TIMESTAMP = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -73,6 +76,18 @@ templates = Jinja2Templates(directory=str(templates_dir))
 
 # 注册 API 路由
 app.include_router(router, prefix="/api/v1", tags=["API"])
+
+
+@app.on_event("startup")
+async def warmup_services():
+    """预加载模型与数据集索引，减少首次访问延迟"""
+    loop = asyncio.get_running_loop()
+    tasks = []
+    if yolo_service:
+        tasks.append(loop.run_in_executor(None, yolo_service.list_models))
+    tasks.append(loop.run_in_executor(None, dataset_service.list_datasets))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # ==================== 前端路由 ====================

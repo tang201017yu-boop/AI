@@ -36,7 +36,8 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label">数据集路径</label>
-                        <input type="text" id="dataset-path" class="form-control" placeholder="data/datasets/my_dataset/data.yaml" required>
+                        <input type="text" id="dataset-path" class="form-control" placeholder="data/datasets/my_dataset/data.yaml" required list="dataset-options">
+                        <datalist id="dataset-options"></datalist>
                     </div>
                     <div class="form-group">
                         <label class="form-label">模型类型</label>
@@ -53,6 +54,15 @@
                             <option value="yolov8l">YOLOv8l</option>
                             <option value="yolov8x">YOLOv8x</option>
                         </select>
+                    </div>
+                    <div class="form-group" style="grid-column: span 2;">
+                        <label class="form-label">选择已下载模型（可选）</label>
+                        <select id="base-model-select" class="form-control">
+                            <option value="">使用上方模型类型对应的官方预训练权重</option>
+                        </select>
+                        <small style="color: var(--secondary-color); display: block; margin-top: 0.25rem;">
+                            选择模型管理中已下载的模型继续训练，未选择时将使用官方预训练权重。
+                        </small>
                     </div>
                     <div class="form-group">
                         <label class="form-label">训练轮数</label>
@@ -82,6 +92,66 @@
 
     <script src="/static/js/api.js"></script>
     <script>
+        const baseModelSelect = document.getElementById('base-model-select');
+        let localModelMap = new Map();
+
+        async function loadModelOptions() {
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '使用上方模型类型对应的官方预训练权重';
+
+            baseModelSelect.innerHTML = '';
+            baseModelSelect.appendChild(placeholder);
+
+            try {
+                const models = await API.listModels();
+                localModelMap = new Map(models.map(model => [model.name, model.path]));
+
+                if (models.length > 0) {
+                    const localGroup = document.createElement('optgroup');
+                    localGroup.label = '已下载模型';
+                    models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.path;
+                        option.textContent = `${model.name} (${formatBytes(model.size || 0)})`;
+                        option.dataset.name = model.name;
+                        localGroup.appendChild(option);
+                    });
+                    baseModelSelect.appendChild(localGroup);
+                }
+            } catch (error) {
+                console.warn('加载模型列表失败:', error);
+            }
+        }
+
+        async function loadDatasetOptions() {
+            try {
+                const { datasets } = await API.listDatasets();
+                const datalist = document.getElementById('dataset-options');
+                datalist.innerHTML = datasets.map(ds => `<option value="${ds.path}">${ds.name} · ${ds.num_images || 0} 张图片</option>`).join('');
+            } catch (error) {
+                console.warn('加载数据集列表失败:', error);
+            }
+        }
+
+        loadModelOptions();
+        loadDatasetOptions();
+
+        function renderMetrics(metrics) {
+            if (!metrics || typeof metrics !== 'object') {
+                return '';
+            }
+            const source = metrics.latest || metrics.final_metrics || metrics;
+            if (!source || typeof source !== 'object') {
+                return '';
+            }
+            const items = Object.entries(source)
+                .filter(([, value]) => typeof value === 'number' && Number.isFinite(value))
+                .slice(0, 3)
+                .map(([key, value]) => `${key}: ${value.toFixed(4)}`);
+            return items.join(', ');
+        }
+
         document.getElementById('training-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -94,6 +164,17 @@
                 img_size: parseInt(document.getElementById('img-size').value),
                 device: 'cpu'
             };
+
+            const selectedBaseModel = baseModelSelect.value.trim();
+            if (selectedBaseModel) {
+                config.model_path = selectedBaseModel;
+            } else {
+                const fallbackName = `${config.model_type}.pt`;
+                const localPath = localModelMap.get(fallbackName) || API.getLocalModelPath(fallbackName);
+                if (localPath) {
+                    config.model_path = localPath;
+                }
+            }
 
             try {
                 const result = await API.startTraining(config);
@@ -114,17 +195,37 @@
                 const tasksList = document.getElementById('tasks-list');
                 
                 if (data.tasks && data.tasks.length > 0) {
-                    tasksList.innerHTML = data.tasks.map(task => `
-                        <div class="card" style="margin-bottom: 1rem;">
-                            <h4>${task.task_id}</h4>
-                            <span class="badge badge-${task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : 'warning'}">
-                                ${task.status}
-                            </span>
-                            <div class="progress" style="margin-top: 0.5rem;">
-                                <div class="progress-bar" style="width: ${task.progress}%">${task.progress.toFixed(0)}%</div>
+                    tasksList.innerHTML = data.tasks.map(task => {
+                        const progress = Number(task.progress || 0);
+                        const badgeClass = task.status === 'completed'
+                            ? 'success'
+                            : task.status === 'failed'
+                                ? 'danger'
+                                : task.status === 'running'
+                                    ? 'primary'
+                                    : 'warning';
+                        const metricsText = renderMetrics(task.metrics);
+                        const updatedAt = task.updated_at ? formatDate(task.updated_at) : '-';
+                        return `
+                            <div class="card" style="margin-bottom: 1rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                                    <h4 style="margin: 0;">${task.task_id}</h4>
+                                    <span class="badge badge-${badgeClass}">${task.status}</span>
+                                </div>
+                                <div class="progress" style="margin-top: 0.5rem;">
+                                    <div class="progress-bar" style="width: ${progress}%">${Math.round(progress)}%</div>
+                                </div>
+                                <div style="margin-top: 0.5rem; color: var(--secondary-color); font-size: 0.9rem;">
+                                    <div>Epoch: ${task.current_epoch}/${task.total_epochs}</div>
+                                    ${metricsText ? `<div>指标: ${metricsText}</div>` : ''}
+                                    <div>更新时间: ${updatedAt}</div>
+                                    ${task.error_message ? `<div style="color: #ef4444;">错误: ${task.error_message}</div>` : ''}
+                                </div>
                             </div>
-                        </div>
-                    `).join('');
+                        `;
+                    }).join('');
+                } else {
+                    tasksList.innerHTML = '<p style="color: var(--secondary-color);">暂无训练任务</p>';
                 }
             } catch (error) {
                 console.error('Failed to load tasks:', error);

@@ -25,6 +25,7 @@ from backend.models.schemas import (
 )
 from backend.services.yolo_service import yolo_service
 from backend.services.annotation_service import annotation_service
+from backend.services.dataset_service import dataset_service
 from backend.services.solutions_service import solutions_service
 from backend.services.supervision_service import supervision_service
 from backend.utils.file_utils import allowed_file, save_uploaded_file, get_unique_filename
@@ -40,7 +41,7 @@ async def get_system_info():
     
     # 获取模型和数据集数量
     models = yolo_service.list_models() if yolo_service else []
-    datasets = list(settings.DATASETS_DIR.glob("*/data.yaml"))
+    datasets = dataset_service.list_datasets()
     
     # 获取 GPU 信息
     gpu_available, gpu_info = (False, None)
@@ -83,6 +84,7 @@ async def health_check():
 async def infer_image(
     file: UploadFile = File(...),
     model_name: Optional[str] = Form(None),
+    model_path: Optional[str] = Form(None),
     confidence: Optional[float] = Form(None),
     iou_threshold: Optional[float] = Form(None),
     img_size: Optional[int] = Form(None)
@@ -104,7 +106,7 @@ async def infer_image(
         # 执行推理
         result = yolo_service.infer(
             image_path=str(file_path),
-            model_name=model_name,
+            model_identifier=model_path or model_name,
             confidence=confidence,
             iou_threshold=iou_threshold,
             img_size=img_size
@@ -120,6 +122,7 @@ async def infer_image(
 async def infer_batch(
     files: List[UploadFile] = File(...),
     model_name: Optional[str] = Form(None),
+    model_path: Optional[str] = Form(None),
     confidence: Optional[float] = Form(None)
 ):
     """批量推理"""
@@ -138,7 +141,7 @@ async def infer_batch(
             
             result = yolo_service.infer(
                 image_path=str(file_path),
-                model_name=model_name,
+                model_identifier=model_path or model_name,
                 confidence=confidence
             )
             results.append({
@@ -191,7 +194,7 @@ async def list_training_tasks():
     if not yolo_service:
         raise HTTPException(status_code=500, detail="YOLO service not available")
     
-    return {"tasks": list(yolo_service.training_tasks.values())}
+    return {"tasks": yolo_service.list_training_statuses()}
 
 
 # ==================== 模型相关 ====================
@@ -241,37 +244,21 @@ async def upload_model(file: UploadFile = File(...)):
 @router.get("/datasets/list")
 async def list_datasets():
     """列出所有数据集"""
-    datasets = []
-    
-    for dataset_dir in settings.DATASETS_DIR.iterdir():
-        if dataset_dir.is_dir():
-            data_yaml = dataset_dir / "data.yaml"
-            if data_yaml.exists():
-                try:
-                    import yaml
-                    with open(data_yaml, 'r') as f:
-                        data = yaml.safe_load(f)
-                    
-                    # 统计图像数量
-                    num_images = 0
-                    images_dir = dataset_dir / "images"
-                    if images_dir.exists():
-                        num_images = len(list(images_dir.rglob("*.jpg"))) + \
-                                    len(list(images_dir.rglob("*.png")))
-                    
-                    dataset_info = {
-                        "name": dataset_dir.name,
-                        "path": str(dataset_dir),
-                        "num_images": num_images,
-                        "num_classes": len(data.get("names", {})),
-                        "classes": list(data.get("names", {}).values()),
-                        "created_at": datetime.fromtimestamp(dataset_dir.stat().st_ctime).isoformat()
-                    }
-                    datasets.append(dataset_info)
-                except Exception as e:
-                    print(f"Error reading dataset {dataset_dir}: {e}")
-    
-    return {"datasets": datasets}
+    datasets = dataset_service.list_datasets()
+    return {
+        "total": len(datasets),
+        "datasets": [item.dict() for item in datasets]
+    }
+
+
+@router.post("/datasets/refresh")
+async def refresh_datasets():
+    """重新扫描数据集目录"""
+    datasets = dataset_service.refresh()
+    return {
+        "total": len(datasets),
+        "datasets": [item.dict() for item in datasets]
+    }
 
 
 @router.post("/datasets/upload")

@@ -4,7 +4,10 @@ YOLO 模型服务
 import os
 import time
 import json
+import shutil
 import threading
+import logging
+from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
@@ -26,6 +29,9 @@ from backend.models.schemas import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class YOLOService:
     """YOLO 模型服务"""
     
@@ -35,32 +41,268 @@ class YOLOService:
         
         self.models: Dict[str, YOLO] = {}
         self.training_tasks: Dict[str, TrainingStatus] = {}
-        
-    def load_model(self, model_name: str) -> YOLO:
-        """加载模型"""
-        if model_name in self.models:
-            return self.models[model_name]
-        
-        model_path = settings.MODELS_DIR / model_name
-        
-        # 如果本地不存在,尝试下载预训练模型
-        if not model_path.exists():
+        self.training_futures: Dict[str, Future] = {}
+        self.training_lock = threading.Lock()
+        self.model_cache_lock = threading.Lock()
+        self.model_aliases: Dict[str, str] = {}
+        self.model_metadata_cache: Dict[str, Tuple[float, ModelInfo]] = {}
+        self.executor = ThreadPoolExecutor(
+            max_workers=settings.MAX_TRAINING_WORKERS,
+            thread_name_prefix="yolo-train"
+        )
+        self._index_existing_models()
+    
+    def _index_existing_models(self) -> None:
+        for path in self._iter_model_paths():
             try:
-                print(f"Downloading pretrained model: {model_name}")
-                model = YOLO(model_name)
-                self.models[model_name] = model
-                return model
-            except Exception as e:
-                raise FileNotFoundError(f"Model {model_name} not found and download failed: {e}")
-        
-        model = YOLO(str(model_path))
-        self.models[model_name] = model
+                resolved = path.resolve()
+            except FileNotFoundError:
+                continue
+            self.model_aliases.setdefault(resolved.name, str(resolved))
+
+    def _resolve_model_path(self, model_identifier: Optional[str]) -> str:
+        """解析模型标识符，返回可用于 YOLO 加载的路径"""
+        if not model_identifier:
+            default_alias = Path(settings.DEFAULT_MODEL).name
+            with self.model_cache_lock:
+                mapped = self.model_aliases.get(default_alias)
+            return mapped or settings.DEFAULT_MODEL
+
+        identifier = model_identifier.strip()
+        alias = Path(identifier).name
+
+        with self.model_cache_lock:
+            mapped = self.model_aliases.get(identifier) or self.model_aliases.get(alias)
+            if mapped and Path(mapped).exists():
+                return str(Path(mapped).resolve())
+
+        candidate = Path(identifier)
+        if candidate.exists():
+            resolved = str(candidate.resolve())
+            with self.model_cache_lock:
+                self.model_aliases[alias] = resolved
+            return resolved
+
+        if candidate.is_absolute():
+            return identifier
+
+        located = self._search_model_in_paths(alias)
+        if located:
+            resolved = str(located)
+            with self.model_cache_lock:
+                self.model_aliases[alias] = resolved
+            return resolved
+
+        return identifier
+
+    def _search_model_in_paths(self, name: str) -> Optional[Path]:
+        search_name = Path(name).name
+        for root in settings.model_search_paths:
+            if not root.exists():
+                continue
+            direct = root / search_name
+            if direct.exists():
+                return direct.resolve()
+            nested = next(root.glob(f"**/{search_name}"), None)
+            if nested and nested.exists():
+                return nested.resolve()
+        return None
+
+    def _iter_model_paths(self):
+        seen = set()
+        for root in settings.model_search_paths:
+            if not root.exists():
+                continue
+            for path in root.glob("**/*.pt"):
+                try:
+                    resolved = path.resolve()
+                except FileNotFoundError:
+                    continue
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                yield resolved
+
+    @staticmethod
+    def _to_existing_path(candidate: Any) -> Optional[Path]:
+        if not candidate:
+            return None
+        if isinstance(candidate, Path) and candidate.exists():
+            return candidate
+        if isinstance(candidate, str):
+            path = Path(candidate)
+            if path.exists():
+                return path
+        return None
+
+    def _extract_model_file(self, model: YOLO) -> Optional[Path]:
+        candidates = [
+            getattr(model, "ckpt_path", None),
+            getattr(model, "weights", None),
+        ]
+        overrides = getattr(model, "overrides", None)
+        if isinstance(overrides, dict):
+            candidates.extend([
+                overrides.get("weights"),
+                overrides.get("model"),
+            ])
+        for candidate in candidates:
+            path = self._to_existing_path(candidate)
+            if path is not None:
+                return path
+        return None
+
+    def _register_model_file(self, path: Path) -> None:
+        try:
+            resolved = path.resolve()
+        except FileNotFoundError:
+            return
+        with self.model_cache_lock:
+            self.model_aliases[resolved.name] = str(resolved)
+
+    def _cache_model_file(self, model_identifier: Optional[str], source_path: Path) -> None:
+        try:
+            target_dir = settings.MODELS_DIR
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_path = target_dir / source_path.name
+            if not target_path.exists() or source_path.stat().st_mtime > target_path.stat().st_mtime:
+                shutil.copy2(source_path, target_path)
+            alias = Path(model_identifier).name if model_identifier else source_path.name
+            self._register_model_file(target_path)
+            with self.model_cache_lock:
+                self.model_aliases[alias] = str(target_path.resolve())
+        except Exception as exc:  # pragma: no cover - best effort caching
+            logger.debug("Failed to cache model %s: %s", source_path, exc)
+
+    def _extract_model_classes(self, model: YOLO) -> List[str]:
+        names = getattr(model, "names", None)
+        if isinstance(names, dict):
+            try:
+                return [names[key] for key in sorted(names, key=lambda k: int(k))]
+            except Exception:
+                return list(names.values())
+        if isinstance(names, list):
+            return [str(item) for item in names if item is not None]
+        return []
+
+    def _update_model_metadata_cache(self, path: Path, model: Optional[YOLO]) -> Optional[ModelInfo]:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+
+        task = "detect"
+        classes: Optional[List[str]] = None
+        if model is not None:
+            task = getattr(model, "task", "detect") or "detect"
+            classes = self._extract_model_classes(model)
+
+        info = ModelInfo(
+            name=path.name,
+            path=str(path),
+            size=stat.st_size,
+            created_at=datetime.fromtimestamp(stat.st_ctime),
+            model_type="yolo",
+            task=task,
+            input_shape=None,
+            classes=classes
+        )
+        with self.model_cache_lock:
+            self.model_metadata_cache[str(path)] = (stat.st_mtime, info)
+            self.model_aliases.setdefault(path.name, str(path))
+        return info
+
+    def _get_cached_model_info(self, path: Path) -> Optional[ModelInfo]:
+        key = str(path)
+        with self.model_cache_lock:
+            cached = self.model_metadata_cache.get(key)
+        if not cached:
+            return None
+        cached_mtime, info = cached
+        try:
+            current_mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            with self.model_cache_lock:
+                self.model_metadata_cache.pop(key, None)
+            return None
+        if cached_mtime == current_mtime:
+            return info.copy(deep=True)
+        with self.model_cache_lock:
+            self.model_metadata_cache.pop(key, None)
+        return None
+
+    def _load_model_metadata(self, path: Path) -> Optional[ModelInfo]:
+        try:
+            model = YOLO(str(path))
+            info = self._update_model_metadata_cache(path, model)
+            return info or self._get_cached_model_info(path)
+        except Exception as exc:  # pragma: no cover - metadata extraction best effort
+            logger.debug("Failed to load metadata for %s: %s", path, exc)
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                return None
+            info = ModelInfo(
+                name=path.name,
+                path=str(path),
+                size=stat.st_size,
+                created_at=datetime.fromtimestamp(stat.st_ctime),
+                model_type="yolo",
+                task="unknown",
+                input_shape=None,
+                classes=None
+            )
+            with self.model_cache_lock:
+                self.model_metadata_cache[str(path)] = (stat.st_mtime, info)
+            return info
+
+    def _register_training_artifacts(self, save_dir: Path) -> None:
+        weights_dir = save_dir / "weights"
+        if not weights_dir.exists():
+            return
+        for filename in ("best.pt", "last.pt"):
+            weight_path = weights_dir / filename
+            if not weight_path.exists():
+                continue
+            self._register_model_file(weight_path)
+            self._load_model_metadata(weight_path)
+    
+    def load_model(self, model_identifier: Optional[str]) -> YOLO:
+        """加载或获取缓存模型"""
+        resolved_path = self._resolve_model_path(model_identifier)
+        cache_key = resolved_path
+
+        with self.model_cache_lock:
+            cached_model = self.models.get(cache_key)
+            if cached_model is not None:
+                return cached_model
+
+        try:
+            model = YOLO(resolved_path)
+        except Exception as e:
+            identifier = model_identifier or settings.DEFAULT_MODEL
+            raise FileNotFoundError(f"无法加载模型 {identifier}: {e}")
+
+        weight_path = self._extract_model_file(model)
+        if weight_path and weight_path.exists():
+            cache_key = str(weight_path.resolve())
+            self._cache_model_file(model_identifier, weight_path)
+            self._update_model_metadata_cache(weight_path, model)
+        else:
+            candidate_path = Path(resolved_path)
+            if candidate_path.exists():
+                self._register_model_file(candidate_path)
+                self._update_model_metadata_cache(candidate_path, model)
+
+        with self.model_cache_lock:
+            self.models[cache_key] = model
+
         return model
     
     def infer(
         self,
         image_path: str,
-        model_name: str = None,
+        model_identifier: str = None,
         confidence: float = None,
         iou_threshold: float = None,
         img_size: int = None
@@ -70,13 +312,13 @@ class YOLOService:
             start_time = time.time()
             
             # 使用默认值
-            model_name = model_name or settings.DEFAULT_MODEL
+            model_identifier = model_identifier or settings.DEFAULT_MODEL
             confidence = confidence or settings.CONFIDENCE_THRESHOLD
             iou_threshold = iou_threshold or settings.IOU_THRESHOLD
             img_size = img_size or settings.DEFAULT_IMG_SIZE
             
             # 加载模型
-            model = self.load_model(model_name)
+            model = self.load_model(model_identifier)
             
             # 执行推理
             results = model.predict(
@@ -130,35 +372,76 @@ class YOLOService:
                 image_shape=[0, 0, 0]
             )
     
-    def _train_thread(self, task_id: str, config: TrainingConfig):
-        """后台训练线程"""
-        status = self.training_tasks[task_id]
-        
+    def _train_worker(self, task_id: str, config: TrainingConfig):
+        """执行实际训练任务的工作函数"""
+        model = None
+        epoch_callback = None
+
+        def sanitize_metrics(metrics_dict: Any) -> Dict[str, float]:
+            sanitized: Dict[str, float] = {}
+            if isinstance(metrics_dict, dict):
+                for key, value in metrics_dict.items():
+                    try:
+                        if isinstance(value, (int, float)):
+                            sanitized[key] = float(value)
+                        elif hasattr(value, "item"):
+                            sanitized[key] = float(value.item())
+                        elif hasattr(value, "detach"):
+                            sanitized[key] = float(value.detach().cpu().item())
+                        elif isinstance(value, (list, tuple)) and value:
+                            sanitized[key] = float(value[-1])
+                        elif isinstance(value, np.ndarray):
+                            sanitized[key] = float(value.mean())
+                    except Exception:
+                        continue
+            return sanitized
+
         try:
-            # 加载基础模型
             model_type = config.model_type or "yolo11n"
-            
+            total_epochs = config.epochs or settings.DEFAULT_EPOCHS
+
             print(f"[{task_id}] 开始训练")
             print(f"[{task_id}] 模型类型: {model_type}")
             print(f"[{task_id}] 数据集: {config.dataset_path}")
-            
-            # 验证数据集路径
+
             dataset_path = Path(config.dataset_path)
             if not dataset_path.exists():
                 raise FileNotFoundError(f"数据集文件不存在: {config.dataset_path}")
-            
-            if config.pretrained:
-                model = YOLO(f"{model_type}.pt")
-            else:
-                model = YOLO(f"{model_type}.yaml")
-            
-            # 更新状态
-            status.status = "running"
-            status.updated_at = datetime.now()
-            
+
+            base_model_identifier = config.model_path or (
+                f"{model_type}.pt" if config.pretrained else f"{model_type}.yaml"
+            )
+            base_model_path = self._resolve_model_path(base_model_identifier)
+            print(f"[{task_id}] 基础模型: {base_model_path}")
+
+            model = YOLO(base_model_path)
+
+            with self.training_lock:
+                status = self.training_tasks.get(task_id)
+                if status:
+                    status.status = "running"
+                    status.progress = 0.0
+                    status.total_epochs = total_epochs
+                    status.updated_at = datetime.now()
+
+            def _epoch_callback(trainer):
+                epoch_index = getattr(trainer, "epoch", 0) + 1
+                metrics = sanitize_metrics(getattr(trainer, "metrics", {}))
+                with self.training_lock:
+                    status_inner = self.training_tasks.get(task_id)
+                    if not status_inner:
+                        return
+                    status_inner.current_epoch = epoch_index
+                    status_inner.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
+                    if metrics:
+                        status_inner.metrics = {"latest": metrics}
+                    status_inner.updated_at = datetime.now()
+
+            epoch_callback = _epoch_callback
+            model.add_callback("on_train_epoch_end", epoch_callback)
+
             print(f"[{task_id}] 模型加载成功，开始训练...")
-            
-            # 开始训练
+
             results = model.train(
                 data=str(config.dataset_path),
                 epochs=config.epochs,
@@ -176,32 +459,58 @@ class YOLOService:
                 lrf=config.lrf,
                 verbose=True
             )
-            
+
+            save_dir = getattr(results, "save_dir", None)
+            if save_dir:
+                try:
+                    save_dir_path = Path(save_dir)
+                    if save_dir_path.exists():
+                        self._register_training_artifacts(save_dir_path)
+                except Exception as artifact_exc:  # pragma: no cover
+                    logger.debug("Failed to register training artifacts: %s", artifact_exc)
+
             print(f"[{task_id}] 训练完成")
-            
-            # 训练完成
-            status.status = "completed"
-            status.progress = 100.0
-            status.current_epoch = config.epochs
-            status.metrics = {
-                "final_metrics": results.results_dict if hasattr(results, 'results_dict') else {}
-            }
-            status.updated_at = datetime.now()
-            
+
+            final_metrics = sanitize_metrics(getattr(results, "results_dict", {}))
+
+            with self.training_lock:
+                status = self.training_tasks.get(task_id)
+                if status:
+                    status.status = "completed"
+                    status.progress = 100.0
+                    status.current_epoch = total_epochs
+                    status.metrics = {"final_metrics": final_metrics}
+                    status.updated_at = datetime.now()
+
         except Exception as e:
             print(f"[{task_id}] 训练失败: {e}")
             import traceback
             traceback.print_exc()
-            
-            status.status = "failed"
-            status.error_message = str(e)
-            status.updated_at = datetime.now()
+
+            with self.training_lock:
+                status = self.training_tasks.get(task_id)
+                if status:
+                    status.status = "failed"
+                    status.error_message = str(e)
+                    status.updated_at = datetime.now()
+            raise
+
+        finally:
+            if model is not None and epoch_callback is not None:
+                try:
+                    model.remove_callback("on_train_epoch_end", epoch_callback)
+                except Exception:
+                    try:
+                        callbacks = model.callbacks.get("on_train_epoch_end", [])
+                        if epoch_callback in callbacks:
+                            callbacks.remove(epoch_callback)
+                    except Exception:
+                        pass
     
     def train(self, config: TrainingConfig) -> str:
         """开始训练（异步）"""
         task_id = f"train_{int(time.time())}"
-        
-        # 创建训练状态
+
         status = TrainingStatus(
             task_id=task_id,
             status="pending",
@@ -211,23 +520,47 @@ class YOLOService:
             created_at=datetime.now(),
             updated_at=datetime.now()
         )
-        self.training_tasks[task_id] = status
-        
-        # 在后台线程中启动训练
-        thread = threading.Thread(
-            target=self._train_thread,
-            args=(task_id, config),
-            daemon=True
-        )
-        thread.start()
-        
+
+        with self.training_lock:
+            self.training_tasks[task_id] = status
+
+        config_copy = config.copy(deep=True)
+        future = self.executor.submit(self._train_worker, task_id, config_copy)
+
+        with self.training_lock:
+            self.training_futures[task_id] = future
+
+        future.add_done_callback(lambda f, tid=task_id: self._handle_training_completion(tid, f))
+
         print(f"训练任务已创建: {task_id}")
-        
+
         return task_id
-    
+
+    def _handle_training_completion(self, task_id: str, future: Future):
+        """训练任务完成后的清理操作"""
+        exc = future.exception()
+        with self.training_lock:
+            self.training_futures.pop(task_id, None)
+            status = self.training_tasks.get(task_id)
+
+        if exc:
+            print(f"[{task_id}] 训练任务异常: {exc}")
+            if status and status.status != "failed":
+                with self.training_lock:
+                    status.status = "failed"
+                    status.error_message = str(exc)
+                    status.updated_at = datetime.now()
+
     def get_training_status(self, task_id: str) -> Optional[TrainingStatus]:
         """获取训练状态"""
-        return self.training_tasks.get(task_id)
+        with self.training_lock:
+            status = self.training_tasks.get(task_id)
+            return status.copy(deep=True) if status else None
+
+    def list_training_statuses(self) -> List[TrainingStatus]:
+        """获取所有训练任务状态快照"""
+        with self.training_lock:
+            return [status.copy(deep=True) for status in self.training_tasks.values()]
     
     def export_model(self, config: ExportConfig) -> Dict[str, Any]:
         """导出模型"""
@@ -259,37 +592,15 @@ class YOLOService:
     
     def list_models(self) -> List[ModelInfo]:
         """列出所有模型"""
-        models = []
-        models_dir = settings.MODELS_DIR
-        
-        for model_file in models_dir.glob("**/*.pt"):
-            try:
-                stat = model_file.stat()
-                
-                # 尝试加载模型获取信息
-                try:
-                    model = YOLO(str(model_file))
-                    task = model.task
-                    classes = list(model.names.values()) if hasattr(model, 'names') else []
-                except:
-                    task = "unknown"
-                    classes = []
-                
-                info = ModelInfo(
-                    name=model_file.name,
-                    path=str(model_file),
-                    size=stat.st_size,
-                    created_at=datetime.fromtimestamp(stat.st_ctime),
-                    model_type="yolo",
-                    task=task,
-                    classes=classes
-                )
-                models.append(info)
-            except Exception as e:
-                print(f"Error reading model {model_file}: {e}")
-                continue
-        
-        return models
+        model_infos: List[ModelInfo] = []
+        for path in self._iter_model_paths():
+            info = self._get_cached_model_info(path)
+            if info is None:
+                info = self._load_model_metadata(path)
+            if info:
+                model_infos.append(info)
+        model_infos.sort(key=lambda item: item.name.lower())
+        return model_infos
     
     def get_device_info(self) -> Tuple[bool, Optional[str]]:
         """获取设备信息"""
