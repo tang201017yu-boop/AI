@@ -208,7 +208,12 @@
                 const info = await API.getSystemInfo();
                 document.getElementById('stat-models').textContent = info.total_models;
                 document.getElementById('stat-datasets').textContent = info.total_datasets;
-                document.getElementById('stat-gpu').textContent = info.gpu_available ? '✓' : '✗';
+                // 显示 GPU 信息 (名称 + 显存)
+                if (info.gpu_available && info.gpu_info) {
+                    document.getElementById('stat-gpu').textContent = info.gpu_info;
+                } else {
+                    document.getElementById('stat-gpu').textContent = info.gpu_available ? '✓ CPU' : '✗';
+                }
                 document.getElementById('stat-version').textContent = info.ultralytics_version;
             } catch (error) {
                 console.error('Failed to load system info:', error);

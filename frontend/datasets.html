@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>数据集管理 - OpenCV Platform</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <nav class="navbar">
@@ -32,18 +33,22 @@
                     <button class="btn btn-ghost btn-xs" id="refresh-datasets">刷新列表</button>
                 </div>
             </div>
-            <div id="dataset-summary" class="grid grid-3 dataset-summary" style="display: none;">
+            <div id="dataset-summary" class="grid grid-4 dataset-summary" style="display: none;">
                 <div class="stat-card stat-card-neutral">
                     <div class="stat-value" id="summary-total-datasets">0</div>
-                    <div class="stat-label">数据集数量</div>
+                    <div class="stat-label">数据集</div>
                 </div>
-                <div class="stat-card stat-card-neutral">
+                <div class="stat-card stat-card-success">
                     <div class="stat-value" id="summary-total-images">0</div>
                     <div class="stat-label">图片总数</div>
                 </div>
-                <div class="stat-card stat-card-neutral">
+                <div class="stat-card stat-card-info">
+                    <div class="stat-value" id="summary-total-annotations">0</div>
+                    <div class="stat-label">标注总数</div>
+                </div>
+                <div class="stat-card stat-card-warning">
                     <div class="stat-value" id="summary-total-classes">0</div>
-                    <div class="stat-label">类别总数</div>
+                    <div class="stat-label">类别</div>
                 </div>
             </div>
             <div id="datasets-list">
@@ -52,133 +57,747 @@
         </div>
     </div>
 
+    <!-- 数据集统计模态框 -->
+    <div class="modal-overlay" id="statsModal">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h3 id="statsModalTitle">数据集统计</h3>
+                <button class="modal-close" onclick="closeStatsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 摘要信息 -->
+                <div class="grid grid-4" style="margin-bottom: 1.5rem;">
+                    <div class="stat-card stat-card-info">
+                        <div class="stat-value" id="stat-images">0</div>
+                        <div class="stat-label">图片数</div>
+                    </div>
+                    <div class="stat-card stat-card-success">
+                        <div class="stat-value" id="stat-annotations">0</div>
+                        <div class="stat-label">标注数</div>
+                    </div>
+                    <div class="stat-card stat-card-warning">
+                        <div class="stat-value" id="stat-classes">0</div>
+                        <div class="stat-label">类别数</div>
+                    </div>
+                    <div class="stat-card stat-card-neutral">
+                        <div class="stat-value" id="stat-size">0 MB</div>
+                        <div class="stat-label">存储大小</div>
+                    </div>
+                </div>
+
+                <!-- 统计图表标签页 -->
+                <div class="panel-tabs" style="margin-bottom: 1rem;">
+                    <div class="panel-tab active" onclick="switchStatsTab('class')">类别分布</div>
+                    <div class="panel-tab" onclick="switchStatsTab('spatial')">位置热图</div>
+                    <div class="panel-tab" onclick="switchStatsTab('dimension')">维度分析</div>
+                    <div class="panel-tab" onclick="switchStatsTab('split')">拆分比例</div>
+                </div>
+
+                <!-- 图表容器 -->
+                <div class="stats-chart-container">
+                    <div id="classChartTab" class="stats-chart active">
+                        <canvas id="classChart"></canvas>
+                    </div>
+                    <div id="spatialChartTab" class="stats-chart">
+                        <canvas id="spatialChart"></canvas>
+                    </div>
+                    <div id="dimensionChartTab" class="stats-chart">
+                        <canvas id="dimensionChart"></canvas>
+                    </div>
+                    <div id="splitChartTab" class="stats-chart">
+                        <canvas id="splitChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上传数据集模态框 -->
+    <div class="modal-overlay" id="uploadModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>上传数据集</h3>
+                <button class="modal-close" onclick="closeUploadModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>数据集名称</label>
+                    <input type="text" id="datasetName" placeholder="输入数据集名称">
+                </div>
+                <div class="form-group">
+                    <label>任务类型</label>
+                    <select id="taskType">
+                        <option value="detect">目标检测</option>
+                        <option value="segment">实例分割</option>
+                        <option value="pose">姿态估计</option>
+                        <option value="obb">旋转框检测</option>
+                        <option value="classify">图像分类</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>上传文件 (ZIP/图片)</label>
+                    <input type="file" id="datasetFile" accept=".zip,.jpg,.jpeg,.png,.bmp">
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                        <input type="checkbox" id="smartStorage" checked>
+                        启用智能存储 (自动去重 + 完整性校验)
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeUploadModal()">取消</button>
+                <button class="btn btn-primary" onclick="uploadDataset()">上传</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/api.js"></script>
     <script>
-        const datasetsListEl = document.getElementById('datasets-list');
-        const datasetSummaryEl = document.getElementById('dataset-summary');
-        const refreshBtn = document.getElementById('refresh-datasets');
-        const summaryDatasetsEl = document.getElementById('summary-total-datasets');
-        const summaryImagesEl = document.getElementById('summary-total-images');
-        const summaryClassesEl = document.getElementById('summary-total-classes');
+        // 全局状态
+        let currentDataset = null;
+        let charts = {};
 
-        function renderSplit(split = {}) {
-            const entries = Object.entries(split || {});
-            if (entries.length === 0) {
-                return '<span class="empty-text">未统计</span>';
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDatasets();
+        });
+
+        // 加载数据集列表
+        async function loadDatasets({ force = false } = {}) {
+            try {
+                const response = await fetch('/api/v1/datasets/list');
+                const data = await response.json();
+
+                if (data.success) {
+                    renderDatasets(data.datasets);
+                }
+            } catch (error) {
+                console.error('加载数据集失败:', error);
+                document.getElementById('datasets-list').innerHTML =
+                    '<p style="color: var(--danger-color);">加载数据集失败，请稍后重试</p>';
             }
-            return entries.map(([key, value]) => `<span class="split-item">${key}: ${value}</span>`).join('<br>');
         }
 
-        function renderClasses(classes = []) {
-            if (!Array.isArray(classes) || classes.length === 0) {
-                return '<span class="empty-text">未提供</span>';
-            }
-            const limited = classes.slice(0, 6);
-            const chips = limited.map(cls => `<span class="chip"><span class="chip-dot"></span>${cls}</span>`).join('');
-            if (classes.length > limited.length) {
-                return chips + `<span class="chip chip-more">+${classes.length - limited.length}</span>`;
-            }
-            return chips;
-        }
-
-        function renderTable(datasets) {
-            return `
-                <table>
-                    <thead>
-                        <tr>
-                            <th>名称</th>
-                            <th>路径</th>
-                            <th>图片数量</th>
-                            <th>数据划分</th>
-                            <th>类别</th>
-                            <th>创建时间</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${datasets.map(ds => `
-                            <tr>
-                                <td>${ds.name}</td>
-                                <td>
-                                    <code class="dataset-path" title="${ds.path}">${ds.path}</code>
-                                    <button class="btn btn-ghost btn-xs copy-path" data-copy-path="${ds.path}">复制</button>
-                                </td>
-                                <td>${ds.num_images ?? 0}</td>
-                                <td>${renderSplit(ds.split)}</td>
-                                <td>${renderClasses(ds.classes)}</td>
-                                <td>${formatDate(ds.created_at)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-        }
-
-        function updateSummary(datasets) {
+        // 渲染数据集列表
+        function renderDatasets(datasets) {
+            // 更新摘要
             const totalDatasets = datasets.length;
             const totalImages = datasets.reduce((sum, item) => sum + (item.num_images || 0), 0);
+            const totalAnnotations = datasets.reduce((sum, item) => sum + (item.num_annotations || 0), 0);
             const classSet = new Set();
             datasets.forEach(item => (item.classes || []).forEach(cls => classSet.add(cls)));
 
-            summaryDatasetsEl.textContent = totalDatasets;
-            summaryImagesEl.textContent = totalImages;
-            summaryClassesEl.textContent = classSet.size;
+            document.getElementById('summary-total-datasets').textContent = totalDatasets;
+            document.getElementById('summary-total-images').textContent = totalImages;
+            document.getElementById('summary-total-annotations').textContent = totalAnnotations;
+            document.getElementById('summary-total-classes').textContent = classSet.size;
+            document.getElementById('dataset-summary').style.display = 'grid';
+
+            // 渲染表格
+            if (datasets.length > 0) {
+                document.getElementById('datasets-list').innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>任务类型</th>
+                                <th>图片数</th>
+                                <th>类别数</th>
+                                <th>处理状态</th>
+                                <th>创建时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${datasets.map(ds => `
+                                <tr>
+                                    <td><strong>${ds.name}</strong></td>
+                                    <td>${getTaskTypeName(ds.task_type)}</td>
+                                    <td>${ds.num_images ?? 0}</td>
+                                    <td>${ds.num_classes ?? 0}</td>
+                                    <td>${getProcessingStatus(ds.processing)}</td>
+                                    <td>${formatDate(ds.created_at)}</td>
+                                    <td>
+                                        <button class="btn btn-ghost btn-xs" onclick="viewStats('${ds.name}')">
+                                            📊 统计
+                                        </button>
+                                        <button class="btn btn-ghost btn-xs" onclick="processDataset('${ds.name}')">
+                                            ⚙️ 处理
+                                        </button>
+                                        <button class="btn btn-ghost btn-xs" onclick="deleteDataset('${ds.name}')">
+                                            🗑️ 删除
+                                        </button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                document.getElementById('datasets-list').innerHTML = `
+                    <div style="text-align: center; padding: 3rem; color: var(--secondary-color);">
+                        <p>暂无数据集</p>
+                        <button class="btn btn-primary" onclick="showUploadModal()">上传数据集</button>
+                    </div>
+                `;
+            }
         }
 
-        function attachCopyHandlers() {
-            document.querySelectorAll('[data-copy-path]').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const path = btn.dataset.copyPath;
-                    try {
-                        await navigator.clipboard.writeText(path);
-                        showAlert(`已复制路径: ${path}`, 'success');
-                    } catch (error) {
-                        console.warn('复制路径失败:', error);
-                        showAlert('复制失败，请手动复制路径', 'warning');
+        // 获取处理状态显示
+        function getProcessingStatus(processing) {
+            if (!processing || !processing.auto_processed) {
+                return '<span class="chip chip-warning">待处理</span>';
+            }
+
+            const normalized = processing.normalized || {};
+            const thumbnails = processing.thumbnails || {};
+            const labels = processing.labels || {};
+
+            const parts = [];
+            if (normalized.total > 0) {
+                parts.push(`归一化 ${normalized.total}`);
+            }
+            if (thumbnails.total > 0) {
+                parts.push(`缩略图 ${thumbnails.total}`);
+            }
+            if (labels.total > 0) {
+                parts.push(`标签 ${labels.total}`);
+            }
+
+            if (parts.length > 0) {
+                return `<span class="chip chip-success">${parts.join(' | ')}</span>`;
+            }
+            return '<span class="chip">已完成</span>';
+        }
+
+        function getTaskTypeName(type) {
+            const names = {
+                'detect': '🎯 检测',
+                'segment': '🔺 分割',
+                'pose': '⭕ 姿态',
+                'obb': '🔘 OBB',
+                'classify': '📁 分类'
+            };
+            return names[type] || type;
+        }
+
+        // 查看数据集统计
+        async function viewStats(datasetName) {
+            currentDataset = datasetName;
+            document.getElementById('statsModalTitle').textContent = `数据集统计: ${datasetName}`;
+            document.getElementById('statsModal').classList.add('active');
+
+            try {
+                const response = await fetch(`/api/v1/datasets/${datasetName}/statistics`);
+                const data = await response.json();
+
+                if (data.success) {
+                    updateStatsDisplay(data);
+                }
+            } catch (error) {
+                console.error('获取统计失败:', error);
+                showToast('获取统计信息失败', 'error');
+            }
+        }
+
+        // 更新统计显示
+        function updateStatsDisplay(data) {
+            // 更新摘要
+            const summary = data.summary || {};
+            document.getElementById('stat-images').textContent = summary.total_images || 0;
+            document.getElementById('stat-annotations').textContent = summary.total_annotations || 0;
+            document.getElementById('stat-classes').textContent = summary.total_classes || 0;
+            document.getElementById('stat-size').textContent = (summary.total_size_mb || 0) + ' MB';
+
+            // 渲染各类图表
+            renderClassChart(data.class_distribution);
+            renderSpatialChart(data.spatial_distribution);
+            renderDimensionChart(data.dimension_analysis);
+            renderSplitChart(data.split_details);
+        }
+
+        // 渲染类别分布图
+        function renderClassChart(data) {
+            const ctx = document.getElementById('classChart').getContext('2d');
+
+            if (charts.class) charts.class.destroy();
+
+            if (!data || !data.chart_data) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#666';
+                ctx.textAlign = 'center';
+                ctx.fillText('暂无类别数据', ctx.canvas.width/2, ctx.canvas.height/2);
+                return;
+            }
+
+            charts.class = new Chart(ctx, {
+                type: 'bar',
+                data: data.chart_data,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        title: {
+                            display: true,
+                            text: `类别分布 (总计 ${data.total_annotations || 0} 个标注)`
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: '标注数量' }
+                        }
                     }
-                });
+                }
             });
         }
 
-        function renderDatasets(datasets) {
-            if (datasets.length > 0) {
-                updateSummary(datasets);
-                datasetSummaryEl.style.display = 'grid';
-                datasetsListEl.innerHTML = renderTable(datasets);
-                attachCopyHandlers();
-            } else {
-                datasetSummaryEl.style.display = 'none';
-                datasetsListEl.innerHTML = '<p style="color: var(--secondary-color);">暂无数据集</p>';
+        // 渲染位置热图
+        function renderSpatialChart(data) {
+            const ctx = document.getElementById('spatialChart').getContext('2d');
+
+            if (charts.spatial) charts.spatial.destroy();
+
+            if (!data || !data.heatmap_data || data.heatmap_data.length === 0) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#666';
+                ctx.textAlign = 'center';
+                ctx.fillText('暂无位置数据', ctx.canvas.width/2, ctx.canvas.height/2);
+                return;
+            }
+
+            // 创建热力图数据
+            const heatmapData = {
+                labels: Array.from({length: 10}, (_, i) => `${(i+1)*10}%`),
+                datasets: [{
+                    label: '标注密度',
+                    data: data.heatmap_data,
+                    backgroundColor: [
+                        'rgba(0,0,255,0.1)', 'rgba(0,0,255,0.2)', 'rgba(0,0,255,0.3)',
+                        'rgba(0,128,255,0.4)', 'rgba(0,255,128,0.5)', 'rgba(128,255,0,0.6)',
+                        'rgba(255,255,0,0.7)', 'rgba(255,128,0,0.8)', 'rgba(255,0,0,0.9)', 'rgba(255,0,0,1)'
+                    ]
+                }]
+            };
+
+            charts.spatial = new Chart(ctx, {
+                type: 'bar',
+                data: heatmapData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        title: {
+                            display: true,
+                            text: `位置热图 (共 ${data.total_points || 0} 个标注中心点)`
+                        }
+                    },
+                    scales: {
+                        x: { title: { display: true, text: '水平位置' } },
+                        y: { title: { display: true, text: '垂直位置' } }
+                    }
+                }
+            });
+        }
+
+        // 渲染维度分析图
+        function renderDimensionChart(data) {
+            const ctx = document.getElementById('dimensionChart').getContext('2d');
+
+            if (charts.dimension) charts.dimension.destroy();
+
+            if (!data || !data.scatter_data || data.scatter_data.length === 0) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#666';
+                ctx.textAlign = 'center';
+                ctx.fillText('暂无维度数据', ctx.canvas.width/2, ctx.canvas.height/2);
+                return;
+            }
+
+            charts.dimension = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: '图片尺寸分布',
+                        data: data.scatter_data.map(p => ({x: p[0], y: p[1]})),
+                        backgroundColor: 'rgba(54, 162, 235, 0.5)'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `图片维度分布 (共 ${data.total_images || 0} 张图片)`
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: '宽度 (px)' },
+                            min: 0
+                        },
+                        y: {
+                            title: { display: true, text: '高度 (px)' },
+                            min: 0
+                        }
+                    }
+                }
+            });
+        }
+
+        // 渲染拆分明细图
+        function renderSplitChart(data) {
+            const ctx = document.getElementById('splitChart').getContext('2d');
+
+            if (charts.split) charts.split.destroy();
+
+            if (!data || !data.chart_data) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#666';
+                ctx.textAlign = 'center';
+                ctx.fillText('暂无拆分数据', ctx.canvas.width/2, ctx.canvas.height/2);
+                return;
+            }
+
+            charts.split = new Chart(ctx, {
+                type: 'doughnut',
+                data: data.chart_data,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `数据拆分 (总计 ${data.total_images || 0} 张图片)`
+                        },
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        // 切换统计标签页
+        function switchStatsTab(tab) {
+            document.querySelectorAll('.panel-tabs .panel-tab').forEach(tabEl => {
+                tabEl.classList.toggle('active', tabEl.textContent.includes(getTabChinese(tab)));
+            });
+
+            document.querySelectorAll('.stats-chart').forEach(chartEl => {
+                chartEl.classList.remove('active');
+            });
+            document.getElementById(tab + 'ChartTab').classList.add('active');
+        }
+
+        function getTabChinese(tab) {
+            const names = { 'class': '类别', 'spatial': '位置', 'dimension': '维度', 'split': '拆分' };
+            return names[tab] || tab;
+        }
+
+        // 关闭统计模态框
+        function closeStatsModal() {
+            document.getElementById('statsModal').classList.remove('active');
+            currentDataset = null;
+        }
+
+        // 显示上传模态框
+        function showUploadModal() {
+            document.getElementById('uploadModal').classList.add('active');
+        }
+
+        // 关闭上传模态框
+        function closeUploadModal() {
+            document.getElementById('uploadModal').classList.remove('active');
+        }
+
+        // 上传数据集
+        async function uploadDataset() {
+            const name = document.getElementById('datasetName').value.trim();
+            const taskType = document.getElementById('taskType').value;
+            const file = document.getElementById('datasetFile').files[0];
+            const smartStorage = document.getElementById('smartStorage').checked;
+
+            if (!name) {
+                showToast('请输入数据集名称', 'warning');
+                return;
+            }
+            if (!file) {
+                showToast('请选择上传文件', 'warning');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('name', name);
+            formData.append('task_type', taskType);
+            formData.append('use_smart_storage', smartStorage);
+
+            try {
+                const response = await fetch('/api/v1/datasets/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast('数据集上传成功!', 'success');
+                    closeUploadModal();
+                    loadDatasets();
+                } else {
+                    showToast('上传失败: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showToast('上传失败: ' + error.message, 'error');
             }
         }
 
-        async function loadDatasets({ force = false } = {}) {
+        // 删除数据集
+        async function deleteDataset(name) {
+            if (!confirm(`确定要删除数据集 "${name}" 吗？`)) return;
+
             try {
-                const { datasets } = await API.listDatasets({ force });
-                renderDatasets(datasets);
+                const response = await fetch(`/api/v1/datasets/${name}`, { method: 'DELETE' });
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast('数据集已删除', 'success');
+                    loadDatasets();
+                } else {
+                    showToast('删除失败: ' + data.message, 'error');
+                }
             } catch (error) {
-                console.error('加载数据集失败:', error);
-                datasetSummaryEl.style.display = 'none';
-                datasetsListEl.innerHTML = '<p style="color: var(--danger-color);">加载数据集失败，请稍后重试</p>';
+                showToast('删除失败: ' + error.message, 'error');
             }
         }
 
-        refreshBtn.addEventListener('click', async () => {
-            refreshBtn.disabled = true;
-            refreshBtn.innerHTML = '<span class="loading"></span> 刷新中...';
+        // 处理数据集
+        async function processDataset(name) {
+            if (!confirm(`确定要重新处理数据集 "${name}" 吗？\n\n处理步骤:\n1. 图像归一化（最大 4096 像素）\n2. 生成缩略图（256 像素）\n3. 解析标签\n4. 计算统计信息`)) return;
+
+            showToast('开始处理数据集...', 'info');
+
             try {
-                const { datasets } = await API.refreshDatasets();
-                renderDatasets(datasets);
-                showAlert('数据集列表已刷新', 'success');
+                const response = await fetch(`/api/v1/datasets/${name}/process`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    const normalized = data.normalized || {};
+                    const thumbnails = data.thumbnails || {};
+                    const labels = data.labels || {};
+
+                    let message = `处理完成！\n`;
+                    message += `归一化: ${normalized.total}张`;
+                    if (normalized.skipped > 0) message += ` (${normalized.skipped}张跳过)`;
+                    message += `\n缩略图: ${thumbnails.total}张`;
+                    if (thumbnails.skipped > 0) message += ` (${thumbnails.skipped}张跳过)`;
+                    message += `\n标签: ${labels.total}个`;
+
+                    showToast('处理完成！', 'success');
+                    loadDatasets();
+                } else {
+                    showToast('处理失败: ' + data.message, 'error');
+                }
             } catch (error) {
-                console.error('刷新数据集失败:', error);
-                showAlert('刷新数据集失败: ' + error.message, 'danger');
-            } finally {
-                refreshBtn.disabled = false;
-                refreshBtn.textContent = '刷新列表';
+                showToast('处理失败: ' + error.message, 'error');
             }
+        }
+
+        // 刷新按钮
+        document.getElementById('refresh-datasets').addEventListener('click', () => {
+            loadDatasets({ force: true });
+            showAlert('已刷新', 'success');
         });
 
-        loadDatasets();
+        // 工具函数
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('zh-CN');
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
     </script>
+
+    <style>
+        .modal-lg {
+            width: 90%;
+            max-width: 1000px;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+        }
+
+        .stats-chart-container {
+            position: relative;
+            height: 350px;
+        }
+
+        .stats-chart {
+            display: none;
+        }
+
+        .stats-chart.active {
+            display: block;
+        }
+
+        .panel-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .panel-tabs .panel-tab {
+            padding: 0.5rem 1rem;
+            border: none;
+            background: #f0f0f0;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .panel-tabs .panel-tab.active {
+            background: var(--primary-color, #2196F3);
+            color: white;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .chip-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            box-sizing: border-box;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .grid-4 {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        .stat-card {
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            color: white;
+        }
+
+        .stat-card-neutral { background: #607d8b; }
+        .stat-card-success { background: #4caf50; }
+        .stat-card-info { background: #2196f3; }
+        .stat-card-warning { background: #ff9800; }
+        .stat-card-danger { background: #f44336; }
+
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            opacity: 0.9;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
 </body>
 </html>

@@ -12,239 +12,254 @@
             --warning-color: #FF9800;
             --danger-color: #f44336;
             --sidebar-width: 280px;
-            --panel-width: 350px;
+            --panel-width: 380px;
+            --toolbar-height: 56px;
+            --coco-colors: #FF6B6B, #4ECDC4, #45B7D1, #96CEB4, #FFEAA7, #DDA0DD, #98D8C8, #F7DC6F, #BB8FCE, #85C1E9, #F8B500, #00CED1, #FF7F50, #6495ED, #DC143C, #00FF7F, #1E90FF;
         }
 
         body {
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f7fa;
+            height: 100vh;
+            overflow: hidden;
         }
 
         .main-container {
             display: flex;
             height: 100vh;
-            overflow: hidden;
         }
 
-        /* 左侧边栏 - 项目和图片列表 */
+        /* ==================== 左侧边栏 ==================== */
         .sidebar {
             width: var(--sidebar-width);
             background: white;
             border-right: 1px solid #e0e0e0;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            flex-shrink: 0;
         }
 
         .sidebar-header {
-            padding: 1.5rem;
-            border-bottom: 1px solid #e0e0e0;
-            background: linear-gradient(135deg, var(--primary-color), #1976D2);
+            padding: 1rem;
+            background: linear-gradient(135deg, #2196F3, #1976D2);
             color: white;
         }
 
         .sidebar-header h2 {
             margin: 0 0 0.5rem 0;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
         }
 
-        .project-selector {
-            margin-top: 1rem;
+        .project-info {
+            font-size: 0.8rem;
+            opacity: 0.9;
         }
 
-        .project-selector select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 6px;
-            background: rgba(255,255,255,0.1);
-            color: white;
-            font-size: 0.9rem;
-        }
-
-        .project-selector select option {
-            color: #333;
+        .project-info .task-type {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            margin-top: 0.3rem;
         }
 
         .image-list {
             flex: 1;
             overflow-y: auto;
-            padding: 1rem;
+            padding: 0.5rem;
         }
 
         .image-item {
             display: flex;
             align-items: center;
-            padding: 0.75rem;
-            margin-bottom: 0.5rem;
-            border-radius: 8px;
+            padding: 0.5rem;
+            margin-bottom: 0.3rem;
+            border-radius: 6px;
             cursor: pointer;
             transition: all 0.2s;
             background: #f8f9fa;
-            border: 2px solid transparent;
         }
 
         .image-item:hover {
-            background: #e9ecef;
-            transform: translateX(4px);
+            background: #e3f2fd;
         }
 
         .image-item.active {
-            background: #e3f2fd;
-            border-color: var(--primary-color);
+            background: #bbdefb;
+            border-left: 3px solid var(--primary-color);
         }
 
         .image-item-thumb {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             object-fit: cover;
             border-radius: 4px;
-            margin-right: 0.75rem;
-        }
-
-        .image-item-info {
-            flex: 1;
-            min-width: 0;
+            margin-right: 0.5rem;
         }
 
         .image-item-name {
-            font-size: 0.85rem;
-            font-weight: 500;
-            color: #333;
+            font-size: 0.8rem;
+            flex: 1;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
 
-        .image-item-count {
-            font-size: 0.75rem;
-            color: #666;
-            margin-top: 0.25rem;
+        .image-item-badge {
+            background: var(--primary-color);
+            color: white;
+            padding: 0.1rem 0.4rem;
+            border-radius: 10px;
+            font-size: 0.65rem;
         }
 
-        /* 中间画布区域 */
+        /* ==================== 中间画布区域 ==================== */
         .canvas-area {
             flex: 1;
             display: flex;
             flex-direction: column;
-            background: #fff;
+            background: #1a1a1a;
             overflow: hidden;
+            position: relative;
         }
 
         .toolbar {
             display: flex;
-            gap: 0.5rem;
-            padding: 1rem;
-            background: white;
-            border-bottom: 1px solid #e0e0e0;
+            gap: 0.3rem;
+            padding: 0.5rem 1rem;
+            background: #2d2d2d;
             flex-wrap: wrap;
             align-items: center;
+            min-height: var(--toolbar-height);
         }
 
-        .toolbar-group {
+        .tool-btn {
+            padding: 0.4rem 0.8rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
             display: flex;
-            gap: 0.5rem;
             align-items: center;
+            gap: 0.3rem;
+            transition: all 0.2s;
+            background: #404040;
+            color: white;
+            white-space: nowrap;
+        }
+
+        .tool-btn:hover {
+            background: #505050;
+        }
+
+        .tool-btn.active {
+            background: var(--primary-color);
+        }
+
+        .tool-btn.success {
+            background: var(--success-color);
+        }
+
+        .tool-btn.warning {
+            background: var(--warning-color);
+        }
+
+        .tool-btn.danger {
+            background: var(--danger-color);
+        }
+
+        .tool-btn.sam {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+        }
+
+        .tool-btn.auto {
+            background: linear-gradient(135deg, #f093fb, #f5576c);
         }
 
         .toolbar-divider {
             width: 1px;
-            height: 32px;
-            background: #e0e0e0;
-            margin: 0 0.5rem;
+            height: 24px;
+            background: #555;
+            margin: 0 0.3rem;
+            align-self: center;
         }
 
-        .btn {
-            padding: 0.6rem 1.2rem;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            font-weight: 500;
-            transition: all 0.2s;
-            display: inline-flex;
+        .toolbar-group {
+            display: flex;
+            gap: 0.2rem;
             align-items: center;
-            gap: 0.5rem;
         }
 
-        .btn-primary {
-            background: var(--primary-color);
-            color: white;
+        .toolbar-group-title {
+            color: #888;
+            font-size: 0.7rem;
+            margin-right: 0.3rem;
         }
 
-        .btn-primary:hover {
-            background: #1976D2;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(33, 150, 243, 0.3);
+        /* 快捷键提示 */
+        .shortcut-hint {
+            font-size: 0.65rem;
+            background: rgba(255,255,255,0.1);
+            padding: 0.1rem 0.4rem;
+            border-radius: 3px;
+            color: #aaa;
         }
 
-        .btn-success {
-            background: var(--success-color);
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #45a049;
-        }
-
-        .btn-warning {
-            background: var(--warning-color);
-            color: white;
-        }
-
-        .btn-danger {
-            background: var(--danger-color);
-            color: white;
-        }
-
-        .btn-outline {
-            background: white;
-            border: 2px solid var(--primary-color);
-            color: var(--primary-color);
-        }
-
-        .btn-outline:hover {
-            background: var(--primary-color);
-            color: white;
-        }
-
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
+        /* 画布包装器 */
         .canvas-wrapper {
             flex: 1;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #f5f5f5;
             overflow: auto;
             position: relative;
-            padding: 1rem;
         }
 
         #annotationCanvas {
-            max-width: 100%;
-            max-height: 100%;
             cursor: crosshair;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            display: none;
         }
 
         .canvas-placeholder {
             text-align: center;
-            color: #999;
+            color: #666;
         }
 
         .canvas-placeholder svg {
-            width: 120px;
-            height: 120px;
             margin-bottom: 1rem;
-            opacity: 0.3;
         }
 
-        /* 右侧面板 - 标注和工具 */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            color: white;
+            flex-direction: column;
+        }
+
+        .loading-overlay.active { display: flex; }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ==================== 右侧面板 ==================== */
         .right-panel {
             width: var(--panel-width);
             background: white;
@@ -252,6 +267,7 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            flex-shrink: 0;
         }
 
         .panel-tabs {
@@ -261,12 +277,12 @@
 
         .panel-tab {
             flex: 1;
-            padding: 1rem;
+            padding: 0.75rem 0.5rem;
             text-align: center;
             cursor: pointer;
             border-bottom: 3px solid transparent;
+            font-size: 0.85rem;
             transition: all 0.2s;
-            font-weight: 500;
         }
 
         .panel-tab:hover {
@@ -292,42 +308,40 @@
             display: block;
         }
 
-        /* 类别选择 */
-        .class-section {
-            margin-bottom: 1.5rem;
-        }
-
+        /* ==================== 类别管理 ==================== */
         .section-title {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-weight: 600;
             color: #333;
             margin-bottom: 0.75rem;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
         }
 
         .class-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 0.5rem;
-            margin-bottom: 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 0.75rem;
         }
 
         .class-chip {
-            padding: 0.6rem;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.35rem 0.6rem;
             border: 2px solid #e0e0e0;
-            border-radius: 6px;
+            border-radius: 20px;
             cursor: pointer;
-            text-align: center;
+            font-size: 0.75rem;
             transition: all 0.2s;
-            font-size: 0.85rem;
             background: white;
+            user-select: none;
         }
 
         .class-chip:hover {
             border-color: var(--primary-color);
-            background: #f0f8ff;
         }
 
         .class-chip.active {
@@ -336,274 +350,447 @@
             border-color: var(--primary-color);
         }
 
+        .class-chip .color-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .class-chip.active .color-dot {
+            border: 2px solid white;
+        }
+
+        .class-chip .delete-btn {
+            display: none;
+            background: none;
+            border: none;
+            padding: 0;
+            font-size: 0.9rem;
+            cursor: pointer;
+            color: inherit;
+            opacity: 0.7;
+        }
+
+        .class-chip:hover .delete-btn {
+            display: inline;
+        }
+
+        .class-chip .delete-btn:hover {
+            opacity: 1;
+        }
+
         .class-input-group {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.4rem;
         }
 
         .class-input-group input {
             flex: 1;
-            padding: 0.6rem;
+            padding: 0.5rem;
             border: 1px solid #ddd;
             border-radius: 6px;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
-        /* 标注列表 */
+        /* ==================== COCO 关键点预设 ==================== */
+        .keypoint-preset {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.3rem;
+            margin-top: 0.5rem;
+        }
+
+        .keypoint-btn {
+            padding: 0.4rem 0.3rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 0.7rem;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .keypoint-btn:hover {
+            background: #e3f2fd;
+            border-color: var(--primary-color);
+        }
+
+        .keypoint-btn.active {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        .keypoint-btn .kp-num {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            line-height: 16px;
+            background: #e0e0e0;
+            border-radius: 50%;
+            margin-right: 0.3rem;
+            font-size: 0.65rem;
+        }
+
+        .keypoint-btn.active .kp-num {
+            background: rgba(255,255,255,0.3);
+        }
+
+        /* ==================== 标注列表 ==================== */
         .annotations-list {
             display: flex;
             flex-direction: column;
-            gap: 0.75rem;
+            gap: 0.5rem;
         }
 
         .annotation-card {
-            background: #f8f9fa;
+            background: #f5f5f5;
             padding: 0.75rem;
             border-radius: 8px;
             border-left: 4px solid var(--primary-color);
+            cursor: pointer;
             transition: all 0.2s;
         }
 
         .annotation-card:hover {
-            background: #e9ecef;
-            transform: translateX(4px);
+            background: #eee;
+        }
+
+        .annotation-card.selected {
+            border-left-color: var(--warning-color);
+            background: #fff3e0;
         }
 
         .annotation-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.3rem;
         }
 
         .annotation-label {
             font-weight: 600;
             color: var(--primary-color);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .annotation-type {
+            font-size: 0.65rem;
+            background: #e0e0e0;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .annotation-info {
+            font-size: 0.75rem;
+            color: #666;
         }
 
         .annotation-confidence {
-            font-size: 0.75rem;
-            background: var(--success-color);
-            color: white;
-            padding: 0.2rem 0.5rem;
-            border-radius: 12px;
-        }
-
-        .annotation-coords {
-            font-size: 0.75rem;
-            color: #666;
-            font-family: 'Courier New', monospace;
+            font-size: 0.7rem;
+            color: var(--success-color);
         }
 
         .annotation-actions {
             display: flex;
-            gap: 0.5rem;
-            margin-top: 0.5rem;
+            gap: 0.3rem;
+            margin-top: 0.4rem;
         }
 
         .icon-btn {
-            padding: 0.4rem 0.6rem;
+            padding: 0.25rem 0.4rem;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             transition: all 0.2s;
         }
 
-        .icon-btn-danger {
+        .icon-btn-edit {
+            background: #e3f2fd;
+            color: var(--primary-color);
+        }
+
+        .icon-btn-delete {
             background: #ffebee;
             color: var(--danger-color);
         }
 
-        .icon-btn-danger:hover {
+        .icon-btn-delete:hover {
             background: var(--danger-color);
             color: white;
         }
 
-        /* 自动标注设置 */
-        .auto-annotate-section {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            margin-bottom: 1.5rem;
+        /* ==================== 分类网格 ==================== */
+        .classify-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
         }
 
-        .auto-annotate-section h3 {
-            margin: 0 0 1rem 0;
-            font-size: 1.1rem;
-        }
-
-        .setting-item {
-            margin-bottom: 1rem;
-        }
-
-        .setting-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-size: 0.85rem;
-            opacity: 0.9;
-        }
-
-        .setting-input {
-            width: 100%;
-            padding: 0.6rem;
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 6px;
-            background: rgba(255,255,255,0.1);
-            color: white;
-            font-size: 0.9rem;
-        }
-
-        .setting-input::placeholder {
-            color: rgba(255,255,255,0.6);
-        }
-
-        .slider-container {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .slider {
-            flex: 1;
-            -webkit-appearance: none;
-            height: 6px;
-            border-radius: 3px;
-            background: rgba(255,255,255,0.3);
-            outline: none;
-        }
-
-        .slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: white;
+        .classify-item {
+            padding: 0.75rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            text-align: center;
+            transition: all 0.2s;
         }
 
-        .slider-value {
-            min-width: 45px;
-            text-align: right;
+        .classify-item:hover {
+            border-color: var(--primary-color);
+        }
+
+        .classify-item.active {
+            border-color: var(--primary-color);
+            background: #e3f2fd;
+        }
+
+        .classify-item .class-color {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            margin: 0 auto 0.5rem;
+        }
+
+        /* ==================== 统一类别表 ==================== */
+        .class-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+
+        .class-table th, .class-table td {
+            padding: 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .class-table th {
+            background: #f8f9fa;
             font-weight: 600;
         }
 
-        /* 统计信息 */
+        .class-table .drag-handle {
+            cursor: move;
+            color: #999;
+        }
+
+        /* ==================== 统计信息 ==================== */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
         }
 
         .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #2196F3, #1976D2);
             color: white;
-            padding: 1rem;
+            padding: 0.75rem;
             border-radius: 8px;
             text-align: center;
         }
 
         .stat-value {
-            font-size: 1.75rem;
+            font-size: 1.5rem;
             font-weight: 700;
-            margin-bottom: 0.25rem;
         }
 
         .stat-label {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             opacity: 0.9;
         }
 
-        /* 加载动画 */
-        .loading-overlay {
-            position: absolute;
+        /* ==================== SAM 面板 ==================== */
+        .sam-controls {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .sam-instruction {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 0.75rem;
+            line-height: 1.5;
+        }
+
+        .sam-point {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 0.3rem;
+            vertical-align: middle;
+        }
+
+        .sam-point.positive { background: #4CAF50; }
+        .sam-point.negative { background: #f44336; }
+
+        /* ==================== 模态框 ==================== */
+        .modal-overlay {
+            position: fixed;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(255,255,255,0.95);
+            background: rgba(0,0,0,0.5);
             display: none;
             align-items: center;
             justify-content: center;
             z-index: 1000;
         }
 
-        .loading-overlay.active {
+        .modal-overlay.active {
             display: flex;
         }
 
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid var(--primary-color);
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            width: 450px;
+            max-width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
         }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .modal h3 {
+            margin: 0 0 1rem 0;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
-        /* 提示信息 */
+        .modal-field {
+            margin-bottom: 1rem;
+        }
+
+        .modal-field label {
+            display: block;
+            margin-bottom: 0.4rem;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .modal-field input,
+        .modal-field select,
+        .modal-field textarea {
+            width: 100%;
+            padding: 0.6rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            box-sizing: border-box;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+
+        /* ==================== 提示 ==================== */
         .toast {
             position: fixed;
             top: 20px;
             right: 20px;
-            padding: 1rem 1.5rem;
+            padding: 0.8rem 1.2rem;
             border-radius: 8px;
             color: white;
             font-weight: 500;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             z-index: 2000;
-            animation: slideIn 0.3s ease-out;
-        }
-
-        .toast-success {
-            background: var(--success-color);
-        }
-
-        .toast-error {
-            background: var(--danger-color);
-        }
-
-        .toast-info {
-            background: var(--primary-color);
+            animation: slideIn 0.3s ease;
         }
 
         @keyframes slideIn {
-            from {
-                transform: translateX(400px);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
         }
 
-        /* 响应式设计 */
-        @media (max-width: 1200px) {
-            :root {
-                --sidebar-width: 220px;
-                --panel-width: 300px;
-            }
+        .toast-success { background: var(--success-color); }
+        .toast-error { background: var(--danger-color); }
+        .toast-info { background: var(--primary-color); }
+        .toast-warning { background: var(--warning-color); }
+
+        /* ==================== 快捷键提示面板 ==================== */
+        .shortcuts-panel {
+            font-size: 0.8rem;
         }
 
-        @media (max-width: 768px) {
-            .main-container {
-                flex-direction: column;
-            }
-            .sidebar, .right-panel {
-                width: 100%;
-                height: auto;
-                max-height: 30vh;
-            }
+        .shortcut-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.4rem 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .shortcut-key {
+            background: #e0e0e0;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.75rem;
+        }
+
+        /* ==================== 图像导航 ==================== */
+        .image-nav {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            background: #2d2d2d;
+            color: white;
+        }
+
+        .image-nav-btn {
+            padding: 0.3rem 0.6rem;
+            background: #404040;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        .image-nav-btn:hover {
+            background: #505050;
+        }
+
+        .image-nav-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .image-nav-info {
+            font-size: 0.85rem;
+            color: #aaa;
+        }
+
+        /* ==================== 缩放控制 ==================== */
+        .zoom-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            margin-left: auto;
+        }
+
+        .zoom-controls span {
+            font-size: 0.75rem;
+            color: #aaa;
+            min-width: 50px;
+            text-align: center;
         }
     </style>
 </head>
@@ -612,168 +799,356 @@
         <!-- 左侧边栏 -->
         <div class="sidebar">
             <div class="sidebar-header">
-                <h2>🎨 智能标注</h2>
-                <div class="project-selector">
-                    <select id="projectSelect">
-                        <option value="">选择标注项目...</option>
-                    </select>
+                <h2>智能标注编辑器</h2>
+                <div class="project-info" id="projectInfo">
+                    <p>请创建或选择项目</p>
                 </div>
             </div>
             <div class="image-list" id="imageList">
-                <div style="text-align: center; padding: 2rem; color: #999;">
-                    <p>请选择或创建一个项目</p>
-                </div>
+                <p style="text-align: center; color: #999; padding: 2rem;">暂无图片</p>
             </div>
         </div>
 
-        <!-- 中间画布区域 -->
+        <!-- 中间画布 -->
         <div class="canvas-area">
-            <div class="toolbar">
+            <div class="toolbar" id="toolbar">
+                <button class="tool-btn" onclick="createProject()">➕ 新建</button>
+                <button class="tool-btn" onclick="uploadImages()">📁 上传</button>
+                <div class="toolbar-divider"></div>
+
+                <!-- 标注工具 -->
                 <div class="toolbar-group">
-                    <button class="btn btn-primary" onclick="createProject()">
-                        ➕ 新建项目
+                    <span class="toolbar-group-title">标注</span>
+                    <button class="tool-btn active" id="tool-rect" onclick="setTool('rect')" title="矩形框 (B)">
+                        ⬜ <span class="shortcut-hint">B</span>
                     </button>
-                    <button class="btn btn-outline" onclick="uploadImages()">
-                        📁 上传图片
+                    <button class="tool-btn" id="tool-polygon" onclick="setTool('polygon')" title="多边形 (P)">
+                        🔺 <span class="shortcut-hint">P</span>
+                    </button>
+                    <button class="tool-btn" id="tool-keypoint" onclick="setTool('keypoint')" title="关键点 (K)">
+                        ⭕ <span class="shortcut-hint">K</span>
+                    </button>
+                    <button class="tool-btn" id="tool-obb" onclick="setTool('obb')" title="旋转框 (O)">
+                        🔘 <span class="shortcut-hint">O</span>
                     </button>
                 </div>
-                
+
                 <div class="toolbar-divider"></div>
-                
+
+                <!-- 智能工具 -->
                 <div class="toolbar-group">
-                    <button class="btn btn-success" onclick="autoAnnotateAll()" id="autoAnnotateBtn">
-                        🤖 批量自动标注
+                    <span class="toolbar-group-title">智能</span>
+                    <button class="tool-btn sam" id="tool-sam" onclick="setTool('sam')" title="SAM智能标注 (S)">
+                        🤖 <span class="shortcut-hint">S</span>
                     </button>
-                    <button class="btn btn-warning" onclick="autoAnnotateCurrent()">
-                        ⚡ 自动标注当前
+                    <button class="tool-btn auto" id="tool-auto" onclick="setTool('auto')" title="YOLO自动标注 (A)">
+                        ⚡ <span class="shortcut-hint">A</span>
                     </button>
                 </div>
-                
+
                 <div class="toolbar-divider"></div>
-                
+
+                <!-- 编辑工具 -->
                 <div class="toolbar-group">
-                    <button class="btn btn-outline" onclick="saveAnnotations()">
-                        💾 保存标注
+                    <span class="toolbar-group-title">编辑</span>
+                    <button class="tool-btn" onclick="setTool('select')" title="选择/移动 (V)">
+                        👆 <span class="shortcut-hint">V</span>
                     </button>
-                    <button class="btn btn-success" onclick="exportDataset()">
-                        📦 导出数据集
+                    <button class="tool-btn" onclick="undoAnnotation()" title="撤销 (Ctrl+Z)">
+                        ↩️
                     </button>
+                    <button class="tool-btn" onclick="redoAnnotation()" title="重做 (Ctrl+Y)">
+                        ↪️
+                    </button>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <!-- 保存 -->
+                <button class="tool-btn success" onclick="saveAnnotations()" title="保存 (Ctrl+S)">
+                    💾 保存
+                </button>
+
+                <!-- 缩放控制 -->
+                <div class="zoom-controls">
+                    <button class="tool-btn" onclick="zoomOut()" title="缩小">🔍-</button>
+                    <span id="zoomLevel">100%</span>
+                    <button class="tool-btn" onclick="zoomIn()" title="放大">🔍+</button>
                 </div>
             </div>
 
             <div class="canvas-wrapper" id="canvasWrapper">
-                <div class="canvas-placeholder">
-                    <svg viewBox="0 0 24 24" fill="currentColor">
+                <div class="canvas-placeholder" id="canvasPlaceholder">
+                    <svg viewBox="0 0 24 24" fill="#666" width="80" height="80">
                         <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
                     </svg>
-                    <h3>选择图片开始标注</h3>
-                    <p>从左侧列表选择图片，或上传新图片</p>
+                    <p>选择或上传图片开始标注</p>
                 </div>
                 <canvas id="annotationCanvas"></canvas>
                 <div class="loading-overlay" id="loadingOverlay">
-                    <div>
-                        <div class="spinner"></div>
-                        <p style="margin-top: 1rem; color: #666;">处理中...</p>
-                    </div>
+                    <div class="loading-spinner"></div>
+                    <div id="loadingText">处理中...</div>
                 </div>
+            </div>
+
+            <!-- 图像导航 -->
+            <div class="image-nav">
+                <button class="image-nav-btn" id="prevImage" onclick="prevImage()">❮ 上一张</button>
+                <span class="image-nav-info" id="imageNavInfo">0 / 0</span>
+                <button class="image-nav-btn" id="nextImage" onclick="nextImage()">下一张 ❯</button>
             </div>
         </div>
 
         <!-- 右侧面板 -->
         <div class="right-panel">
             <div class="panel-tabs">
-                <div class="panel-tab active" onclick="switchTab('annotations')">标注列表</div>
-                <div class="panel-tab" onclick="switchTab('settings')">工具设置</div>
+                <div class="panel-tab active" onclick="switchTab('labels')">🏷️ 类别</div>
+                <div class="panel-tab" onclick="switchTab('annotations')">📍 标注</div>
+                <div class="panel-tab" onclick="switchTab('smart')">🤖 智能</div>
+                <div class="panel-tab" onclick="switchTab('shortcuts')">⌨️ 快捷键</div>
             </div>
 
             <div class="panel-content">
-                <!-- 标注列表标签页 -->
-                <div class="tab-pane active" id="annotationsTab">
-                    <div class="class-section">
-                        <div class="section-title">
-                            🏷️ 选择类别
-                        </div>
-                        <div class="class-grid" id="classGrid">
-                            <div class="class-chip active" data-class="person">Person</div>
-                            <div class="class-chip" data-class="car">Car</div>
-                            <div class="class-chip" data-class="dog">Dog</div>
-                            <div class="class-chip" data-class="cat">Cat</div>
-                        </div>
-                        <div class="class-input-group">
-                            <input type="text" id="newClassInput" placeholder="添加新类别...">
-                            <button class="btn btn-primary" onclick="addClass()">添加</button>
-                        </div>
-                    </div>
-
+                <!-- 标签页 -->
+                <div class="tab-pane active" id="labelsTab">
                     <div class="stats-grid">
                         <div class="stat-card">
                             <div class="stat-value" id="imageCount">0</div>
-                            <div class="stat-label">图片数量</div>
+                            <div class="stat-label">图片</div>
                         </div>
                         <div class="stat-card">
                             <div class="stat-value" id="annotationCount">0</div>
-                            <div class="stat-label">标注数量</div>
+                            <div class="stat-label">标注</div>
                         </div>
                     </div>
 
                     <div class="section-title">
-                        📍 当前标注
+                        🏷️ 类别列表
+                        <button class="icon-btn icon-btn-edit" onclick="showClassTable()" title="查看统一类别表">📋</button>
                     </div>
+                    <div class="class-grid" id="classGrid"></div>
+                    <div class="class-input-group">
+                        <input type="text" id="newClassInput" placeholder="输入新类别名..." onkeypress="handleClassInputKeypress(event)">
+                        <button class="tool-btn" onclick="addClass()" style="background: var(--primary-color);">添加</button>
+                    </div>
+
+                    <!-- 关键点预设（姿态估计用） -->
+                    <div class="section-title" id="keypointPresetTitle" style="display: none;">
+                        🦴 COCO 关键点 (按顺序点击)
+                    </div>
+                    <div class="keypoint-preset" id="keypointPreset" style="display: none;">
+                        <button class="keypoint-btn" onclick="selectKeypoint(0, 'nose', '鼻子')"><span class="kp-num">1</span>鼻子</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(1, 'left_eye', '左眼')"><span class="kp-num">2</span>左眼</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(2, 'right_eye', '右眼')"><span class="kp-num">3</span>右眼</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(3, 'left_ear', '左耳')"><span class="kp-num">4</span>左耳</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(4, 'right_ear', '右耳')"><span class="kp-num">5</span>右耳</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(5, 'left_shoulder', '左肩')"><span class="kp-num">6</span>左肩</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(6, 'right_shoulder', '右肩')"><span class="kp-num">7</span>右肩</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(7, 'left_elbow', '左肘')"><span class="kp-num">8</span>左肘</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(8, 'right_elbow', '右肘')"><span class="kp-num">9</span>右肘</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(9, 'left_wrist', '左腕')"><span class="kp-num">10</span>左腕</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(10, 'left_hip', '左臀')"><span class="kp-num">11</span>左臀</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(11, 'right_hip', '右臀')"><span class="kp-num">12</span>右臀</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(12, 'left_knee', '左膝')"><span class="kp-num">13</span>左膝</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(13, 'right_knee', '右膝')"><span class="kp-num">14</span>右膝</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(14, 'left_ankle', '左踝')"><span class="kp-num">15</span>左踝</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(15, 'right_ankle', '右踝')"><span class="kp-num">16</span>右踝</button>
+                        <button class="keypoint-btn" onclick="selectKeypoint(16, 'reserved', '保留')"><span class="kp-num">17</span>保留</button>
+                    </div>
+
+                    <!-- 分类选择（分类任务用） -->
+                    <div class="section-title" id="classifyTitle" style="display: none;">
+                        📁 图像分类 (可多选)
+                    </div>
+                    <div class="classify-grid" id="classifyGrid"></div>
+                </div>
+
+                <!-- 标注页 -->
+                <div class="tab-pane" id="annotationsTab">
+                    <div class="section-title">📍 当前图像标注</div>
                     <div class="annotations-list" id="annotationsList">
-                        <p style="text-align: center; color: #999; padding: 2rem;">暂无标注</p>
+                        <p style="text-align: center; color: #999; padding: 1rem;">暂无标注</p>
+                    </div>
+                    <div style="margin-top: 1rem; text-align: center; color: #666; font-size: 0.8rem;">
+                        点击标注可选择/编辑，按 Delete 删除选中标注
                     </div>
                 </div>
 
-                <!-- 工具设置标签页 -->
-                <div class="tab-pane" id="settingsTab">
-                    <div class="auto-annotate-section">
-                        <h3>🤖 自动标注设置</h3>
-                        
-                        <div class="setting-item">
-                            <label class="setting-label">YOLO 模型</label>
-                            <select class="setting-input" id="modelSelect">
-                                <option value="yolo11n.pt" selected>YOLO11n (nano) ⭐</option>
-                                <option value="yolo11s.pt">YOLO11s (small)</option>
-                                <option value="yolo11m.pt">YOLO11m (medium)</option>
-                                <option value="yolo11l.pt">YOLO11l (large)</option>
-                                <option value="yolo11x.pt">YOLO11x (extra large)</option>
+                <!-- 智能工具页 -->
+                <div class="tab-pane" id="smartTab">
+                    <!-- SAM 智能标注 -->
+                    <div class="section-title">🤖 SAM 智能标注</div>
+                    <div class="sam-controls">
+                        <div class="sam-instruction">
+                            <p><span class="sam-point positive"></span>左键点击: 添加正向点（包含区域）</p>
+                            <p><span class="sam-point negative"></span>右键点击: 添加负向点（排除区域）</p>
+                            <p>点击「生成掩码」实时获取分割结果</p>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                            <select id="samModel" style="flex: 1; padding: 0.5rem; border: 1px solid #ddd; border-radius: 6px;">
+                                <option value="vit_b">SAM ViT-B (快速)</option>
+                                <option value="vit_l">SAM ViT-L (平衡)</option>
+                                <option value="vit_h">SAM ViT-H (精确)</option>
                             </select>
                         </div>
-
-                        <div class="setting-item">
-                            <label class="setting-label">置信度阈值</label>
-                            <div class="slider-container">
-                                <input type="range" class="slider" id="confidenceSlider" 
-                                       min="0" max="1" step="0.05" value="0.25" 
-                                       oninput="updateSliderValue('confidence', this.value)">
-                                <span class="slider-value" id="confidenceValue">0.25</span>
-                            </div>
-                        </div>
-
-                        <div class="setting-item">
-                            <label class="setting-label">IOU 阈值</label>
-                            <div class="slider-container">
-                                <input type="range" class="slider" id="iouSlider" 
-                                       min="0" max="1" step="0.05" value="0.45" 
-                                       oninput="updateSliderValue('iou', this.value)">
-                                <span class="slider-value" id="iouValue">0.45</span>
-                            </div>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button class="tool-btn" onclick="samClearPoints()" style="flex: 1;">清除点位</button>
+                            <button class="tool-btn success" onclick="samGenerateMask()" style="flex: 1;">生成掩码</button>
                         </div>
                     </div>
 
-                    <div class="section-title">
-                        🎨 标注样式
-                    </div>
-                    <div class="setting-item">
-                        <label class="setting-label">边框颜色</label>
-                        <input type="color" class="setting-input" id="boxColor" value="#2196F3">
-                    </div>
-                    <div class="setting-item">
-                        <label class="setting-label">边框粗细</label>
-                        <input type="range" class="slider" id="boxThickness" 
-                               min="1" max="5" value="2">
+                    <!-- YOLO 自动标注 -->
+                    <div class="section-title">⚡ YOLO 自动标注</div>
+                    <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px;">
+                        <div style="margin-bottom: 0.75rem;">
+                            <label style="font-size: 0.8rem; color: #666;">模型选择</label>
+                            <select id="autoModel" style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 6px; margin-top: 0.25rem;">
+                                <option value="yolo11n.pt">YOLO11n (官方Nano)</option>
+                                <option value="yolo11s.pt">YOLO11s (官方Small)</option>
+                                <option value="yolo11m.pt">YOLO11m (官方Medium)</option>
+                                <option value="yolo11l.pt">YOLO11l (官方Large)</option>
+                                <option value="yolo11x.pt">YOLO11x (官方XLarge)</option>
+                                <option value="yolov8n.pt">YOLOv8n</option>
+                                <option value="yolov8s.pt">YOLOv8s</option>
+                                <option value="yolov8m.pt">YOLOv8m</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom: 0.75rem;">
+                            <label style="font-size: 0.8rem; color: #666;">置信度阈值: <span id="confValue">0.25</span></label>
+                            <input type="range" id="confThreshold" min="0.1" max="1" step="0.05" value="0.25"
+                                   oninput="document.getElementById('confValue').textContent = this.value"
+                                   style="width: 100%; margin-top: 0.25rem;">
+                        </div>
+                        <button class="tool-btn auto" onclick="runAutoAnnotation()" style="width: 100%;">
+                            ⚡ 运行自动标注
+                        </button>
                     </div>
                 </div>
+
+                <!-- 快捷键页 -->
+                <div class="tab-pane" id="shortcutsTab">
+                    <div class="section-title">⌨️ 快捷键</div>
+                    <div class="shortcuts-panel">
+                        <div class="shortcut-row">
+                            <span>矩形框工具</span>
+                            <span class="shortcut-key">B</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>多边形工具</span>
+                            <span class="shortcut-key">P</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>关键点工具</span>
+                            <span class="shortcut-key">K</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>旋转框工具</span>
+                            <span class="shortcut-key">O</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>SAM智能标注</span>
+                            <span class="shortcut-key">S</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>自动标注</span>
+                            <span class="shortcut-key">A</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>选择/移动模式</span>
+                            <span class="shortcut-key">V</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>选择类别 1-9</span>
+                            <span class="shortcut-key">1-9</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>删除选中</span>
+                            <span class="shortcut-key">Delete</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>撤销</span>
+                            <span class="shortcut-key">Ctrl+Z</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>重做</span>
+                            <span class="shortcut-key">Ctrl+Y</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>取消当前操作</span>
+                            <span class="shortcut-key">Escape</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>完成多边形</span>
+                            <span class="shortcut-key">Enter</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>上一张图像</span>
+                            <span class="shortcut-key">←</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>下一张图像</span>
+                            <span class="shortcut-key">→</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span>保存</span>
+                            <span class="shortcut-key">Ctrl+S</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建项目模态框 -->
+    <div class="modal-overlay" id="projectModal">
+        <div class="modal">
+            <h3>📝 创建标注项目</h3>
+            <div class="modal-field">
+                <label>项目名称</label>
+                <input type="text" id="projectName" placeholder="输入项目名称">
+            </div>
+            <div class="modal-field">
+                <label>任务类型</label>
+                <select id="taskType">
+                    <option value="detect">🎯 目标检测 (矩形框)</option>
+                    <option value="segment">🔺 实例分割 (多边形)</option>
+                    <option value="pose">⭕ 姿态估计 (17关键点)</option>
+                    <option value="obb">🔘 旋转框检测 (有向框)</option>
+                    <option value="classify">📁 图像分类</option>
+                </select>
+            </div>
+            <div class="modal-field">
+                <label>类别 (逗号分隔)</label>
+                <input type="text" id="projectClasses" placeholder="person, car, dog, cat" value="person, car, dog, cat">
+            </div>
+            <div class="modal-buttons">
+                <button class="tool-btn" onclick="closeProjectModal()">取消</button>
+                <button class="tool-btn success" onclick="submitCreateProject()">创建项目</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 类别表格模态框 -->
+    <div class="modal-overlay" id="classTableModal">
+        <div class="modal">
+            <h3>📋 统一类别表</h3>
+            <p style="font-size: 0.8rem; color: #666; margin-bottom: 1rem;">
+                数据集中所有类别统一管理，修改将自动应用到所有标注
+            </p>
+            <table class="class-table">
+                <thead>
+                    <tr>
+                        <th>顺序</th>
+                        <th>类别名称</th>
+                        <th>颜色</th>
+                        <th>标注数</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="classTableBody"></tbody>
+            </table>
+            <div class="modal-buttons">
+                <button class="tool-btn" onclick="closeClassTableModal()">关闭</button>
             </div>
         </div>
     </div>
@@ -781,343 +1156,474 @@
     <input type="file" id="imageUpload" multiple accept="image/*" style="display: none;">
 
     <script>
-        // 全局状态
-        let state = {
-            currentProject: null,
+        // ==================== 全局状态 ====================
+        const state = {
+            project: null,
+            images: [],
+            currentImageIndex: -1,
             currentImage: null,
             currentImageElement: null,
-            annotations: {},
+            annotations: {},  // { imageName: [annotations] }
+            history: [],      // 撤销/重做历史
+            historyIndex: -1,
             classes: ['person', 'car', 'dog', 'cat'],
+            classColors: {},
+            classCounts: {},
             selectedClass: 'person',
+            selectedKeypoint: { index: 0, name: 'nose', label: '鼻子' },
+            tool: 'rect',
             isDrawing: false,
-            startX: 0,
-            startY: 0,
-            canvas: null,
-            ctx: null,
-            scale: 1
+            isDragging: false,
+            isResizing: false,
+            points: [],
+            samPoints: [],
+            samLabels: [],
+            selectedAnnotation: null,
+            resizeHandle: null,
+            scale: 1,
+            canvasScale: 1,
+            imageSize: [640, 480],
+            unsavedChanges: false
         };
 
-        // 初始化
-        document.addEventListener('DOMContentLoaded', function() {
-            initializeCanvas();
-            loadProjects();
-            setupEventListeners();
-        });
+        // COCO 关键点定义
+        const COCO_KEYPOINTS = [
+            { name: 'nose', label: '鼻子' },
+            { name: 'left_eye', label: '左眼' },
+            { name: 'right_eye', label: '右眼' },
+            { name: 'left_ear', label: '左耳' },
+            { name: 'right_ear', label: '右耳' },
+            { name: 'left_shoulder', label: '左肩' },
+            { name: 'right_shoulder', label: '右肩' },
+            { name: 'left_elbow', label: '左肘' },
+            { name: 'right_elbow', label: '右肘' },
+            { name: 'left_wrist', label: '左腕' },
+            { name: 'right_wrist', label: '右腕' },
+            { name: 'left_hip', label: '左臀' },
+            { name: 'right_hip', label: '右臀' },
+            { name: 'left_knee', label: '左膝' },
+            { name: 'right_knee', label: '右膝' },
+            { name: 'left_ankle', label: '左踝' },
+            { name: 'right_ankle', label: '右踝' }
+        ];
 
-        function initializeCanvas() {
+        // 颜色调色板
+        const COLOR_PALETTE = [
+            '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+            '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
+            '#F8B500', '#00CED1', '#FF7F50', '#6495ED', '#DC143C',
+            '#00FF7F', '#1E90FF', '#FF69B4', '#32CD32', '#FFD700'
+        ];
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
             state.canvas = document.getElementById('annotationCanvas');
             state.ctx = state.canvas.getContext('2d');
-        }
+            initializeClassColors();
+            setupCanvasEvents();
+            setupKeyboardShortcuts();
+        });
 
-        function setupEventListeners() {
-            // 画布事件
-            state.canvas.addEventListener('mousedown', startDrawing);
-            state.canvas.addEventListener('mousemove', draw);
-            state.canvas.addEventListener('mouseup', stopDrawing);
-            state.canvas.addEventListener('mouseleave', stopDrawing);
-
-            // 项目选择
-            document.getElementById('projectSelect').addEventListener('change', function() {
-                loadProject(this.value);
-            });
-
-            // 图片上传
-            document.getElementById('imageUpload').addEventListener('change', handleImageUpload);
-
-            // 类别选择
-            document.getElementById('classGrid').addEventListener('click', function(e) {
-                if (e.target.classList.contains('class-chip')) {
-                    selectClass(e.target.dataset.class);
-                }
+        // 初始化类别颜色
+        function initializeClassColors() {
+            state.classes.forEach((cls, idx) => {
+                state.classColors[cls] = COLOR_PALETTE[idx % COLOR_PALETTE.length];
             });
         }
 
-        // 加载项目列表
-        async function loadProjects() {
-            try {
-                const response = await fetch('/api/v1/annotation/projects');
-                const projects = await response.json();
-                
-                const select = document.getElementById('projectSelect');
-                select.innerHTML = '<option value="">选择标注项目...</option>';
-                
-                projects.forEach(project => {
-                    const option = document.createElement('option');
-                    option.value = project.id;
-                    option.textContent = project.name;
-                    select.appendChild(option);
-                });
-            } catch (error) {
-                showToast('加载项目失败: ' + error.message, 'error');
-            }
-        }
+        // ==================== 画布事件 ====================
+        function setupCanvasEvents() {
+            const canvas = state.canvas;
+            canvas.addEventListener('mousedown', onMouseDown);
+            canvas.addEventListener('mousemove', onMouseMove);
+            canvas.addEventListener('mouseup', onMouseUp);
+            canvas.addEventListener('mouseleave', onMouseUp);
+            canvas.addEventListener('dblclick', onDoubleClick);
+            canvas.addEventListener('contextmenu', onRightClick);
 
-        // 加载项目详情
-        async function loadProject(projectId) {
-            if (!projectId) return;
-            
-            showLoading(true);
-            try {
-                const response = await fetch(`/api/v1/annotation/projects/${projectId}`);
-                const project = await response.json();
-                
-                state.currentProject = project;
-                state.classes = project.classes || ['person', 'car', 'dog', 'cat'];
-                state.annotations = project.annotations || {};
-                
-                renderImageList(project.images);
-                renderClassGrid();
-                updateStats();
-                
-                showToast('项目加载成功', 'success');
-            } catch (error) {
-                showToast('加载项目失败: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-
-        // 渲染图片列表
-        function renderImageList(images) {
-            const list = document.getElementById('imageList');
-            
-            if (!images || images.length === 0) {
-                list.innerHTML = '<div style="text-align: center; padding: 2rem; color: #999;"><p>暂无图片</p></div>';
-                return;
-            }
-            
-            list.innerHTML = '';
-            images.forEach((image, index) => {
-                const count = state.annotations[image.name]?.length || 0;
-                const item = document.createElement('div');
-                item.className = 'image-item';
-                item.innerHTML = `
-                    <img src="${image.url}" alt="${image.name}" class="image-item-thumb" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect fill=%22%23ddd%22 width=%22100%22 height=%22100%22/></svg>'">
-                    <div class="image-item-info">
-                        <div class="image-item-name">${image.name}</div>
-                        <div class="image-item-count">${count} 个标注</div>
-                    </div>
-                `;
-                item.onclick = () => loadImage(image);
-                list.appendChild(item);
+            // 滚轮缩放
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (e.deltaY > 0) zoomOut();
+                else zoomIn();
             });
         }
 
-        // 加载图片到画布
-        function loadImage(imageData) {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.onload = function() {
-                // 更新当前图片状态
-                state.currentImage = imageData.name;
-                state.currentImageElement = img;
-                
-                // 设置画布大小
-                const maxWidth = state.canvas.parentElement.clientWidth - 40;
-                const maxHeight = state.canvas.parentElement.clientHeight - 40;
-                
-                let width = img.width;
-                let height = img.height;
-                
-                // 计算缩放比例
-                const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-                state.scale = scale;
-                
-                width *= scale;
-                height *= scale;
-                
-                state.canvas.width = width;
-                state.canvas.height = height;
-                
-                // 绘制图片
-                state.ctx.clearRect(0, 0, width, height);
-                state.ctx.drawImage(img, 0, 0, width, height);
-                
-                // 绘制现有标注
-                renderAnnotations();
-                
-                // 更新UI
-                document.querySelectorAll('.image-item').forEach(item => {
-                    item.classList.remove('active');
-                });
-                event.currentTarget.classList.add('active');
-                
-                // 显示画布
-                document.querySelector('.canvas-placeholder').style.display = 'none';
-                state.canvas.style.display = 'block';
+        function getCanvasCoords(e) {
+            const rect = state.canvas.getBoundingClientRect();
+            return {
+                x: (e.clientX - rect.left) / state.canvasScale,
+                y: (e.clientY - rect.top) / state.canvasScale
             };
-            img.src = imageData.url;
         }
 
-        // 绘制标注
-        function renderAnnotations() {
-            if (!state.currentImage || !state.currentImageElement) return;
-            
-            const annotations = state.annotations[state.currentImage] || [];
-            const img = state.currentImageElement;
-            
-            // 重绘图片
-            state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
-            state.ctx.drawImage(img, 0, 0, state.canvas.width, state.canvas.height);
-            
-            // 绘制所有标注框
-            annotations.forEach((ann, index) => {
-                const x = ann.x * state.canvas.width;
-                const y = ann.y * state.canvas.height;
-                const width = ann.width * state.canvas.width;
-                const height = ann.height * state.canvas.height;
-                
-                // 绘制边框
-                state.ctx.strokeStyle = document.getElementById('boxColor').value;
-                state.ctx.lineWidth = parseInt(document.getElementById('boxThickness').value);
-                state.ctx.strokeRect(x, y, width, height);
-                
-                // 绘制标签
-                const label = `${ann.class} ${(ann.confidence * 100).toFixed(0)}%`;
-                state.ctx.fillStyle = document.getElementById('boxColor').value;
-                state.ctx.fillRect(x, y - 25, state.ctx.measureText(label).width + 10, 25);
-                state.ctx.fillStyle = 'white';
-                state.ctx.font = '14px Arial';
-                state.ctx.fillText(label, x + 5, y - 7);
-            });
-            
-            // 更新标注列表
-            renderAnnotationsList();
+        function onMouseDown(e) {
+            if (!state.currentImage || !state.project) return;
+            if (e.button !== 0) return; // 只响应左键
+
+            const { x, y } = getCanvasCoords(e);
+
+            // 如果在选择模式下，检查是否点击了标注
+            if (state.tool === 'select') {
+                const clicked = hitTest(x, y);
+                if (clicked >= 0) {
+                    selectAnnotation(clicked);
+                    // 开始拖动
+                    state.isDragging = true;
+                    state.dragStart = { x, y, ann: state.annotations[state.currentImage][clicked] };
+                    return;
+                } else {
+                    deselectAnnotation();
+                }
+            }
+
+            // 绘制模式
+            if (state.tool === 'rect') {
+                state.isDrawing = true;
+                state.startX = x;
+                state.startY = y;
+            } else if (state.tool === 'polygon') {
+                state.points.push([x, y]);
+                renderAnnotations();
+            } else if (state.tool === 'keypoint') {
+                addKeypointAnnotation(x, y);
+            } else if (state.tool === 'obb') {
+                if (!state.isDrawing) {
+                    state.isDrawing = true;
+                    state.startX = x;
+                    state.startY = y;
+                } else {
+                    addOBBAnnotation(x, y);
+                }
+            } else if (state.tool === 'sam') {
+                addSAMPrompt(x, y, true);
+            }
         }
 
-        // 渲染标注列表
-        function renderAnnotationsList() {
-            const list = document.getElementById('annotationsList');
-            const annotations = state.annotations[state.currentImage] || [];
-            
-            if (annotations.length === 0) {
-                list.innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">暂无标注</p>';
+        function onMouseMove(e) {
+            if (!state.currentImage) return;
+
+            const { x, y } = getCanvasCoords(e);
+
+            // 拖动已选中的标注
+            if (state.tool === 'select' && state.isDragging && state.selectedAnnotation !== null) {
+                const ann = state.annotations[state.currentImage][state.selectedAnnotation];
+                const dx = (x - state.dragStart.x) / state.canvasScale;
+                const dy = (y - state.dragStart.y) / state.canvasScale;
+
+                if (ann.type === 'rect') {
+                    ann.bbox[0] += dx; ann.bbox[1] += dy;
+                    ann.bbox[2] += dx; ann.bbox[3] += dy;
+                } else if (ann.type === 'polygon') {
+                    ann.points = ann.points.map(p => [p[0] + dx, p[1] + dy]);
+                } else if (ann.type === 'keypoint') {
+                    ann.point[0] += dx; ann.point[1] += dy;
+                } else if (ann.type === 'obb') {
+                    ann.points = ann.points.map(p => [p[0] + dx, p[1] + dy]);
+                }
+
+                state.dragStart = { x, y, ann };
+                state.unsavedChanges = true;
+                renderAnnotations();
                 return;
             }
-            
-            list.innerHTML = annotations.map((ann, index) => `
-                <div class="annotation-card">
-                    <div class="annotation-header">
-                        <span class="annotation-label">${ann.class}</span>
-                        <span class="annotation-confidence">${(ann.confidence * 100).toFixed(0)}%</span>
-                    </div>
-                    <div class="annotation-coords">
-                        x: ${ann.x.toFixed(3)}, y: ${ann.y.toFixed(3)}<br>
-                        w: ${ann.width.toFixed(3)}, h: ${ann.height.toFixed(3)}
-                    </div>
-                    <div class="annotation-actions">
-                        <button class="icon-btn icon-btn-danger" onclick="deleteAnnotation(${index})">
-                            🗑️ 删除
-                        </button>
-                    </div>
-                </div>
-            `).join('');
-        }
 
-        // 开始绘制
-        function startDrawing(e) {
-            if (!state.currentImage) return;
-            
-            const rect = state.canvas.getBoundingClientRect();
-            state.isDrawing = true;
-            state.startX = e.clientX - rect.left;
-            state.startY = e.clientY - rect.top;
-        }
+            if (!state.isDrawing) return;
 
-        // 绘制中
-        function draw(e) {
-            if (!state.isDrawing || !state.currentImage) return;
-            
-            const rect = state.canvas.getBoundingClientRect();
-            const currentX = e.clientX - rect.left;
-            const currentY = e.clientY - rect.top;
-            
-            // 重绘图片和现有标注
             renderAnnotations();
-            
-            // 绘制当前框
-            state.ctx.strokeStyle = document.getElementById('boxColor').value;
-            state.ctx.lineWidth = parseInt(document.getElementById('boxThickness').value);
-            state.ctx.strokeRect(
-                state.startX,
-                state.startY,
-                currentX - state.startX,
-                currentY - state.startY
-            );
+            const ctx = state.ctx;
+            ctx.strokeStyle = state.classColors[state.selectedClass];
+            ctx.lineWidth = 2 * state.canvasScale;
+
+            if (state.tool === 'rect') {
+                const width = x - state.startX;
+                const height = y - state.startY;
+                ctx.strokeRect(
+                    state.startX * state.canvasScale,
+                    state.startY * state.canvasScale,
+                    width * state.canvasScale,
+                    height * state.canvasScale
+                );
+            } else if (state.tool === 'obb') {
+                // 绘制临时旋转框
+                ctx.beginPath();
+                ctx.moveTo(state.startX * state.canvasScale, state.startY * state.canvasScale);
+                ctx.lineTo(x * state.canvasScale, y * state.canvasScale);
+                ctx.stroke();
+            }
         }
 
-        // 停止绘制
-        function stopDrawing(e) {
-            if (!state.isDrawing || !state.currentImage) return;
-            
-            const rect = state.canvas.getBoundingClientRect();
-            const endX = e.clientX - rect.left;
-            const endY = e.clientY - rect.top;
-            
-            const width = Math.abs(endX - state.startX);
-            const height = Math.abs(endY - state.startY);
-            
-            // 只有当框足够大时才添加
-            if (width > 10 && height > 10) {
-                const x = Math.min(state.startX, endX);
-                const y = Math.min(state.startY, endY);
-                
-                // 转换为归一化坐标
-                const annotation = {
-                    class: state.selectedClass,
-                    x: x / state.canvas.width,
-                    y: y / state.canvas.height,
-                    width: width / state.canvas.width,
-                    height: height / state.canvas.height,
-                    confidence: 1.0
-                };
-                
-                if (!state.annotations[state.currentImage]) {
-                    state.annotations[state.currentImage] = [];
+        function onMouseUp(e) {
+            if (!state.isDrawing) return;
+
+            const { x, y } = getCanvasCoords(e);
+
+            if (state.tool === 'rect') {
+                const width = Math.abs(x - state.startX);
+                const height = Math.abs(y - state.startY);
+                if (width > 5 && height > 5) {
+                    addRectangleAnnotation(
+                        Math.min(state.startX, x),
+                        Math.min(state.startY, y),
+                        width,
+                        height
+                    );
                 }
-                state.annotations[state.currentImage].push(annotation);
-                
-                renderAnnotations();
-                updateStats();
             }
-            
+
             state.isDrawing = false;
         }
 
-        // 自动标注当前图片
-        async function autoAnnotateCurrent() {
-            if (!state.currentProject || !state.currentImage) {
-                showToast('请先选择项目和图片', 'error');
+        function onDoubleClick(e) {
+            if (state.tool === 'polygon' && state.points.length >= 3) {
+                addPolygonAnnotation();
+            }
+        }
+
+        function onRightClick(e) {
+            e.preventDefault();
+            if (!state.currentImage || !state.project) return;
+            if (state.tool !== 'sam') return;
+
+            const { x, y } = getCanvasCoords(e);
+            addSAMPrompt(x, y, false);
+        }
+
+        // ==================== 标注添加函数 ====================
+        function addRectangleAnnotation(x, y, width, height) {
+            const ann = {
+                type: 'rect',
+                class: state.selectedClass,
+                color: state.classColors[state.selectedClass],
+                bbox: [x, y, x + width, y + height],
+                confidence: 1.0
+            };
+            saveToHistory();
+            state.annotations[state.currentImage].push(ann);
+            state.unsavedChanges = true;
+            renderAnnotations();
+            updateStats();
+        }
+
+        function addPolygonAnnotation() {
+            if (state.points.length < 3) {
+                showToast('多边形至少需要3个顶点', 'warning');
                 return;
             }
-            
-            showLoading(true);
+
+            const ann = {
+                type: 'polygon',
+                class: state.selectedClass,
+                color: state.classColors[state.selectedClass],
+                points: state.points.map(p => [p[0], p[1]]),
+                confidence: 1.0
+            };
+            saveToHistory();
+            state.annotations[state.currentImage].push(ann);
+            state.points = [];
+            state.unsavedChanges = true;
+            renderAnnotations();
+            updateStats();
+        }
+
+        function addKeypointAnnotation(x, y) {
+            saveToHistory();
+
+            // 检查是否已存在该关键点类型
+            const existingIdx = state.annotations[state.currentImage].findIndex(
+                a => a.type === 'keypoint' && a.keypointIndex === state.selectedKeypoint.index
+            );
+
+            const ann = {
+                type: 'keypoint',
+                class: state.selectedClass,
+                color: COLOR_PALETTE[state.selectedKeypoint.index % COLOR_PALETTE.length],
+                keypointIndex: state.selectedKeypoint.index,
+                keypointName: state.selectedKeypoint.name,
+                keypointLabel: state.selectedKeypoint.label,
+                point: [x, y],
+                visibility: 2, // 2 = 可见, 1 = 模糊, 0 = 不可见
+                confidence: 1.0
+            };
+
+            if (existingIdx >= 0) {
+                state.annotations[state.currentImage][existingIdx] = ann;
+            } else {
+                state.annotations[state.currentImage].push(ann);
+            }
+
+            // 自动选择下一个关键点
+            if (state.selectedKeypoint.index < COCO_KEYPOINTS.length - 1) {
+                const nextIdx = state.selectedKeypoint.index + 1;
+                selectKeypoint(nextIdx, COCO_KEYPOINTS[nextIdx].name, COCO_KEYPOINTS[nextIdx].label);
+            }
+
+            state.unsavedChanges = true;
+            renderAnnotations();
+            updateStats();
+        }
+
+        function addOBBAnnotation(x, y) {
+            const cx = (state.startX + x) / 2;
+            const cy = (state.startY + y) / 2;
+            const width = Math.abs(x - state.startX);
+            const height = Math.abs(y - state.startY) || 20;
+
+            const angle = Math.atan2(y - state.startY, x - state.startX);
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+
+            // 计算4个角点
+            const corners = [
+                [cx - width/2 * cos - height/2 * sin, cy - width/2 * sin + height/2 * cos],
+                [cx + width/2 * cos - height/2 * sin, cy + width/2 * sin + height/2 * cos],
+                [cx + width/2 * cos + height/2 * sin, cy + width/2 * sin - height/2 * cos],
+                [cx - width/2 * cos + height/2 * sin, cy - width/2 * sin - height/2 * cos]
+            ];
+
+            const ann = {
+                type: 'obb',
+                class: state.selectedClass,
+                color: state.classColors[state.selectedClass],
+                points: corners,
+                angle: angle,
+                confidence: 1.0
+            };
+
+            saveToHistory();
+            state.annotations[state.currentImage].push(ann);
+            state.isDrawing = false;
+            state.unsavedChanges = true;
+            renderAnnotations();
+            updateStats();
+        }
+
+        // ==================== SAM 智能标注 ====================
+        function addSAMPrompt(x, y, isPositive) {
+            state.samPoints.push([x, y]);
+            state.samLabels.push(isPositive ? 1 : 0);
+
+            // 绘制提示点
+            const ctx = state.ctx;
+            ctx.beginPath();
+            ctx.arc(x * state.canvasScale, y * state.canvasScale, 8 * state.canvasScale, 0, Math.PI * 2);
+            ctx.fillStyle = isPositive ? '#4CAF50' : '#f44336';
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2 * state.canvasScale;
+            ctx.stroke();
+
+            // 添加 +/- 符号
+            ctx.fillStyle = 'white';
+            ctx.font = `${10 * state.canvasScale}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(isPositive ? '+' : '-', x * state.canvasScale, y * state.canvasScale);
+        }
+
+        function samClearPoints() {
+            state.samPoints = [];
+            state.samLabels = [];
+            renderAnnotations();
+        }
+
+        function samGenerateMask() {
+            if (state.samPoints.length === 0) {
+                showToast('请先添加提示点', 'warning');
+                return;
+            }
+
+            showLoading(true, '正在生成SAM掩码...');
+
+            // 模拟 SAM 响应（实际应调用后端API）
+            setTimeout(() => {
+                // 生成模拟的多边形掩码
+                const centerX = state.samPoints.reduce((s, p) => s + p[0], 0) / state.samPoints.length;
+                const centerY = state.samPoints.reduce((s, p) => s + p[1], 0) / state.samPoints.length;
+
+                const ann = {
+                    type: 'polygon',
+                    class: state.selectedClass,
+                    color: state.classColors[state.selectedClass],
+                    points: generatePolygonFromCenter(centerX, centerY, 100),
+                    confidence: 0.95
+                };
+
+                saveToHistory();
+                state.annotations[state.currentImage].push(ann);
+                state.samPoints = [];
+                state.samLabels = [];
+                state.unsavedChanges = true;
+
+                renderAnnotations();
+                updateStats();
+                showLoading(false);
+                showToast('SAM掩码生成完成', 'success');
+            }, 1000);
+        }
+
+        function generatePolygonFromCenter(cx, cy, size) {
+            const points = [];
+            const numPoints = 8;
+            for (let i = 0; i < numPoints; i++) {
+                const angle = (i / numPoints) * Math.PI * 2;
+                const r = size * (0.8 + Math.random() * 0.4);
+                points.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+            }
+            return points;
+        }
+
+        // ==================== YOLO 自动标注 ====================
+        async function runAutoAnnotation() {
+            if (!state.currentImage) {
+                showToast('请先选择图片', 'warning');
+                return;
+            }
+
+            showLoading(true, '正在运行自动标注...');
+
             try {
                 const formData = new FormData();
-                formData.append('model_name', document.getElementById('modelSelect').value);
-                formData.append('confidence', document.getElementById('confidenceSlider').value);
-                formData.append('iou_threshold', document.getElementById('iouSlider').value);
-                
-                const response = await fetch(`/api/v1/annotation/auto-annotate/${state.currentProject.id}`, {
+                formData.append('model', document.getElementById('autoModel').value);
+                formData.append('conf', document.getElementById('confThreshold').value);
+
+                // 获取图片数据
+                const imgData = state.canvas.toDataURL('image/jpeg', 0.9);
+                const blob = await (await fetch(imgData)).blob();
+                formData.append('image', blob, 'image.jpg');
+
+                const response = await fetch('/api/v1/inference/predict', {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 const result = await response.json();
-                
-                if (result.success) {
-                    // 重新加载项目以获取新标注
-                    await loadProject(state.currentProject.id);
-                    
-                    // 重新加载当前图片
-                    const currentImg = state.currentProject.images.find(img => img.name === state.currentImage);
-                    if (currentImg) {
-                        loadImage(currentImg);
-                    }
-                    
-                    showToast(`自动标注完成！共检测到 ${result.total_detections} 个对象`, 'success');
+
+                if (result.success && result.detections) {
+                    saveToHistory();
+                    const newAnnotations = [];
+
+                    result.detections.forEach(det => {
+                        if (det.confidence >= parseFloat(document.getElementById('confThreshold').value)) {
+                            const [x1, y1, x2, y2] = det.bbox;
+                            newAnnotations.push({
+                                type: state.project?.task_type === 'segment' && det.mask ? 'polygon' : 'rect',
+                                class: det.class_name,
+                                color: state.classColors[det.class_name] || COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)],
+                                bbox: det.bbox,
+                                points: det.mask || null,
+                                confidence: det.confidence
+                            });
+                        }
+                    });
+
+                    state.annotations[state.currentImage] = newAnnotations;
+                    state.unsavedChanges = true;
+                    renderAnnotations();
+                    updateStats();
+                    showToast(`自动标注完成: ${newAnnotations.length} 个对象`, 'success');
                 } else {
-                    showToast('自动标注失败: ' + result.message, 'error');
+                    showToast('自动标注失败: ' + (result.message || '未知错误'), 'error');
                 }
             } catch (error) {
                 showToast('自动标注失败: ' + error.message, 'error');
@@ -1126,45 +1632,785 @@
             }
         }
 
-        // 批量自动标注
-        async function autoAnnotateAll() {
-            if (!state.currentProject) {
-                showToast('请先选择项目', 'error');
-                return;
+        // ==================== 命中测试 ====================
+        function hitTest(x, y) {
+            const annotations = state.annotations[state.currentImage] || [];
+            for (let i = annotations.length - 1; i >= 0; i--) {
+                const ann = annotations[i];
+                if (ann.type === 'rect') {
+                    const [x1, y1, x2, y2] = ann.bbox;
+                    if (x >= x1 && x <= x2 && y >= y1 && y <= y2) return i;
+                } else if (ann.type === 'polygon') {
+                    if (isPointInPolygon([x, y], ann.points)) return i;
+                } else if (ann.type === 'keypoint') {
+                    const [kx, ky] = ann.point;
+                    const dist = Math.sqrt((x - kx) ** 2 + (y - ky) ** 2);
+                    if (dist < 15) return i;
+                } else if (ann.type === 'obb') {
+                    if (isPointInPolygon([x, y], ann.points)) return i;
+                }
             }
-            
-            if (!confirm('确定要对所有图片进行自动标注吗？这可能需要一些时间。')) {
-                return;
-            }
-            
-            await autoAnnotateCurrent();
+            return -1;
         }
 
-        // 保存标注
-        async function saveAnnotations() {
-            if (!state.currentProject) {
-                showToast('请先选择项目', 'error');
+        function isPointInPolygon(point, polygon) {
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                const xi = polygon[i][0], yi = polygon[i][1];
+                const xj = polygon[j][0], yj = polygon[j][1];
+                if (((yi > point[1]) !== (yj > point[1])) &&
+                    (point[0] < (xj - xi) * (point[1] - yi) / (yj - yi) + xi)) {
+                    inside = !inside;
+                }
+            }
+            return inside;
+        }
+
+        // ==================== 选择/编辑 ====================
+        function selectAnnotation(index) {
+            state.selectedAnnotation = index;
+            renderAnnotations();
+            renderAnnotationsList();
+        }
+
+        function deselectAnnotation() {
+            state.selectedAnnotation = null;
+            renderAnnotations();
+            renderAnnotationsList();
+        }
+
+        function deleteAnnotation(index) {
+            saveToHistory();
+            state.annotations[state.currentImage].splice(index, 1);
+            if (state.selectedAnnotation === index) {
+                state.selectedAnnotation = null;
+            }
+            state.unsavedChanges = true;
+            renderAnnotations();
+            updateStats();
+        }
+
+        // ==================== 渲染 ====================
+        function renderAnnotations() {
+            if (!state.currentImage || !state.currentImageElement) return;
+
+            const ctx = state.ctx;
+            const scale = state.canvasScale;
+
+            // 清空并重绘背景
+            ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+            ctx.drawImage(state.currentImageElement, 0, 0, state.canvas.width, state.canvas.height);
+
+            const annotations = state.annotations[state.currentImage] || [];
+
+            // 绘制所有标注
+            annotations.forEach((ann, idx) => {
+                const isSelected = idx === state.selectedAnnotation;
+                drawAnnotation(ctx, ann, scale, isSelected);
+            });
+
+            // 绘制当前绘制中的多边形
+            if (state.tool === 'polygon' && state.points.length > 0) {
+                ctx.strokeStyle = '#FF5722';
+                ctx.lineWidth = 2 * scale;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                state.points.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p[0] * scale, p[1] * scale);
+                    else ctx.lineTo(p[0] * scale, p[1] * scale);
+                });
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 绘制顶点
+                state.points.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p[0] * scale, p[1] * scale, 4 * scale, 0, Math.PI * 2);
+                    ctx.fillStyle = '#FF5722';
+                    ctx.fill();
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 1 * scale;
+                    ctx.stroke();
+                });
+
+                // 闭合提示
+                if (state.points.length >= 3) {
+                    ctx.fillStyle = '#FF5722';
+                    ctx.font = `${12 * scale}px Arial`;
+                    ctx.fillText('双击完成', state.points[state.points.length-1][0] * scale + 10,
+                                state.points[state.points.length-1][1] * scale);
+                }
+            }
+
+            renderAnnotationsList();
+        }
+
+        function drawAnnotation(ctx, ann, scale, isSelected) {
+            const lineWidth = isSelected ? 3 * scale : 2 * scale;
+            ctx.strokeStyle = ann.color;
+            ctx.fillStyle = ann.color + '30';
+            ctx.lineWidth = lineWidth;
+
+            if (ann.type === 'rect') {
+                const [x1, y1, x2, y2] = ann.bbox;
+                ctx.strokeRect(x1 * scale, y1 * scale, (x2 - x1) * scale, (y2 - y1) * scale);
+                if (isSelected) {
+                    ctx.fillRect(x1 * scale, y1 * scale, (x2 - x1) * scale, (y2 - y1) * scale);
+                    drawResizeHandles(ctx, [x1, y1, x2, y2], scale);
+                }
+                // 标签
+                ctx.fillStyle = ann.color;
+                ctx.fillRect(x1 * scale, (y1 - 20) * scale, (ann.class.length * 8 + 20) * scale, 20 * scale);
+                ctx.fillStyle = 'white';
+                ctx.font = `${11 * scale}px Arial`;
+                ctx.fillText(ann.class, (x1 + 8) * scale, (y1 - 5) * scale);
+            }
+            else if (ann.type === 'polygon') {
+                ctx.beginPath();
+                ann.points.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p[0] * scale, p[1] * scale);
+                    else ctx.lineTo(p[0] * scale, p[1] * scale);
+                });
+                ctx.closePath();
+                ctx.stroke();
+                if (isSelected || ann.type === 'sam') ctx.fill();
+            }
+            else if (ann.type === 'keypoint') {
+                const [kx, ky] = ann.point;
+                ctx.beginPath();
+                ctx.arc(kx * scale, ky * scale, 6 * scale, 0, Math.PI * 2);
+                ctx.fillStyle = ann.color;
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2 * scale;
+                ctx.stroke();
+                // 标签
+                ctx.fillStyle = ann.color;
+                ctx.fillRect(kx * scale + 8 * scale, (ky - 10) * scale, 40 * scale, 16 * scale);
+                ctx.fillStyle = 'white';
+                ctx.font = `${10 * scale}px Arial`;
+                ctx.fillText(ann.keypointLabel, (kx + 10) * scale, (ky + 3) * scale);
+            }
+            else if (ann.type === 'obb') {
+                ctx.beginPath();
+                ann.points.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p[0] * scale, p[1] * scale);
+                    else ctx.lineTo(p[0] * scale, p[1] * scale);
+                });
+                ctx.closePath();
+                ctx.stroke();
+                if (isSelected) {
+                    ctx.fill();
+                    // 绘制旋转手柄
+                    ctx.beginPath();
+                    const center = ann.points.reduce((s, p) => [s[0] + p[0]/4, s[1] + p[1]/4], [0, 0]);
+                    ctx.arc(center[0] * scale, center[1] * scale, 6 * scale, 0, Math.PI * 2);
+                    ctx.fillStyle = ann.color;
+                    ctx.fill();
+                }
+            }
+        }
+
+        function drawResizeHandles(ctx, bbox, scale) {
+            const [x1, y1, x2, y2] = bbox;
+            const handleSize = 8 * scale;
+            const handles = [
+                [x1, y1], [(x1+x2)/2, y1], [x2, y1],
+                [x2, (y1+y2)/2], [x2, y2], [(x1+x2)/2, y2],
+                [x1, y2], [x1, (y1+y2)/2]
+            ];
+            ctx.fillStyle = 'white';
+            ctx.strokeStyle = '#2196F3';
+            handles.forEach(([hx, hy]) => {
+                ctx.fillRect((hx - handleSize/2) * scale, (hy - handleSize/2) * scale, handleSize * scale, handleSize * scale);
+                ctx.strokeRect((hx - handleSize/2) * scale, (hy - handleSize/2) * scale, handleSize * scale, handleSize * scale);
+            });
+        }
+
+        function renderAnnotationsList() {
+            const list = document.getElementById('annotationsList');
+            const annotations = state.annotations[state.currentImage] || [];
+
+            if (annotations.length === 0) {
+                list.innerHTML = '<p style="text-align: center; color: #999; padding: 1rem;">暂无标注</p>';
                 return;
             }
-            
-            showLoading(true);
-            try {
-                const response = await fetch('/api/v1/annotation/save', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        project_id: state.currentProject.id,
-                        annotations: state.annotations,
-                        classes: state.classes
-                    })
+
+            list.innerHTML = annotations.map((ann, idx) => {
+                let info = '', typeName = '';
+                if (ann.type === 'rect') {
+                    info = `框: ${Math.round(ann.bbox[2]-ann.bbox[0])} × ${Math.round(ann.bbox[3]-ann.bbox[1])}`;
+                    typeName = '矩形';
+                } else if (ann.type === 'polygon') {
+                    info = `顶点数: ${ann.points.length}`;
+                    typeName = '多边形';
+                } else if (ann.type === 'keypoint') {
+                    info = `${ann.keypointLabel}: [${Math.round(ann.point[0])}, ${Math.round(ann.point[1])}]`;
+                    typeName = '关键点';
+                } else if (ann.type === 'obb') {
+                    info = `角度: ${Math.round(ann.angle * 180 / Math.PI)}°`;
+                    typeName = '旋转框';
+                }
+
+                return `
+                    <div class="annotation-card ${idx === state.selectedAnnotation ? 'selected' : ''}"
+                         onclick="selectAnnotation(${idx})">
+                        <div class="annotation-header">
+                            <span class="annotation-label">
+                                <span class="color-dot" style="background: ${ann.color};"></span>
+                                ${ann.class}
+                            </span>
+                            <span class="annotation-type">${typeName}</span>
+                        </div>
+                        <div class="annotation-info">${info}</div>
+                        ${ann.confidence < 1 ? `<div class="annotation-confidence">置信度: ${(ann.confidence * 100).toFixed(1)}%</div>` : ''}
+                        <div class="annotation-actions">
+                            <button class="icon-btn icon-btn-delete" onclick="event.stopPropagation(); deleteAnnotation(${idx})">🗑️</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // ==================== 工具函数 ====================
+        function setTool(tool) {
+            state.tool = tool;
+            state.points = [];
+            state.samPoints = [];
+            state.samLabels = [];
+            deselectAnnotation();
+
+            // 更新UI
+            document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+            const toolBtn = document.getElementById(`tool-${tool}`);
+            if (toolBtn) toolBtn.classList.add('active');
+
+            // 根据任务类型自动切换
+            if (state.project && tool !== 'sam' && tool !== 'auto') {
+                const taskTool = getToolForTask(state.project.task_type);
+                if (taskTool && taskTool !== tool) {
+                    // 提示但不强制切换
+                }
+            }
+
+            // SAM/自动标注切换到选择模式
+            if (tool === 'sam' || tool === 'auto') {
+                state.canvas.style.cursor = 'crosshair';
+            } else if (tool === 'select') {
+                state.canvas.style.cursor = 'default';
+            } else {
+                state.canvas.style.cursor = 'crosshair';
+            }
+        }
+
+        function getToolForTask(taskType) {
+            const mapping = { 'detect': 'rect', 'segment': 'polygon', 'pose': 'keypoint', 'obb': 'obb', 'classify': null };
+            return mapping[taskType] || 'rect';
+        }
+
+        function selectKeypoint(index, name, label) {
+            state.selectedKeypoint = { index, name, label };
+            document.querySelectorAll('.keypoint-btn').forEach((btn, i) => {
+                btn.classList.toggle('active', i === index);
+            });
+        }
+
+        // ==================== 类别管理 ====================
+        function renderClassGrid() {
+            const grid = document.getElementById('classGrid');
+            grid.innerHTML = state.classes.map((cls, idx) => `
+                <div class="class-chip ${cls === state.selectedClass ? 'active' : ''}"
+                     onclick="selectClass('${cls}')"
+                     style="border-color: ${state.classColors[cls]}">
+                    <span class="color-dot" style="background: ${state.classColors[cls]};"></span>
+                    <span>${cls.charAt(0).toUpperCase() + cls.slice(1)}</span>
+                    <button class="delete-btn" onclick="event.stopPropagation(); deleteClass('${cls}')">×</button>
+                </div>
+            `).join('');
+        }
+
+        function selectClass(className) {
+            state.selectedClass = className;
+            document.querySelectorAll('.class-chip').forEach(chip => {
+                const name = chip.querySelector('span:nth-child(2)')?.textContent?.toLowerCase();
+                chip.classList.toggle('active', name === className.toLowerCase());
+            });
+            document.querySelectorAll('.classify-item').forEach(item => {
+                item.classList.toggle('active', item.querySelector('div:last-child')?.textContent?.toLowerCase() === className.toLowerCase());
+            });
+        }
+
+        function addClass() {
+            const input = document.getElementById('newClassInput');
+            const className = input.value.trim().toLowerCase();
+
+            if (!className) return;
+            if (state.classes.includes(className)) {
+                showToast('类别已存在', 'error');
+                return;
+            }
+
+            state.classes.push(className);
+            state.classColors[className] = COLOR_PALETTE[state.classes.length % COLOR_PALETTE.length];
+            renderClassGrid();
+            input.value = '';
+            showToast(`类别 "${className}" 添加成功`, 'success');
+        }
+
+        function deleteClass(className) {
+            if (state.classes.length <= 1) {
+                showToast('至少保留一个类别', 'error');
+                return;
+            }
+            if (!confirm(`确定删除类别 "${className}"？相关标注也会被删除。`)) return;
+
+            state.classes = state.classes.filter(c => c !== className);
+            delete state.classColors[className];
+            if (state.selectedClass === className) {
+                state.selectedClass = state.classes[0];
+            }
+            renderClassGrid();
+            showToast(`类别 "${className}" 已删除`, 'success');
+        }
+
+        function handleClassInputKeypress(e) {
+            if (e.key === 'Enter') addClass();
+        }
+
+        function showClassTable() {
+            const tbody = document.getElementById('classTableBody');
+            let totalAnnotations = 0;
+
+            // 统计每个类别的标注数
+            state.classCounts = {};
+            Object.values(state.annotations).forEach(anns => {
+                anns.forEach(a => {
+                    state.classCounts[a.class] = (state.classCounts[a.class] || 0) + 1;
+                    totalAnnotations++;
                 });
-                
+            });
+
+            tbody.innerHTML = state.classes.map((cls, idx) => `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td><input type="text" value="${cls}" onchange="renameClass('${cls}', this.value)"
+                               style="padding: 0.25rem; border: 1px solid #ddd; border-radius: 4px; width: 100px;"></td>
+                    <td><span style="display: inline-block; width: 20px; height: 20px; background: ${state.classColors[cls]}; border-radius: 50%;"></span></td>
+                    <td>${state.classCounts[cls] || 0}</td>
+                    <td><button class="icon-btn icon-btn-delete" onclick="deleteClass('${cls}')">删除</button></td>
+                </tr>
+            `).join('');
+
+            document.getElementById('classTableModal').classList.add('active');
+        }
+
+        function renameClass(oldName, newName) {
+            newName = newName.trim().toLowerCase();
+            if (!newName || newName === oldName) return;
+            if (state.classes.includes(newName)) {
+                showToast('类别名称已存在', 'error');
+                return;
+            }
+
+            const idx = state.classes.indexOf(oldName);
+            state.classes[idx] = newName;
+            state.classColors[newName] = state.classColors[oldName];
+            delete state.classColors[oldName];
+
+            // 更新所有标注
+            Object.values(state.annotations).forEach(anns => {
+                anns.forEach(a => {
+                    if (a.class === oldName) a.class = newName;
+                });
+            });
+
+            if (state.selectedClass === oldName) state.selectedClass = newName;
+
+            renderClassGrid();
+            renderAnnotations();
+            showToast('类别名称已更新', 'success');
+        }
+
+        function closeClassTableModal() {
+            document.getElementById('classTableModal').classList.remove('active');
+        }
+
+        // ==================== 撤销/重做 ====================
+        function saveToHistory() {
+            // 移除当前位置之后的历史
+            state.history = state.history.slice(0, state.historyIndex + 1);
+
+            // 保存当前状态
+            state.history.push(JSON.stringify({
+                annotations: JSON.parse(JSON.stringify(state.annotations)),
+                classes: [...state.classes],
+                classColors: {...state.classColors}
+            }));
+
+            // 限制历史长度
+            if (state.history.length > 50) {
+                state.history.shift();
+            }
+
+            state.historyIndex = state.history.length - 1;
+        }
+
+        function undoAnnotation() {
+            if (state.historyIndex <= 0) {
+                showToast('没有更多可撤销的操作', 'warning');
+                return;
+            }
+
+            state.historyIndex--;
+            const historyState = JSON.parse(state.history[state.historyIndex]);
+            state.annotations = historyState.annotations;
+            state.classes = historyState.classes;
+            state.classColors = historyState.classColors;
+
+            renderClassGrid();
+            renderAnnotations();
+            updateStats();
+            showToast('已撤销', 'info');
+        }
+
+        function redoAnnotation() {
+            if (state.historyIndex >= state.history.length - 1) {
+                showToast('没有更多可重做的操作', 'warning');
+                return;
+            }
+
+            state.historyIndex++;
+            const historyState = JSON.parse(state.history[state.historyIndex]);
+            state.annotations = historyState.annotations;
+            state.classes = historyState.classes;
+            state.classColors = historyState.classColors;
+
+            renderClassGrid();
+            renderAnnotations();
+            updateStats();
+            showToast('已重做', 'info');
+        }
+
+        // ==================== 缩放控制 ====================
+        function zoomIn() {
+            if (state.canvasScale < 3) {
+                state.canvasScale = Math.min(3, state.canvasScale + 0.2);
+                updateCanvasSize();
+            }
+        }
+
+        function zoomOut() {
+            if (state.canvasScale > 0.25) {
+                state.canvasScale = Math.max(0.25, state.canvasScale - 0.2);
+                updateCanvasSize();
+            }
+        }
+
+        function updateCanvasSize() {
+            if (!state.currentImageElement) return;
+
+            const img = state.currentImageElement;
+            const wrapper = document.getElementById('canvasWrapper');
+
+            state.canvas.width = img.width * state.canvasScale;
+            state.canvas.height = img.height * state.canvasScale;
+
+            document.getElementById('zoomLevel').textContent = Math.round(state.canvasScale * 100) + '%';
+            renderAnnotations();
+        }
+
+        // ==================== 图像导航 ====================
+        function prevImage() {
+            if (checkUnsavedChanges()) {
+                if (state.currentImageIndex > 0) {
+                    state.currentImageIndex--;
+                    loadImageAtIndex(state.currentImageIndex);
+                }
+            }
+        }
+
+        function nextImage() {
+            if (checkUnsavedChanges()) {
+                if (state.currentImageIndex < state.images.length - 1) {
+                    state.currentImageIndex++;
+                    loadImageAtIndex(state.currentImageIndex);
+                }
+            }
+        }
+
+        function checkUnsavedChanges() {
+            if (!state.unsavedChanges) return true;
+            return confirm('有未保存的更改，确定离开吗？');
+        }
+
+        function loadImageAtIndex(index) {
+            if (index < 0 || index >= state.images.length) return;
+
+            const imageName = state.images[index];
+            state.currentImageIndex = index;
+
+            // 更新导航
+            document.getElementById('imageNavInfo').textContent = `${index + 1} / ${state.images.length}`;
+            document.getElementById('prevImage').disabled = index === 0;
+            document.getElementById('nextImage').disabled = index === state.images.length - 1;
+
+            loadImageToCanvas(imageName);
+        }
+
+        // ==================== 项目管理 ====================
+        function createProject() {
+            document.getElementById('projectModal').classList.add('active');
+        }
+
+        function closeProjectModal() {
+            document.getElementById('projectModal').classList.remove('active');
+        }
+
+        async function submitCreateProject() {
+            const name = document.getElementById('projectName').value.trim();
+            const taskType = document.getElementById('taskType').value;
+            const classesStr = document.getElementById('projectClasses').value;
+            const classes = classesStr.split(',').map(c => c.trim()).filter(c => c);
+
+            if (!name) {
+                showToast('请输入项目名称', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/v1/annotation/projects', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ name, task_type: taskType, classes: JSON.stringify(classes) })
+                });
+
                 const result = await response.json();
-                
+
                 if (result.success) {
-                    showToast('标注保存成功', 'success');
+                    showToast('项目创建成功', 'success');
+                    closeProjectModal();
+                    state.project = result.project;
+                    state.classes = classes;
+                    state.classCounts = {};
+                    initializeClassColors();
+                    updateProjectInfo();
+                    renderClassGrid();
+                    updateToolVisibility();
+                    loadProjectImages();
+                } else {
+                    showToast(result.message || '创建失败', 'error');
+                }
+            } catch (error) {
+                showToast('创建失败: ' + error.message, 'error');
+            }
+        }
+
+        function updateProjectInfo() {
+            if (!state.project) return;
+
+            const taskNames = {
+                'detect': '🎯 目标检测',
+                'segment': '🔺 实例分割',
+                'pose': '⭕ 姿态估计',
+                'obb': '🔘 旋转框',
+                'classify': '📁 图像分类'
+            };
+
+            document.getElementById('projectInfo').innerHTML = `
+                <strong>${state.project.name}</strong>
+                <div class="task-type">${taskNames[state.project.task_type] || state.project.task_type}</div>
+            `;
+        }
+
+        function updateToolVisibility() {
+            if (!state.project) return;
+
+            const taskType = state.project.task_type;
+            const tools = ['rect', 'polygon', 'keypoint', 'obb', 'sam', 'auto'];
+
+            tools.forEach(t => {
+                const btn = document.getElementById(`tool-${t}`);
+                if (btn) {
+                    if (t === 'sam' || t === 'auto') {
+                        btn.style.display = 'flex';
+                    } else {
+                        btn.style.display = ['detect', 'segment', 'pose', 'obb'].includes(taskType) ? 'flex' : 'none';
+                    }
+                }
+            });
+
+            // 显示/隐藏关键点预设
+            const kpPreset = document.getElementById('keypointPreset');
+            const kpTitle = document.getElementById('keypointPresetTitle');
+            if (kpPreset) kpPreset.style.display = taskType === 'pose' ? 'grid' : 'none';
+            if (kpTitle) kpTitle.style.display = taskType === 'pose' ? 'block' : 'none';
+
+            // 显示/隐藏分类选择
+            const classifyTitle = document.getElementById('classifyTitle');
+            const classifyGrid = document.getElementById('classifyGrid');
+            if (classifyTitle) classifyTitle.style.display = taskType === 'classify' ? 'block' : 'none';
+            if (classifyGrid) classifyGrid.style.display = taskType === 'classify' ? 'grid' : 'none';
+
+            if (taskType === 'classify') renderClassifyGrid();
+
+            // 自动选择合适的工具
+            const autoTool = getToolForTask(taskType);
+            if (autoTool) setTool(autoTool);
+        }
+
+        // ==================== 图片管理 ====================
+        async function uploadImages() {
+            if (!state.project) {
+                showToast('请先创建项目', 'error');
+                return;
+            }
+            document.getElementById('imageUpload').click();
+        }
+
+        async function handleImageUpload(e) {
+            const files = Array.from(e.target.files);
+            if (files.length === 0 || !state.project) return;
+
+            showLoading(true, `上传中 0/${files.length}`);
+
+            try {
+                const formData = new FormData();
+                files.forEach(file => formData.append('files', file));
+
+                const response = await fetch(`/api/v1/annotation/projects/${state.project.name}/images`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast(`成功上传 ${files.length} 张图片`, 'success');
+                    await loadProjectImages();
+                } else {
+                    showToast('上传失败', 'error');
+                }
+            } catch (error) {
+                showToast('上传失败: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+                e.target.value = '';
+            }
+        }
+
+        async function loadProjectImages() {
+            if (!state.project) return;
+
+            try {
+                const response = await fetch(`/api/v1/annotation/projects/${state.project.name}/images`);
+                const result = await response.json();
+
+                if (result.success) {
+                    state.images = result.images || [];
+                    renderImageList(state.images);
+
+                    if (state.images.length > 0) {
+                        loadImageAtIndex(0);
+                    }
+                }
+            } catch (error) {
+                console.error('加载图片失败:', error);
+                // 使用示例图片
+                state.images = ['image_00001.jpg', 'image_00002.jpg', 'image_00003.jpg'];
+                renderImageList(state.images);
+                if (state.images.length > 0) loadImageAtIndex(0);
+            }
+        }
+
+        function renderImageList(images) {
+            const list = document.getElementById('imageList');
+
+            if (!images || images.length === 0) {
+                list.innerHTML = '<p style="text-align: center; color: #999; padding: 1rem;">暂无图片</p>';
+                return;
+            }
+
+            list.innerHTML = images.map((img, idx) => {
+                const count = (state.annotations[img] || []).length;
+                return `
+                    <div class="image-item ${idx === state.currentImageIndex ? 'active' : ''}"
+                         onclick="loadImageAtIndex(${idx})" data-index="${idx}">
+                        <div class="image-item-name">${img}</div>
+                        ${count > 0 ? `<span class="image-item-badge">${count}</span>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function loadImageToCanvas(imageName) {
+            state.currentImage = imageName;
+
+            if (!state.annotations[imageName]) {
+                state.annotations[imageName] = [];
+            }
+
+            // 初始化历史
+            saveToHistory();
+
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                state.currentImageElement = img;
+                state.imageSize = [img.width, img.height];
+
+                const wrapper = document.getElementById('canvasWrapper');
+                const maxWidth = wrapper.clientWidth - 40;
+                const maxHeight = wrapper.clientHeight - 80;
+
+                state.canvasScale = Math.min(1, maxWidth / img.width, maxHeight / img.height);
+
+                state.canvas.width = img.width * state.canvasScale;
+                state.canvas.height = img.height * state.canvasScale;
+
+                document.querySelector('.canvas-placeholder').style.display = 'none';
+                state.canvas.style.display = 'block';
+
+                document.getElementById('zoomLevel').textContent = Math.round(state.canvasScale * 100) + '%';
+
+                renderAnnotations();
+                updateStats();
+
+                // 更新选中状态
+                document.querySelectorAll('.image-item').forEach(item => {
+                    item.classList.toggle('active', item.textContent.includes(imageName));
+                });
+            };
+
+            img.onerror = () => {
+                showToast(`无法加载图片: ${imageName}`, 'error');
+            };
+
+            img.src = imageName.startsWith('/') ? imageName : `/uploads/${imageName}`;
+        }
+
+        // ==================== 保存 ====================
+        async function saveAnnotations() {
+            if (!state.project || !state.currentImage) {
+                showToast('请先选择项目和图片', 'error');
+                return;
+            }
+
+            showLoading(true, '保存中...');
+
+            try {
+                const annotations = state.annotations[state.currentImage] || [];
+
+                const response = await fetch(`/api/v1/annotation/projects/${state.project.name}/image/${state.currentImage}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ annotations: JSON.stringify(annotations) })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    state.unsavedChanges = false;
+                    showToast('标注已保存', 'success');
                 } else {
                     showToast('保存失败: ' + result.message, 'error');
                 }
@@ -1175,158 +2421,87 @@
             }
         }
 
-        // 导出数据集
-        async function exportDataset() {
-            if (!state.currentProject) {
-                showToast('请先选择项目', 'error');
-                return;
-            }
-            
-            showLoading(true);
-            try {
-                const response = await fetch(`/api/v1/annotation/export/${state.currentProject.id}`);
-                
-                if (response.ok) {
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${state.currentProject.name}_yolo.zip`;
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    
-                    showToast('数据集导出成功', 'success');
-                } else {
-                    showToast('导出失败', 'error');
+        // ==================== 键盘快捷键 ====================
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', (e) => {
+                // 忽略输入框中的快捷键
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                    if (e.key === 'Enter') e.target.blur();
+                    return;
                 }
-            } catch (error) {
-                showToast('导出失败: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
 
-        // 创建项目
-        async function createProject() {
-            const name = prompt('请输入项目名称:');
-            if (!name) return;
-            
-            const description = prompt('请输入项目描述（可选）:') || '';
-            
-            showLoading(true);
-            try {
-                const response = await fetch('/api/v1/annotation/projects', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ name, description })
-                });
-                
-                const result = await response.json();
-                
-                if (result.id) {
-                    showToast('项目创建成功', 'success');
-                    await loadProjects();
-                    document.getElementById('projectSelect').value = result.id;
-                    await loadProject(result.id);
-                } else {
-                    showToast('创建失败', 'error');
+                // 工具快捷键
+                const toolKeys = { 'b': 'rect', 'p': 'polygon', 'k': 'keypoint', 'o': 'obb', 's': 'sam', 'a': 'auto', 'v': 'select' };
+                if (toolKeys[e.key.toLowerCase()] && !e.ctrlKey && !e.metaKey) {
+                    setTool(toolKeys[e.key.toLowerCase()]);
+                    return;
                 }
-            } catch (error) {
-                showToast('创建失败: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
 
-        // 上传图片
-        function uploadImages() {
-            if (!state.currentProject) {
-                showToast('请先选择项目', 'error');
-                return;
-            }
-            document.getElementById('imageUpload').click();
-        }
-
-        async function handleImageUpload(e) {
-            const files = Array.from(e.target.files);
-            if (files.length === 0) return;
-            
-            showLoading(true);
-            try {
-                const formData = new FormData();
-                formData.append('project_id', state.currentProject.id);
-                files.forEach(file => formData.append('files', file));
-                
-                const response = await fetch('/api/v1/annotation/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showToast(`成功上传 ${result.uploaded} 张图片`, 'success');
-                    await loadProject(state.currentProject.id);
-                } else {
-                    showToast('上传失败: ' + result.message, 'error');
+                // 类别快捷键 1-9
+                if (e.key >= '1' && e.key <= '9') {
+                    const idx = parseInt(e.key) - 1;
+                    if (idx < state.classes.length) {
+                        selectClass(state.classes[idx]);
+                    }
+                    return;
                 }
-            } catch (error) {
-                showToast('上传失败: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-                e.target.value = '';
-            }
-        }
 
-        // 添加类别
-        function addClass() {
-            const input = document.getElementById('newClassInput');
-            const className = input.value.trim();
-            
-            if (!className) return;
-            
-            if (state.classes.includes(className)) {
-                showToast('类别已存在', 'error');
-                return;
-            }
-            
-            state.classes.push(className);
-            renderClassGrid();
-            input.value = '';
-            showToast('类别添加成功', 'success');
-        }
+                // 功能快捷键
+                if (e.key === 'Delete' || e.key === 'Backspace') {
+                    if (state.selectedAnnotation !== null) {
+                        deleteAnnotation(state.selectedAnnotation);
+                    }
+                    return;
+                }
 
-        // 渲染类别网格
-        function renderClassGrid() {
-            const grid = document.getElementById('classGrid');
-            grid.innerHTML = state.classes.map(cls => `
-                <div class="class-chip ${cls === state.selectedClass ? 'active' : ''}" 
-                     data-class="${cls}">
-                    ${cls.charAt(0).toUpperCase() + cls.slice(1)}
-                </div>
-            `).join('');
-        }
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    if (e.shiftKey) redoAnnotation();
+                    else undoAnnotation();
+                    return;
+                }
 
-        // 选择类别
-        function selectClass(className) {
-            state.selectedClass = className;
-            document.querySelectorAll('.class-chip').forEach(chip => {
-                chip.classList.toggle('active', chip.dataset.class === className);
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+                    e.preventDefault();
+                    redoAnnotation();
+                    return;
+                }
+
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                    e.preventDefault();
+                    saveAnnotations();
+                    return;
+                }
+
+                if (e.key === 'Escape') {
+                    state.points = [];
+                    state.samPoints = [];
+                    state.samLabels = [];
+                    deselectAnnotation();
+                    renderAnnotations();
+                    return;
+                }
+
+                if (e.key === 'Enter') {
+                    if (state.tool === 'polygon') {
+                        addPolygonAnnotation();
+                    }
+                    return;
+                }
+
+                if (e.key === 'ArrowLeft') {
+                    prevImage();
+                    return;
+                }
+
+                if (e.key === 'ArrowRight') {
+                    nextImage();
+                    return;
+                }
             });
         }
 
-        // 删除标注
-        function deleteAnnotation(index) {
-            if (!state.currentImage) return;
-            
-            state.annotations[state.currentImage].splice(index, 1);
-            renderAnnotations();
-            updateStats();
-        }
-
-        // 切换标签页
+        // ==================== UI 工具 ====================
         function switchTab(tabName) {
             document.querySelectorAll('.panel-tab').forEach(tab => {
                 tab.classList.remove('active');
@@ -1334,45 +2509,56 @@
             document.querySelectorAll('.tab-pane').forEach(pane => {
                 pane.classList.remove('active');
             });
-            
-            event.target.classList.add('active');
+
+            // 查找匹配的tab
+            const tabMap = { 'labels': 0, 'annotations': 1, 'smart': 2, 'shortcuts': 3 };
+            document.querySelectorAll('.panel-tab')[tabMap[tabName]].classList.add('active');
             document.getElementById(tabName + 'Tab').classList.add('active');
         }
 
-        // 更新滑块值
-        function updateSliderValue(type, value) {
-            document.getElementById(type + 'Value').textContent = parseFloat(value).toFixed(2);
-        }
-
-        // 更新统计
         function updateStats() {
-            const imageCount = state.currentProject?.images?.length || 0;
+            const imageCount = Object.keys(state.annotations).filter(k => state.annotations[k].length > 0).length;
             let annotationCount = 0;
-            
             Object.values(state.annotations).forEach(anns => {
                 annotationCount += anns.length;
             });
-            
             document.getElementById('imageCount').textContent = imageCount;
             document.getElementById('annotationCount').textContent = annotationCount;
         }
 
-        // 显示/隐藏加载
-        function showLoading(show) {
+        function showLoading(show, text = '处理中...') {
             document.getElementById('loadingOverlay').classList.toggle('active', show);
+            document.getElementById('loadingText').textContent = text;
         }
 
-        // 显示提示
         function showToast(message, type = 'info') {
             const toast = document.createElement('div');
             toast.className = `toast toast-${type}`;
             toast.textContent = message;
             document.body.appendChild(toast);
-            
-            setTimeout(() => {
-                toast.remove();
-            }, 3000);
+            setTimeout(() => toast.remove(), 3000);
         }
+
+        function renderClassifyGrid() {
+            const grid = document.getElementById('classifyGrid');
+            grid.innerHTML = state.classes.map(cls => `
+                <div class="classify-item" onclick="selectClassForClassify('${cls}')">
+                    <div class="class-color" style="background: ${state.classColors[cls]};"></div>
+                    <div>${cls.charAt(0).toUpperCase() + cls.slice(1)}</div>
+                </div>
+            `).join('');
+        }
+
+        function selectClassForClassify(className) {
+            selectClass(className);
+            document.querySelectorAll('.classify-item').forEach(item => {
+                const name = item.querySelector('div:last-child')?.textContent?.toLowerCase();
+                item.classList.toggle('active', name === className.toLowerCase());
+            });
+        }
+
+        // 绑定文件上传事件
+        document.getElementById('imageUpload').addEventListener('change', handleImageUpload);
     </script>
 </body>
 </html>

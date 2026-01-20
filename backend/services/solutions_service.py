@@ -1,6 +1,6 @@
 """
 Ultralytics Solutions Service
-集成所有 Ultralytics YOLO 解决方案功能
+ 集成所有 Ultralytics YOLO 解决方案功能
 """
 import cv2
 import numpy as np
@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Union
 from datetime import datetime
 import time
+import torch
 
 try:
     from ultralytics import YOLO, solutions
@@ -18,6 +19,17 @@ except ImportError:
     print("Warning: ultralytics not installed. Install with: pip install ultralytics")
 
 from config.config import settings
+
+
+def get_model_path(model: YOLO) -> str:
+    """获取模型的正确路径，用于 Solutions API"""
+    # 尝试多种方式获取模型路径
+    if hasattr(model, 'ckpt_path') and model.ckpt_path:
+        return str(model.ckpt_path)
+    if hasattr(model, 'model') and hasattr(model.model, 'yaml_path'):
+        return str(model.model.yaml_path)
+    # 默认返回模型名称
+    return getattr(model, 'model_name', 'yolo11n.pt')
 
 
 class SolutionsService:
@@ -83,10 +95,11 @@ class SolutionsService:
                 region_points = [(20, 400), (1260, 400), (1260, 360), (20, 360)]
             
             # 初始化对象计数器
+            model_path = get_model_path(model)
             counter = solutions.ObjectCounter(
                 show=False,
                 region=region_points,
-                model=str(model.model_name) if hasattr(model, 'model_name') else model_name,
+                model=model_path,
                 classes=classes,
                 show_in=show_in,
                 show_out=show_out,
@@ -179,9 +192,10 @@ class SolutionsService:
             model = self.load_model(model_name)
             
             # 初始化热图生成器
+            model_path = get_model_path(model)
             heatmap = solutions.Heatmap(
                 show=False,
-                model=str(model.model_name) if hasattr(model, 'model_name') else model_name,
+                model=model_path,
                 colormap=colormap,
                 classes=classes,
                 line_width=2
@@ -264,9 +278,10 @@ class SolutionsService:
                 region_points = [(20, 400), (1260, 400)]
             
             # 初始化速度估算器
+            model_path = get_model_path(model)
             speed_estimator = solutions.SpeedEstimator(
                 show=False,
-                model=str(model.model_name) if hasattr(model, 'model_name') else model_name,
+                model=model_path,
                 region=region_points,
                 classes=classes,
                 line_width=2
@@ -442,9 +457,10 @@ class SolutionsService:
             model = self.load_model(model_name)
             
             # 初始化对象模糊器
+            model_path = get_model_path(model)
             blur = solutions.ObjectBlur(
                 show=False,
-                model=str(model.model_name) if hasattr(model, 'model_name') else model_name,
+                model=model_path,
                 classes=classes,
                 blur_ratio=int(blur_ratio)
             )
@@ -604,9 +620,10 @@ class SolutionsService:
                 region_points = [(20, 400), (1260, 400), (1260, 360), (20, 360)]
             
             # 初始化队列管理器
+            model_path = get_model_path(model)
             queue = solutions.QueueManager(
                 show=False,
-                model=str(model.model_name) if hasattr(model, 'model_name') else model_name,
+                model=model_path,
                 region=region_points,
                 classes=classes,
                 line_width=2

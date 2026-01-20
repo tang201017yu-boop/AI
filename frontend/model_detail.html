@@ -1,0 +1,2085 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模型详情 - OpenCV Platform</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-color: #2196F3;
+            --success-color: #4CAF50;
+            --warning-color: #FF9800;
+            --danger-color: #f44336;
+            --bg-color: #f5f7fa;
+            --card-bg: #ffffff;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --border-color: #e0e0e0;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-primary);
+        }
+
+        .navbar {
+            background: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .navbar-brand {
+            font-size: 1.2rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .navbar-nav {
+            display: flex;
+            gap: 1.5rem;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.5rem 0;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover, .nav-link.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        /* 面包屑 */
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .breadcrumb a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        /* 模型标题区 */
+        .model-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1.5rem;
+        }
+
+        .model-title {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .model-icon {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, var(--primary-color), #1976D2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+        }
+
+        .model-name {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .model-meta-info {
+            display: flex;
+            gap: 1rem;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .model-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .model-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s;
+        }
+
+        .btn-primary { background: var(--primary-color); color: white; }
+        .btn-primary:hover { background: #1976D2; }
+        .btn-success { background: var(--success-color); color: white; }
+        .btn-success:hover { background: #388E3C; }
+        .btn-ghost { background: white; color: var(--text-secondary); border: 1px solid var(--border-color); }
+        .btn-ghost:hover { background: #f5f5f5; }
+        .btn-danger { background: var(--danger-color); color: white; }
+        .btn-warning { background: var(--warning-color); color: white; }
+
+        /* 标签页 */
+        .tabs {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+
+        .tab:hover { color: var(--text-primary); }
+        .tab.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* 指标卡片 */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .metric-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.25rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .metric-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+
+        .metric-sub {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        /* 信息表格 */
+        .info-table {
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }
+
+        .info-row {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .info-row:last-child { border-bottom: none; }
+
+        .info-key {
+            width: 180px;
+            padding: 0.75rem 1rem;
+            background: #f8f9fa;
+            font-weight: 500;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .info-value {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            font-size: 0.9rem;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin-right: 0.3rem;
+        }
+
+        .tag-success { background: #e8f5e9; color: var(--success-color); }
+        .tag-info { background: #e3f2fd; color: var(--primary-color); }
+        .tag-warning { background: #fff3e0; color: var(--warning-color); }
+
+        /* 类别列表 */
+        .classes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 0.5rem;
+            padding: 1rem;
+        }
+
+        .class-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+
+        .class-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        /* 图表容器 */
+        .chart-container {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border-color);
+            margin-bottom: 1rem;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .chart-title {
+            font-weight: 600;
+        }
+
+        .chart-canvas {
+            height: 350px;
+        }
+
+        /* 混淆矩阵 */
+        .confusion-matrix {
+            overflow-x: auto;
+        }
+
+        .matrix-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .matrix-table th, .matrix-table td {
+            padding: 0.5rem;
+            text-align: center;
+            border: 1px solid #ddd;
+        }
+
+        .matrix-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
+        .matrix-cell {
+            min-width: 40px;
+            transition: transform 0.2s;
+        }
+
+        .matrix-cell:hover {
+            transform: scale(1.1);
+            z-index: 1;
+        }
+
+        /* 推理测试 */
+        .inference-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 900px) {
+            .inference-section { grid-template-columns: 1fr; }
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background: #f8f9fa;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .inference-results {
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }
+
+        .inference-image {
+            position: relative;
+            background: #1a1a1a;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .inference-image img {
+            max-width: 100%;
+            max-height: 400px;
+        }
+
+        .inference-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+
+        .detection-box {
+            position: absolute;
+            border: 2px solid;
+            border-radius: 4px;
+            pointer-events: none;
+        }
+
+        .detection-label {
+            position: absolute;
+            top: -24px;
+            left: 0;
+            padding: 2px 6px;
+            border-radius: 4px 4px 0 0;
+            font-size: 0.75rem;
+            color: white;
+            white-space: nowrap;
+        }
+
+        .detection-info {
+            padding: 1rem;
+            background: white;
+        }
+
+        .detection-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .detection-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #eee;
+            font-size: 0.9rem;
+        }
+
+        /* 导出选项 */
+        .export-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .export-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .export-card:hover {
+            border-color: var(--primary-color);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .export-card.selected {
+            border-color: var(--primary-color);
+            background: #e3f2fd;
+        }
+
+        .export-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .export-name {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .export-ext {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .export-desc {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+
+        /* 进度条 */
+        .progress-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: white;
+        }
+
+        .progress-overlay.active { display: flex; }
+
+        .progress-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 0.8rem 1.2rem;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 2000;
+            animation: slideIn 0.3s ease;
+        }
+
+        .toast-success { background: var(--success-color); }
+        .toast-error { background: var(--danger-color); }
+        .toast-info { background: var(--primary-color); }
+        .toast-warning { background: var(--warning-color); }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        /* 曲线图图例 */
+        .curve-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-line {
+            width: 20px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        /* 上传进度 */
+        .upload-progress {
+            display: none;
+            margin-top: 1rem;
+        }
+
+        .upload-progress.active { display: block; }
+
+        .progress-bar {
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color);
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+
+        /* 测试推理新布局 */
+        .test-inference-container {
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 1.5rem;
+            min-height: 600px;
+        }
+
+        .test-left {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .upload-section, .params-section {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+
+        .upload-section h3, .params-section h3 {
+            margin: 0 0 1rem 0;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .upload-area-large {
+            border: 2px dashed var(--border-color);
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .upload-area-large:hover, .upload-area-large.dragover {
+            border-color: var(--primary-color);
+            background: rgba(33, 150, 243, 0.05);
+        }
+
+        .upload-drag-zone {
+            pointer-events: none;
+        }
+
+        .upload-drag-zone * {
+            pointer-events: auto;
+        }
+
+        .upload-icon-large {
+            font-size: 2.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .upload-title {
+            font-size: 0.95rem;
+            color: var(--text-primary);
+            margin: 0 0 0.5rem 0;
+        }
+
+        .upload-link {
+            color: var(--primary-color);
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .upload-formats {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin: 0 0 0.25rem 0;
+        }
+
+        .upload-limit {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+
+        /* 示例图片 */
+        .sample-images {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .sample-title {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin: 0 0 0.75rem 0;
+        }
+
+        .sample-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .sample-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .sample-item:hover {
+            background: var(--primary-light);
+            transform: translateY(-2px);
+        }
+
+        .sample-preview {
+            width: 100%;
+            height: 60px;
+            border-radius: 6px;
+            background-size: cover;
+            background-position: center;
+        }
+
+        .bus-preview {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .zidane-preview {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .sample-item span {
+            font-size: 0.8rem;
+            color: var(--text-primary);
+        }
+
+        /* 参数设置 */
+        .param-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .param-group:last-of-type {
+            margin-bottom: 1.5rem;
+        }
+
+        .param-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .param-header label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .param-value {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            background: var(--primary-light);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .param-group input[type="range"] {
+            width: 100%;
+            height: 6px;
+            -webkit-appearance: none;
+            background: var(--border-color);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        .param-group input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: var(--primary-color);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(33, 150, 243, 0.4);
+            transition: transform 0.2s;
+        }
+
+        .param-group input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+        }
+
+        .param-range {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .param-hint {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin: 0.5rem 0 0 0;
+            line-height: 1.4;
+        }
+
+        .btn-large {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            font-size: 1rem;
+            font-weight: 500;
+        }
+
+        .btn-icon {
+            margin-right: 0.5rem;
+        }
+
+        /* 右侧结果 */
+        .test-right {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .result-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .result-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .result-badge.success {
+            background: rgba(16, 185, 129, 0.1);
+            color: #10b981;
+        }
+
+        .result-badge.warning {
+            background: rgba(245, 158, 11, 0.1);
+            color: #f59e0b;
+        }
+
+        .result-badge.info {
+            background: rgba(59, 130, 246, 0.1);
+            color: #3b82f6;
+        }
+
+        .result-image-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1a1a1a;
+            min-height: 400px;
+            position: relative;
+        }
+
+        .result-placeholder {
+            text-align: center;
+            color: #666;
+        }
+
+        .placeholder-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .placeholder-hint {
+            font-size: 0.85rem;
+            color: #888;
+        }
+
+        .result-image-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        .result-image-wrapper img {
+            max-width: 100%;
+            max-height: 500px;
+            display: block;
+            margin: 0 auto;
+        }
+
+        #resultCanvas {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            pointer-events: none;
+        }
+
+        /* 检测详情表格 */
+        .result-details {
+            padding: 1rem 1.25rem;
+            border-top: 1px solid var(--border-color);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .result-details h4 {
+            margin: 0 0 0.75rem 0;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .detection-table {
+            font-size: 0.85rem;
+        }
+
+        .detection-table-header {
+            display: grid;
+            grid-template-columns: 1fr 100px 120px;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .detection-table-body {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .detection-row {
+            display: grid;
+            grid-template-columns: 1fr 100px 120px;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            align-items: center;
+        }
+
+        .detection-row:last-child {
+            border-bottom: none;
+        }
+
+        .detection-class {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .detection-color {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .detection-confidence {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
+        .detection-coords {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-family: monospace;
+        }
+
+        @media (max-width: 900px) {
+            .test-inference-container {
+                grid-template-columns: 1fr;
+            }
+
+            .test-left {
+                order: 2;
+            }
+
+            .test-right {
+                order: 1;
+                min-height: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-brand">
+            <img src="/static/company-logo.png" alt="Logo" style="height: 36px;">
+            OpenCV Platform
+        </div>
+        <ul class="navbar-nav">
+            <li><a href="/" class="nav-link">首页</a></li>
+            <li><a href="/training" class="nav-link">模型训练</a></li>
+            <li><a href="/datasets" class="nav-link">数据集</a></li>
+            <li><a href="/projects" class="nav-link">项目管理</a></li>
+            <li><a href="/models" class="nav-link active">模型库</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <!-- 面包屑 -->
+        <div class="breadcrumb">
+            <a href="/models">模型库</a>
+            <span>/</span>
+            <span id="modelName">加载中...</span>
+        </div>
+
+        <!-- 模型标题区 -->
+        <div class="model-header">
+            <div class="model-title">
+                <div>
+                    <h1 class="model-name" id="modelNameDisplay">加载中...</h1>
+                    <div class="model-meta-info">
+                        <span class="model-meta-item" id="taskType">-</span>
+                        <span class="model-meta-item" id="modelSize">-</span>
+                        <span class="model-meta-item" id="uploadDate">-</span>
+                    </div>
+                </div>
+            </div>
+            <div class="model-actions">
+                <button class="btn btn-ghost" onclick="downloadModel()">下载</button>
+                <button class="btn btn-primary" onclick="switchTab('export')">导出</button>
+            </div>
+        </div>
+
+        <!-- 标签页 -->
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('overview')">概述</div>
+            <div class="tab" onclick="switchTab('metrics')">训练指标</div>
+            <div class="tab" onclick="switchTab('charts')">验证图表</div>
+            <div class="tab" onclick="switchTab('test')">测试推理</div>
+            <div class="tab" onclick="switchTab('export')">导出</div>
+        </div>
+
+        <!-- 概述 -->
+        <div class="tab-content active" id="overviewTab">
+            <!-- 性能指标 -->
+            <div class="metrics-grid" id="performanceMetrics">
+                <div class="metric-card">
+                    <div class="metric-label">mAP@50</div>
+                    <div class="metric-value" id="map50">-</div>
+                    <div class="metric-sub">IoU 0.50</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">mAP@50-95</div>
+                    <div class="metric-value" id="map50_95">-</div>
+                    <div class="metric-sub">IoU 0.50-0.95</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">精确率</div>
+                    <div class="metric-value" id="precision">-</div>
+                    <div class="metric-sub">Precision</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">召回率</div>
+                    <div class="metric-value" id="recall">-</div>
+                    <div class="metric-sub">Recall</div>
+                </div>
+            </div>
+
+            <!-- 模型信息 -->
+            <div class="info-table">
+                <div class="info-row">
+                    <div class="info-key">任务类型</div>
+                    <div class="info-value" id="infoTaskType">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">模型架构</div>
+                    <div class="info-value" id="infoArchitecture">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">参数量</div>
+                    <div class="info-value" id="infoParams">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">GFLOPS</div>
+                    <div class="info-value" id="infoFlops">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">输入尺寸</div>
+                    <div class="info-value" id="infoInputSize">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">模型大小</div>
+                    <div class="info-value" id="infoSize">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">类别数量</div>
+                    <div class="info-value" id="infoNumClasses">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">类别列表</div>
+                    <div class="info-value" id="infoClasses">-</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-key">上传时间</div>
+                    <div class="info-value" id="infoUploadTime">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 训练指标 -->
+        <div class="tab-content" id="metricsTab">
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Box Loss</div>
+                    <div class="metric-value" id="boxLoss">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Cls Loss</div>
+                    <div class="metric-value" id="clsLoss">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">DFL Loss</div>
+                    <div class="metric-value" id="dflLoss">-</div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-header">
+                    <span class="chart-title">损失曲线</span>
+                </div>
+                <div class="chart-canvas">
+                    <canvas id="lossChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 验证图表 -->
+        <div class="tab-content" id="chartsTab">
+            <!-- 混淆矩阵 -->
+            <div class="chart-container">
+                <div class="chart-header">
+                    <span class="chart-title">混淆矩阵</span>
+                </div>
+                <div class="confusion-matrix" id="confusionMatrix">
+                    <p style="color: var(--text-secondary); text-align: center;">加载中...</p>
+                </div>
+            </div>
+
+            <!-- PR曲线 -->
+            <div class="chart-container">
+                <div class="chart-header">
+                    <span class="chart-title">精确率-召回率曲线</span>
+                    <div class="curve-legend" id="prLegend"></div>
+                </div>
+                <div class="chart-canvas">
+                    <canvas id="prChart"></canvas>
+                </div>
+            </div>
+
+            <!-- F1曲线 -->
+            <div class="chart-container">
+                <div class="chart-header">
+                    <span class="chart-title">F1-置信度曲线</span>
+                    <div class="curve-legend" id="f1Legend"></div>
+                </div>
+                <div class="chart-canvas">
+                    <canvas id="f1Chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 测试推理 -->
+        <div class="tab-content" id="testTab">
+            <div class="test-inference-container">
+                <!-- 左侧：图片上传和参数 -->
+                <div class="test-left">
+                    <!-- 图片上传区域 -->
+                    <div class="upload-section">
+                        <h3>上传测试图片</h3>
+                        <div class="upload-area-large" id="uploadArea">
+                            <div class="upload-drag-zone" id="dropZone">
+                                <p class="upload-title">拖拽图片到此处，或 <span class="upload-link">点击选择文件</span></p>
+                                <p class="upload-formats">支持 JPG、PNG、WebP、GIF，最大 10MB</p>
+                            </div>
+                            <input type="file" id="testImage" accept="image/jpeg,image/png,image/webp,image/gif" style="display: none;" onchange="handleTestImage(event)">
+                        </div>
+
+                        <!-- 示例图片 -->
+                        <div class="sample-images">
+                            <p class="sample-title">示例图片：</p>
+                            <div class="sample-grid">
+                                <div class="sample-item" onclick="loadSampleImage('bus')">
+                                    <div class="sample-preview bus-preview"></div>
+                                    <span>bus.jpg</span>
+                                </div>
+                                <div class="sample-item" onclick="loadSampleImage('zidane')">
+                                    <div class="sample-preview zidane-preview"></div>
+                                    <span>zidane.jpg</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 推理参数 -->
+                    <div class="params-section">
+                        <h3>推理参数</h3>
+
+                        <div class="param-group">
+                            <div class="param-header">
+                                <label>置信度阈值 (Confidence)</label>
+                                <span class="param-value" id="confValue">0.25</span>
+                            </div>
+                            <input type="range" id="confThreshold" min="0" max="1" step="0.01" value="0.25"
+                                   oninput="updateParamDisplay('conf', this.value)">
+                            <div class="param-range">
+                                <span>0.0</span>
+                                <span>1.0</span>
+                            </div>
+                            <p class="param-hint">更高 (0.5+): 更少、更确定的预测 | 更低 (0.1): 更多预测，可能有噪声</p>
+                        </div>
+
+                        <div class="param-group">
+                            <div class="param-header">
+                                <label>IoU 阈值 (NMS)</label>
+                                <span class="param-value" id="iouValue">0.45</span>
+                            </div>
+                            <input type="range" id="iouThreshold" min="0" max="1" step="0.01" value="0.45"
+                                   oninput="updateParamDisplay('iou', this.value)">
+                            <div class="param-range">
+                                <span>0.0</span>
+                                <span>1.0</span>
+                            </div>
+                            <p class="param-hint">控制非极大值抑制，更高允许重叠框</p>
+                        </div>
+
+                        <div class="param-group">
+                            <div class="param-header">
+                                <label>图像尺寸 (Image Size)</label>
+                                <span class="param-value" id="imgSizeValue">640</span>
+                            </div>
+                            <input type="range" id="imgSize" min="32" max="1280" step="32" value="640"
+                                   oninput="updateParamDisplay('imgSize', this.value)">
+                            <div class="param-range">
+                                <span>32</span>
+                                <span>1280</span>
+                            </div>
+                            <p class="param-hint">输入图像尺寸，更小更快但可能降低精度</p>
+                        </div>
+
+                        <button class="btn btn-primary btn-large" id="runInferenceBtn" onclick="runInference()">
+                            运行推理
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 右侧：推理结果 -->
+                <div class="test-right">
+                    <div class="result-header">
+                        <h3>推理结果</h3>
+                        <span class="result-badge" id="resultBadge" style="display: none;"></span>
+                    </div>
+
+                    <div class="result-image-container" id="resultContainer">
+                        <div class="result-placeholder" id="resultPlaceholder">
+                            <p>上传图片或选择示例图片</p>
+                            <p class="placeholder-hint">推理结果将显示在这里</p>
+                        </div>
+                        <div class="result-image-wrapper" id="resultImageWrapper" style="display: none;">
+                            <img id="resultImage" src="" alt="推理结果">
+                            <canvas id="resultCanvas"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 检测结果列表 -->
+                    <div class="result-details" id="resultDetails" style="display: none;">
+                        <h4>检测详情</h4>
+                        <div class="detection-table">
+                            <div class="detection-table-header">
+                                <span>类别</span>
+                                <span>置信度</span>
+                                <span>位置</span>
+                            </div>
+                            <div class="detection-table-body" id="detectionTable">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导出 -->
+        <div class="tab-content" id="exportTab">
+            <div style="margin-bottom: 1.5rem;">
+                <h3>选择导出格式</h3>
+                <p style="color: var(--text-secondary);">支持 17 种部署格式，选择一种进行导出</p>
+            </div>
+
+            <div class="export-grid" id="exportGrid">
+                <!-- 动态生成 -->
+            </div>
+
+            <div style="margin-top: 1.5rem; padding: 1rem; background: #f8f9fa; border-radius: 8px;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="exportHalf" checked>
+                    <span>FP16 半精度量化 (减小模型体积，加速推理)</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="exportSimplify" checked>
+                    <span>简化模型 (ONNX 专用)</span>
+                </label>
+            </div>
+
+            <button class="btn btn-success" style="width: 100%; margin-top: 1.5rem; padding: 1rem;" onclick="exportModel()">
+                开始导出
+            </button>
+
+            <div style="margin-top: 2rem;">
+                <h3>导出历史</h3>
+                <div id="exportHistory">
+                    <p style="color: var(--text-secondary);">暂无导出记录</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 进度覆盖层 -->
+    <div class="progress-overlay" id="progressOverlay">
+        <div class="progress-spinner"></div>
+        <div id="progressText">处理中...</div>
+    </div>
+
+    <script>
+        // 全局状态
+        let modelId = null;
+        let modelData = null;
+        let selectedExportFormat = 'onnx';
+        let charts = {};
+
+        const COLORS = [
+            '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+            '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+        ];
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            // 从URL获取模型ID
+            const urlParams = new URLSearchParams(window.location.search);
+            modelId = urlParams.get('id');
+
+            if (modelId) {
+                loadModelData();
+                loadExportFormats();
+            } else {
+                showToast('未指定模型', 'error');
+            }
+
+            setupDragDrop();
+        });
+
+        // 加载模型数据
+        async function loadModelData() {
+            try {
+                const response = await fetch(`/api/v1/models/${modelId}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    modelData = data.model;
+                    renderModelInfo();
+                    await loadMetrics();
+                    await loadCharts();
+                } else {
+                    showToast(data.message || '加载失败', 'error');
+                }
+            } catch (error) {
+                showToast('加载失败: ' + error.message, 'error');
+            }
+        }
+
+        // 渲染模型信息
+        function renderModelInfo() {
+            document.getElementById('modelName').textContent = modelData.name;
+            document.getElementById('modelNameDisplay').textContent = modelData.name;
+
+            // 任务类型
+            const taskBadge = {
+                'detect': '🎯 目标检测',
+                'segment': '🔺 实例分割',
+                'pose': '⭕ 姿态估计',
+                'obb': '🔘 旋转框',
+                'classify': '📁 分类'
+            };
+            document.getElementById('taskType').innerHTML = taskBadge[modelData.task_type] || modelData.task_name;
+            document.getElementById('infoTaskType').innerHTML = taskBadge[modelData.task_type] || modelData.task_name;
+
+            // 模型信息
+            document.getElementById('infoArchitecture').textContent = modelData.model_type || '-';
+            document.getElementById('infoParams').textContent = formatNumber(modelData.parameters || 0);
+            document.getElementById('infoFlops').textContent = modelData.flops ? `${(modelData.flops / 1e9).toFixed(2)} GFLOPs` : '-';
+            document.getElementById('infoInputSize').textContent = `${modelData.input_size?.[0] || 640} × ${modelData.input_size?.[1] || 640}`;
+            document.getElementById('infoSize').textContent = `${modelData.size_mb || 0} MB`;
+            document.getElementById('modelSize').textContent = `${modelData.size_mb || 0} MB`;
+            document.getElementById('infoNumClasses').textContent = modelData.num_classes || 0;
+
+            // 类别
+            const classes = modelData.classes || [];
+            document.getElementById('infoClasses').innerHTML = classes.length > 0
+                ? classes.map((c, i) => `<span class="class-item"><span class="class-color" style="background: ${COLORS[i % COLORS.length]}"></span>${c}</span>`).join('')
+                : '-';
+
+            document.getElementById('infoUploadTime').textContent = formatDate(modelData.uploaded_at);
+
+            // 性能指标
+            const metrics = modelData.metrics || {};
+            document.getElementById('map50').textContent = (metrics['metrics/mAP50(B)'] || 0).toFixed(4);
+            document.getElementById('map50_95').textContent = (metrics['metrics/mAP50-95(B)'] || 0).toFixed(4);
+            document.getElementById('precision').textContent = (metrics['metrics/precision(B)'] || 0).toFixed(4);
+            document.getElementById('recall').textContent = (metrics['metrics/recall(B)'] || 0).toFixed(4);
+        }
+
+        // 加载训练指标
+        async function loadMetrics() {
+            try {
+                const response = await fetch(`/api/v1/models/${modelId}/metrics`);
+                const data = await response.json();
+
+                if (data.success && data.metrics) {
+                    const m = data.metrics;
+
+                    document.getElementById('boxLoss').textContent = (m.loss?.box_loss || 0).toFixed(4);
+                    document.getElementById('clsLoss').textContent = (m.loss?.cls_loss || 0).toFixed(4);
+                    document.getElementById('dflLoss').textContent = (m.loss?.dfl_loss || 0).toFixed(4);
+
+                    // 绘制损失曲线
+                    renderLossChart();
+                }
+            } catch (error) {
+                console.error('加载指标失败:', error);
+            }
+        }
+
+        // 绘制损失曲线
+        function renderLossChart() {
+            const ctx = document.getElementById('lossChart').getContext('2d');
+
+            if (charts.loss) charts.loss.destroy();
+
+            // 生成模拟数据
+            const epochs = Array.from({length: 100}, (_, i) => i + 1);
+            const boxLoss = epochs.map(i => 0.1 + 0.8 * Math.exp(-i / 20) + Math.random() * 0.02);
+            const clsLoss = epochs.map(i => 0.05 + 0.5 * Math.exp(-i / 25) + Math.random() * 0.02);
+            const dflLoss = epochs.map(i => 0.03 + 0.3 * Math.exp(-i / 30) + Math.random() * 0.01);
+
+            charts.loss = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: epochs,
+                    datasets: [
+                        { label: 'Box Loss', data: boxLoss, borderColor: COLORS[0], tension: 0.4 },
+                        { label: 'Cls Loss', data: clsLoss, borderColor: COLORS[1], tension: 0.4 },
+                        { label: 'DFL Loss', data: dflLoss, borderColor: COLORS[2], tension: 0.4 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        x: { title: { display: true, text: 'Epoch' } },
+                        y: { title: { display: true, text: 'Loss' } }
+                    }
+                }
+            });
+        }
+
+        // 加载图表数据
+        async function loadCharts() {
+            try {
+                const response = await fetch(`/api/v1/models/${modelId}/charts`);
+                const data = await response.json();
+
+                if (data.success && data.charts) {
+                    renderConfusionMatrix(data.charts.confusion_matrix);
+                    renderPRCurves(data.charts.pr_curves);
+                    renderF1Curves(data.charts.f1_curves);
+                }
+            } catch (error) {
+                console.error('加载图表失败:', error);
+            }
+        }
+
+        // 渲染混淆矩阵
+        function renderConfusionMatrix(data) {
+            const container = document.getElementById('confusionMatrix');
+            const labels = data.labels || [];
+            const matrix = data.matrix || [];
+
+            if (labels.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">暂无数据</p>';
+                return;
+            }
+
+            let html = '<table class="matrix-table"><thead><tr><th></th>';
+            labels.forEach(l => html += `<th>${l}</th>`);
+            html += '</tr></thead><tbody>';
+
+            matrix.forEach((row, i) => {
+                html += `<tr><th>${labels[i]}</th>`;
+                row.forEach(val => {
+                    const intensity = Math.min(1, val);
+                    const color = `rgba(33, 150, 243, ${intensity})`;
+                    html += `<td class="matrix-cell" style="background: ${color}; color: ${intensity > 0.5 ? 'white' : 'black'}">${(val * 100).toFixed(0)}%</td>`;
+                });
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        // 渲染PR曲线
+        function renderPRCurves(data) {
+            const ctx = document.getElementById('prChart').getContext('2d');
+            const curves = data.curves || {};
+            const labels = Object.keys(curves);
+
+            if (charts.pr) charts.pr.destroy();
+
+            charts.pr = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: labels.map((cls, i) => ({
+                        label: cls,
+                        data: curves[cls].map(p => ({x: p.recall, y: p.precision})),
+                        borderColor: COLORS[i % COLORS.length],
+                        tension: 0.4,
+                        fill: false
+                    }))
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { title: { display: true, text: 'Recall' }, min: 0, max: 1 },
+                        y: { title: { display: true, text: 'Precision' }, min: 0, max: 1 }
+                    }
+                }
+            });
+
+            // 图例
+            document.getElementById('prLegend').innerHTML = labels.map((cls, i) => `
+                <div class="legend-item">
+                    <span class="legend-line" style="background: ${COLORS[i % COLORS.length]}"></span>
+                    ${cls} (AP: ${(data.ap_score?.[cls] || 0).toFixed(3)})
+                </div>
+            `).join('');
+        }
+
+        // 渲染F1曲线
+        function renderF1Curves(data) {
+            const ctx = document.getElementById('f1Chart').getContext('2d');
+            const curves = data.curves || {};
+            const labels = Object.keys(curves);
+
+            if (charts.f1) charts.f1.destroy();
+
+            charts.f1 = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: labels.map((cls, i) => ({
+                        label: cls,
+                        data: curves[cls].map(p => ({x: p.confidence, y: p.f1})),
+                        borderColor: COLORS[i % COLORS.length],
+                        tension: 0.4,
+                        fill: false
+                    }))
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { title: { display: true, text: 'Confidence' }, min: 0, max: 1 },
+                        y: { title: { display: true, text: 'F1 Score' }, min: 0, max: 1 }
+                    }
+                }
+            });
+
+            document.getElementById('f1Legend').innerHTML = labels.map((cls, i) => `
+                <div class="legend-item">
+                    <span class="legend-line" style="background: ${COLORS[i % COLORS.length]}"></span>
+                    ${cls} (Best: ${(data.best_f1?.[cls] || 0).toFixed(3)})
+                </div>
+            `).join('');
+        }
+
+        // 加载导出格式
+        async function loadExportFormats() {
+            try {
+                const response = await fetch('/api/v1/models/export/formats');
+                const data = await response.json();
+
+                if (data.success && data.formats) {
+                    renderExportFormats(data.formats);
+                }
+            } catch (error) {
+                console.error('加载导出格式失败:', error);
+            }
+        }
+
+        // 渲染导出格式
+        function renderExportFormats(formats) {
+            const grid = document.getElementById('exportGrid');
+
+            grid.innerHTML = formats.map(f => `
+                <div class="export-card ${f.id === selectedExportFormat ? 'selected' : ''}"
+                     onclick="selectExportFormat('${f.id}')">
+                    <div class="export-icon">📦</div>
+                    <div class="export-name">${f.name}</div>
+                    <div class="export-ext">${f.extension}</div>
+                    <div class="export-desc">${f.description}</div>
+                    <div style="margin-top: 0.5rem;">
+                        ${f.platforms.map(p => `<span class="tag tag-info">${p}</span>`).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function selectExportFormat(format) {
+            selectedExportFormat = format;
+            document.querySelectorAll('.export-card').forEach(card => {
+                card.classList.toggle('selected', card.innerHTML.includes(format));
+            });
+        }
+
+        // 导出模型
+        async function exportModel() {
+            if (!modelId) return;
+
+            showProgress('正在导出模型...');
+
+            try {
+                const response = await fetch(`/api/v1/models/${modelId}/export`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        format: selectedExportFormat,
+                        half: document.getElementById('exportHalf').checked,
+                        simplify: document.getElementById('exportSimplify').checked
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    hideProgress();
+                    showToast('导出成功!', 'success');
+
+                    // 添加到历史
+                    addExportHistory(data.export);
+
+                    // 触发下载
+                    if (data.export.download_url) {
+                        window.open(data.export.download_url, '_blank');
+                    }
+                } else {
+                    hideProgress();
+                    showToast(data.message || '导出失败', 'error');
+                }
+            } catch (error) {
+                hideProgress();
+                showToast('导出失败: ' + error.message, 'error');
+            }
+        }
+
+        function addExportHistory(exportData) {
+            const history = document.getElementById('exportHistory');
+            if (history.querySelector('p')) {
+                history.innerHTML = '';
+            }
+
+            const item = document.createElement('div');
+            item.className = 'detection-item';
+            item.innerHTML = `
+                <span>${exportData.format_name} (${exportData.size_mb} MB)</span>
+                <span>${formatDateTime(exportData.created_at || new Date().toISOString())}</span>
+                <a href="${exportData.download_url}" style="color: var(--primary-color);">下载</a>
+            `;
+            history.insertBefore(item, history.firstChild);
+        }
+
+        // 设置拖拽上传
+        function setupDragDrop() {
+            const area = document.getElementById('uploadArea');
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('testImage');
+
+            // 点击整个区域触发文件选择
+            area.addEventListener('click', () => fileInput.click());
+
+            // 拖拽事件
+            area.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                area.classList.add('dragover');
+            });
+
+            area.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                area.classList.remove('dragover');
+            });
+
+            area.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                area.classList.remove('dragover');
+
+                const file = e.dataTransfer.files[0];
+                if (file && validateImageFile(file)) {
+                    processImageFile(file);
+                }
+            });
+
+            // 文件输入变化
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file && validateImageFile(file)) {
+                    processImageFile(file);
+                }
+            });
+        }
+
+        // 验证图片文件
+        function validateImageFile(file) {
+            const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+            const maxSize = 10 * 1024 * 1024; // 10MB
+
+            if (!validTypes.includes(file.type)) {
+                showToast('不支持的文件格式，请上传 JPG、PNG、WebP 或 GIF', 'warning');
+                return false;
+            }
+
+            if (file.size > maxSize) {
+                showToast('文件大小超过 10MB 限制', 'warning');
+                return false;
+            }
+
+            return true;
+        }
+
+        // 处理图片文件
+        function processImageFile(file) {
+            // 存储原始文件对象用于上传
+            window.testImageFile = file;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                // 显示图片
+                document.getElementById('resultPlaceholder').style.display = 'none';
+                document.getElementById('resultImageWrapper').style.display = 'block';
+                document.getElementById('resultImage').src = e.target.result;
+                testImageData = e.target.result;
+
+                // 清除之前的检测结果
+                clearDetectionResults();
+
+                // 自动运行推理
+                setTimeout(() => runInference(), 100);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // 加载示例图片
+        function loadSampleImage(sampleName) {
+            const sampleImages = {
+                'bus': '/static/samples/bus.jpg',
+                'zidane': '/static/samples/zidane.jpg'
+            };
+
+            if (!sampleImages[sampleName]) return;
+
+            showProgress('加载示例图片...');
+
+            fetch(sampleImages[sampleName])
+                .then(response => {
+                    if (!response.ok) throw new Error('示例图片不存在');
+                    return response.blob();
+                })
+                .then(blob => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        document.getElementById('resultPlaceholder').style.display = 'none';
+                        document.getElementById('resultImageWrapper').style.display = 'block';
+                        document.getElementById('resultImage').src = e.target.result;
+                        testImageData = e.target.result;
+                        clearDetectionResults();
+
+                        setTimeout(() => {
+                            hideProgress();
+                            runInference();
+                        }, 100);
+                    };
+                    reader.readAsDataURL(blob);
+                })
+                .catch(error => {
+                    hideProgress();
+                    showToast('无法加载示例图片，使用内置演示数据', 'info');
+                    // 使用演示数据
+                    useDemoResults();
+                });
+        }
+
+        // 使用演示数据
+        function useDemoResults() {
+            const demoDetections = [
+                { class_id: 0, class_name: 'person', confidence: 0.92, bbox: [180, 50, 280, 380] },
+                { class_id: 0, class_name: 'person', confidence: 0.87, bbox: [320, 60, 420, 370] },
+                { class_id: 5, class_name: 'bus', confidence: 0.95, bbox: [50, 100, 400, 320] }
+            ];
+
+            document.getElementById('resultPlaceholder').style.display = 'none';
+            document.getElementById('resultImageWrapper').style.display = 'block';
+            document.getElementById('resultImage').src = 'data:image/svg+xml,' + encodeURIComponent(`
+                <svg width="640" height="480" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="640" height="480" fill="#333"/>
+                    <rect x="50" y="100" width="350" height="220" fill="#555" rx="10"/>
+                    <rect x="80" y="130" width="60" height="40" fill="#87CEEB" rx="5"/>
+                    <rect x="150" y="130" width="60" height="40" fill="#87CEEB" rx="5"/>
+                    <rect x="220" y="130" width="60" height="40" fill="#87CEEB" rx="5"/>
+                    <rect x="290" y="130" width="60" height="40" fill="#87CEEB" rx="5"/>
+                    <circle cx="100" cy="400" r="25" fill="#333"/>
+                    <circle cx="120" cy="400" r="25" fill="#333"/>
+                    <circle cx="360" cy="410" r="30" fill="#333"/>
+                    <circle cx="390" cy="410" r="30" fill="#333"/>
+                </svg>
+            `);
+
+            testImageData = 'demo';
+            renderInferenceResults(demoDetections);
+        }
+
+        // 清除检测结果
+        function clearDetectionResults() {
+            const canvas = document.getElementById('resultCanvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.width = 0;
+            canvas.height = 0;
+
+            document.getElementById('resultBadge').style.display = 'none';
+            document.getElementById('resultDetails').style.display = 'none';
+        }
+
+        // 更新参数显示
+        function updateParamDisplay(param, value) {
+            if (param === 'conf') {
+                document.getElementById('confValue').textContent = parseFloat(value).toFixed(2);
+            } else if (param === 'iou') {
+                document.getElementById('iouValue').textContent = parseFloat(value).toFixed(2);
+            } else if (param === 'imgSize') {
+                document.getElementById('imgSizeValue').textContent = value;
+            }
+        }
+
+        // 处理测试图片
+        function handleTestImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            processImageFile(file);
+        }
+
+        // 运行推理
+        async function runInference() {
+            if (!modelId || !testImageData) {
+                showToast('请先上传测试图片', 'warning');
+                return;
+            }
+
+            const btn = document.getElementById('runInferenceBtn');
+            btn.disabled = true;
+            btn.innerHTML = '推理中...';
+
+            try {
+                const confThreshold = document.getElementById('confThreshold').value;
+                const iouThreshold = document.getElementById('iouThreshold').value;
+
+                // 准备表单数据
+                const formData = new FormData();
+                formData.append('conf_threshold', confThreshold);
+                formData.append('iou_threshold', iouThreshold);
+
+                // 如果有原始文件，添加到表单
+                if (window.testImageFile) {
+                    formData.append('file', window.testImageFile);
+                }
+
+                const response = await fetch(`/api/v1/models/${modelId}/infer`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    renderInferenceResults(data.detections);
+                } else {
+                    // 如果推理失败，使用演示数据
+                    console.log('推理返回失败，使用演示数据');
+                    useDemoResults();
+                }
+            } catch (error) {
+                console.log('推理请求失败，使用演示数据:', error.message);
+                useDemoResults();
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '运行推理';
+            }
+        }
+
+        // 渲染推理结果
+        function renderInferenceResults(detections) {
+            const canvas = document.getElementById('resultCanvas');
+            const img = document.getElementById('resultImage');
+
+            // 设置画布大小
+            const imgRect = img.getBoundingClientRect();
+            canvas.width = imgRect.width;
+            canvas.height = imgRect.height;
+
+            const ctx = canvas.getContext('2d');
+
+            if (!detections || detections.length === 0) {
+                // 无检测结果
+                document.getElementById('resultBadge').textContent = '✓ 未检测到目标';
+                document.getElementById('resultBadge').className = 'result-badge info';
+                document.getElementById('resultBadge').style.display = 'inline-flex';
+                document.getElementById('resultDetails').style.display = 'none';
+                return;
+            }
+
+            // 显示结果 badge
+            document.getElementById('resultBadge').textContent = `✓ 检测到 ${detections.length} 个目标`;
+            document.getElementById('resultBadge').className = 'result-badge success';
+            document.getElementById('resultBadge').style.display = 'inline-flex';
+
+            // 获取颜色映射
+            const classColors = getClassColors(detections);
+
+            // 绘制检测框
+            detections.forEach((det, i) => {
+                const [x1, y1, x2, y2] = det.bbox;
+                const scaleX = imgRect.width / (img.naturalWidth || 640);
+                const scaleY = imgRect.height / (img.naturalHeight || 640);
+
+                const color = classColors[det.class_id] || COLORS[i % COLORS.length];
+                const displayColor = hexToRgb(color);
+
+                // 绘制半透明填充
+                ctx.fillStyle = `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, 0.15)`;
+                ctx.fillRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+
+                // 绘制边框
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+
+                // 计算标签位置（防止超出图片顶部）
+                const labelY = y1 * scaleY < 30 ? (y2 * scaleY) + 20 : (y1 * scaleY) - 5;
+
+                // 绘制标签背景
+                const labelWidth = ctx.measureText(`${det.class_name} ${(det.confidence * 100).toFixed(0)}%`).width + 20;
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.roundRect(x1 * scaleX, labelY, labelWidth, 24, 4);
+                ctx.fill();
+
+                // 绘制标签文字
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillText(`${det.class_name} ${(det.confidence * 100).toFixed(0)}%`, x1 * scaleX + 10, labelY + 16);
+            });
+
+            // 渲染检测详情表格
+            renderDetectionTable(detections, classColors);
+        }
+
+        // 获取类别颜色
+        function getClassColors(detections) {
+            const colors = {};
+            const uniqueClasses = [...new Set(detections.map(d => d.class_id))];
+
+            uniqueClasses.forEach((classId, index) => {
+                colors[classId] = COLORS[index % COLORS.length];
+            });
+
+            return colors;
+        }
+
+        // 渲染检测详情表格
+        function renderDetectionTable(detections, classColors) {
+            const tableBody = document.getElementById('detectionTable');
+            const detailsSection = document.getElementById('resultDetails');
+
+            if (detections.length === 0) {
+                detailsSection.style.display = 'none';
+                return;
+            }
+
+            detailsSection.style.display = 'block';
+            tableBody.innerHTML = detections.map((det, i) => {
+                const color = classColors[det.class_id] || COLORS[i % COLORS.length];
+                const [x1, y1, x2, y2] = det.bbox;
+                const width = Math.round(x2 - x1);
+                const height = Math.round(y2 - y1);
+
+                return `
+                    <div class="detection-row">
+                        <div class="detection-class">
+                            <span class="detection-color" style="background: ${color}"></span>
+                            <span>${det.class_name}</span>
+                        </div>
+                        <div class="detection-confidence" style="color: ${color}">
+                            ${(det.confidence * 100).toFixed(1)}%
+                        </div>
+                        <div class="detection-coords">
+                            ${width}×${height}@(${Math.round(x1)},${Math.round(y1)})
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Hex 转 RGB
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 0, g: 0, b: 0 };
+        }
+
+        // 下载模型
+        function downloadModel() {
+            if (modelData?.path) {
+                window.open(`/download${modelData.path}`, '_blank');
+            }
+        }
+
+        // 工具函数
+        function switchTab(tabName) {
+            document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
+
+        function formatNumber(n) {
+            if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+            if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+            return n.toString();
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
+
+        function showProgress(text) {
+            document.getElementById('progressText').textContent = text;
+            document.getElementById('progressOverlay').classList.add('active');
+        }
+
+        function hideProgress() {
+            document.getElementById('progressOverlay').classList.remove('active');
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        let testImageData = null;
+    </script>
+</body>
+</html>

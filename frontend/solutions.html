@@ -394,9 +394,18 @@
         }
 
         function createModalContent(solution) {
-            const acceptTypes = solution.input_types.includes('video') 
-                ? 'video/mp4,video/avi,video/mov' 
-                : 'image/jpeg,image/png,image/jpg';
+            // 根据解决方案支持的输入类型设置 accept 属性
+            const acceptsImages = solution.input_types.includes('image');
+            const acceptsVideo = solution.input_types.includes('video');
+
+            let acceptTypes = '';
+            if (acceptsImages && acceptsVideo) {
+                acceptTypes = 'image/jpeg,image/png,image/jpg,video/mp4,video/avi,video/mov';
+            } else if (acceptsVideo) {
+                acceptTypes = 'video/mp4,video/avi,video/mov';
+            } else {
+                acceptTypes = 'image/jpeg,image/png,image/jpg';
+            }
 
             let additionalFields = '';
 
@@ -598,7 +607,17 @@
         function displayResults(result) {
             const container = document.getElementById('result-container');
             container.style.display = 'block';
-            
+
+            // 转换输出路径为 URL 路径
+            let outputUrl = result.output_path;
+            if (result.output_path && result.output_path.includes('/uploads/')) {
+                // 已经是相对路径，保持不变
+            } else if (result.output_path) {
+                // 将绝对路径转换为相对 URL 路径
+                const filename = result.output_path.split('/').pop();
+                outputUrl = `/uploads/${filename}`;
+            }
+
             let html = '<h3>✅ 处理完成</h3>';
 
             // Display statistics if available
@@ -654,16 +673,16 @@
             }
 
             // Display output file if available
-            if (result.output_path) {
-                const isVideo = result.output_path.includes('.mp4') || result.output_path.includes('.avi');
+            if (outputUrl) {
+                const isVideo = outputUrl.includes('.mp4') || outputUrl.includes('.avi');
                 if (isVideo) {
                     html += `
                         <video class="result-video" controls>
-                            <source src="${result.output_path}" type="video/mp4">
+                            <source src="${outputUrl}" type="video/mp4">
                         </video>
                     `;
                 } else {
-                    html += `<img class="result-image" src="${result.output_path}" alt="Result">`;
+                    html += `<img class="result-image" src="${outputUrl}" alt="Result">`;
                 }
             }
 

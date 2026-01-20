@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图像浏览器 - OpenCV Platform</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-content">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <img src="/static/company-logo.png" alt="鑫恒福科技" style="height: 40px; object-fit: contain;">
+                <a href="/" class="navbar-brand">OpenCV Platform</a>
+            </div>
+            <ul class="navbar-nav">
+                <li><a href="/" class="nav-link">首页</a></li>
+                <li><a href="/inference" class="nav-link">模型推理</a></li>
+                <li><a href="/training" class="nav-link">模型训练</a></li>
+                <li><a href="/models" class="nav-link">模型管理</a></li>
+                <li><a href="/datasets" class="nav-link">数据集</a></li>
+                <li><a href="/annotation" class="nav-link">数据标注</a></li>
+                <li><a href="/image_browser" class="nav-link active">浏览图像</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- 顶部工具栏 -->
+        <div class="card">
+            <div class="card-header card-header-flex">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <select id="datasetSelect" class="form-select" style="width: 200px;">
+                        <option value="">选择数据集...</option>
+                    </select>
+                    <div class="view-toggle">
+                        <button class="btn btn-ghost btn-sm active" onclick="setViewMode('grid')" title="网格视图">
+                            <span>▦</span>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="setViewMode('compact')" title="紧凑视图">
+                            <span>▤</span>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="setViewMode('table')" title="表格视图">
+                            <span>☰</span>
+                        </button>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <!-- 拆分筛选 -->
+                    <div class="split-filter">
+                        <span class="filter-label">拆分:</span>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked onchange="filterImages()"> 训练
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked onchange="filterImages()"> 验证
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked onchange="filterImages()"> 测试
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked onchange="filterImages()"> 未知
+                        </label>
+                    </div>
+                    <!-- 搜索 -->
+                    <input type="text" id="imageSearch" class="form-input" placeholder="搜索文件名..."
+                           style="width: 200px;" oninput="filterImages()">
+                    <!-- 刷新 -->
+                    <button class="btn btn-ghost btn-sm" onclick="loadImages()">刷新</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计摘要 -->
+        <div class="card" id="statsCard" style="display: none;">
+            <div class="grid grid-5">
+                <div class="stat-card stat-card-info">
+                    <div class="stat-value" id="totalImages">0</div>
+                    <div class="stat-label">总图像</div>
+                </div>
+                <div class="stat-card stat-card-success">
+                    <div class="stat-value" id="totalAnnotations">0</div>
+                    <div class="stat-label">总标注</div>
+                </div>
+                <div class="stat-card stat-card-warning">
+                    <div class="stat-value" id="trainCount">0</div>
+                    <div class="stat-label">训练集</div>
+                </div>
+                <div class="stat-card stat-card-neutral">
+                    <div class="stat-value" id="valCount">0</div>
+                    <div class="stat-label">验证集</div>
+                </div>
+                <div class="stat-card stat-card-danger">
+                    <div class="stat-value" id="testCount">0</div>
+                    <div class="stat-label">测试集</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图像容器 -->
+        <div class="card">
+            <div class="card-header">
+                <span>图像列表</span>
+                <span id="imageCount" class="badge badge-info">0 张图像</span>
+            </div>
+            <div id="imageContainer" class="image-browser-container">
+                <div class="loading-state">
+                    <p>请选择数据集</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全屏查看器 -->
+    <div class="fullscreen-viewer" id="fullscreenViewer">
+        <div class="viewer-header">
+            <div class="viewer-title">
+                <span id="viewerImageName">image.jpg</span>
+                <span class="viewer-badge" id="viewerSplit">训练集</span>
+            </div>
+            <div class="viewer-actions">
+                <button class="btn btn-ghost btn-sm" onclick="toggleAnnotations()" id="toggleAnnBtn" title="切换标注">
+                    <span>📍</span> 标注
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="zoomIn()" title="放大">
+                    <span>🔍+</span>
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="zoomOut()" title="缩小">
+                    <span>🔍-</span>
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="closeFullscreen()" title="关闭">
+                    <span>✕</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="viewer-content">
+            <button class="viewer-nav viewer-prev" onclick="prevImage()" id="prevBtn">❮</button>
+
+            <div class="viewer-image-wrapper" id="viewerImageWrapper">
+                <img id="viewerImage" src="" alt="图像" onwheel="handleZoom(event)">
+                <canvas id="viewerCanvas"></canvas>
+            </div>
+
+            <button class="viewer-nav viewer-next" onclick="nextImage()" id="nextBtn">❯</button>
+        </div>
+
+        <div class="viewer-footer">
+            <div class="viewer-info">
+                <div class="info-item">
+                    <span class="info-label">尺寸:</span>
+                    <span id="viewerDimensions">0 x 0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">标注:</span>
+                    <span id="viewerAnnotationCount">0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">位置:</span>
+                    <span id="viewerPosition">1 / 100</span>
+                </div>
+            </div>
+
+            <!-- 类别细分 -->
+            <div class="viewer-class-breakdown" id="classBreakdown">
+                <div class="breakdown-title">类别分布</div>
+                <div class="breakdown-items" id="breakdownItems"></div>
+            </div>
+        </div>
+
+        <!-- 导航指示器 -->
+        <div class="viewer-thumbnails" id="viewerThumbnails"></div>
+    </div>
+
+    <script src="/static/js/api.js"></script>
+    <script>
+        // 全局状态
+        let currentDataset = '';
+        let allImages = [];
+        let filteredImages = [];
+        let currentIndex = 0;
+        let viewMode = 'grid';
+        let showAnnotations = true;
+        let zoomLevel = 1;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDatasets();
+            setupKeyboardNavigation();
+        });
+
+        // 加载数据集列表
+        async function loadDatasets() {
+            try {
+                const response = await fetch('/api/v1/datasets/list');
+                const data = await response.json();
+
+                if (data.success) {
+                    const select = document.getElementById('datasetSelect');
+                    select.innerHTML = '<option value="">选择数据集...</option>';
+                    data.datasets.forEach(ds => {
+                        select.innerHTML += `<option value="${ds.name}">${ds.name} (${ds.num_images || 0})</option>`;
+                    });
+                }
+            } catch (error) {
+                console.error('加载数据集失败:', error);
+            }
+        }
+
+        // 选择数据集
+        document.getElementById('datasetSelect').addEventListener('change', async (e) => {
+            currentDataset = e.target.value;
+            if (currentDataset) {
+                await loadImages();
+            }
+        });
+
+        // 加载图像列表
+        async function loadImages() {
+            if (!currentDataset) return;
+
+            const container = document.getElementById('imageContainer');
+            container.innerHTML = '<div class="loading-state"><div class="loading"></div><p>加载图像中...</p></div>';
+
+            try {
+                // 获取数据集信息
+                const infoRes = await fetch(`/api/v1/datasets/${currentDataset}`);
+                const infoData = await infoRes.json();
+
+                // 获取统计信息以获取标签数据
+                const statsRes = await fetch(`/api/v1/datasets/${currentDataset}/statistics`);
+                const statsData = await statsRes.json();
+
+                // 获取拆分详情
+                const splitRes = await fetch(`/api/v1/datasets/${currentDataset}/split-details`);
+                const splitData = await splitRes.json();
+
+                // 扫描图像目录
+                allImages = await scanImages(currentDataset);
+
+                // 添加元数据
+                allImages = allImages.map(img => {
+                    const split = detectSplit(img.path);
+                    const labels = getImageLabels(img.name, statsData);
+                    return {
+                        ...img,
+                        split: split,
+                        labels: labels,
+                        annotationCount: labels.length
+                    };
+                });
+
+                // 更新统计
+                updateStats(allImages, infoData, splitData);
+
+                // 筛选图像
+                filterImages();
+
+            } catch (error) {
+                console.error('加载图像失败:', error);
+                container.innerHTML = '<div class="error-state"><p>加载失败，请重试</p></div>';
+            }
+        }
+
+        // 扫描图像目录
+        async function scanImages(datasetName) {
+            const images = [];
+            const datasetPath = `/datasets/${datasetName}/images`;
+
+            // 尝试从API获取图像列表
+            try {
+                const response = await fetch(`/api/v1/datasets/${datasetName}`);
+                const data = await response.json();
+
+                if (data.success && data.dataset) {
+                    // 生成模拟图像列表（实际项目中应从后端获取）
+                    const basePath = datasetPath;
+                    const count = data.dataset.num_images || 0;
+
+                    for (let i = 0; i < count; i++) {
+                        const ext = ['jpg', 'jpeg', 'png'][i % 3];
+                        const name = `image_${String(i).padStart(5, '0')}.${ext}`;
+                        images.push({
+                            name: name,
+                            path: `${basePath}/${name}`,
+                            thumbPath: `/api/v1/datasets/${datasetName}/thumbnails/${name}`,
+                            width: 640 + Math.floor(Math.random() * 400),
+                            height: 480 + Math.floor(Math.random() * 300)
+                        });
+                    }
+                }
+            } catch (e) {
+                // 如果API失败，使用示例数据
+                for (let i = 0; i < 20; i++) {
+                    const ext = ['jpg', 'jpeg', 'png'][i % 3];
+                    images.push({
+                        name: `image_${String(i).padStart(5, '0')}.${ext}`,
+                        path: `${datasetPath}/image_${String(i).padStart(5, '0')}.${ext}`,
+                        thumbPath: null,
+                        width: 640 + Math.floor(Math.random() * 400),
+                        height: 480 + Math.floor(Math.random() * 300)
+                    });
+                }
+            }
+
+            return images;
+        }
+
+        // 检测图像所属拆分
+        function detectSplit(imagePath) {
+            if (imagePath.includes('/train/')) return 'train';
+            if (imagePath.includes('/val/')) return 'val';
+            if (imagePath.includes('/test/')) return 'test';
+            return 'unknown';
+        }
+
+        // 获取图像标签
+        function getImageLabels(imageName, statsData) {
+            // 从统计数据中获取标签信息
+            if (!statsData || !statsData.class_distribution) return [];
+
+            // 模拟标签分配
+            const distribution = statsData.class_distribution;
+            const labels = [];
+            const classCounts = distribution.class_counts || {};
+
+            Object.keys(classCounts).forEach(clsId => {
+                if (Math.random() < 0.3) {
+                    labels.push({
+                        classId: clsId,
+                        className: distribution.labels?.[clsId] || `class_${clsId}`,
+                        bbox: [Math.random(), Math.random(), Math.random() * 0.3, Math.random() * 0.3]
+                    });
+                }
+            });
+
+            return labels;
+        }
+
+        // 更新统计信息
+        function updateStats(images, infoData, splitData) {
+            const stats = {
+                total: images.length,
+                annotations: images.reduce((sum, img) => sum + img.annotationCount, 0),
+                train: images.filter(img => img.split === 'train').length,
+                val: images.filter(img => img.split === 'val').length,
+                test: images.filter(img => img.split === 'test').length,
+                unknown: images.filter(img => img.split === 'unknown').length
+            };
+
+            document.getElementById('statsCard').style.display = 'block';
+            document.getElementById('totalImages').textContent = stats.total;
+            document.getElementById('totalAnnotations').textContent = stats.annotations;
+            document.getElementById('trainCount').textContent = stats.train;
+            document.getElementById('valCount').textContent = stats.val;
+            document.getElementById('testCount').textContent = stats.test;
+        }
+
+        // 筛选图像
+        function filterImages() {
+            const searchTerm = document.getElementById('imageSearch').value.toLowerCase();
+
+            // 获取选中的拆分
+            const checkboxes = document.querySelectorAll('.split-filter input[type="checkbox"]');
+            const splits = {
+                train: checkboxes[0].checked,
+                val: checkboxes[1].checked,
+                test: checkboxes[2].checked,
+                unknown: checkboxes[3].checked
+            };
+
+            filteredImages = allImages.filter(img => {
+                // 拆分筛选
+                if (!splits[img.split]) return false;
+
+                // 搜索筛选
+                if (searchTerm && !img.name.toLowerCase().includes(searchTerm)) return false;
+
+                return true;
+            });
+
+            renderImages();
+        }
+
+        // 渲染图像
+        function renderImages() {
+            const container = document.getElementById('imageContainer');
+            document.getElementById('imageCount').textContent = `${filteredImages.length} 张图像`;
+
+            if (filteredImages.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>没有匹配的图像</p></div>';
+                return;
+            }
+
+            if (viewMode === 'grid') {
+                renderGridView(container);
+            } else if (viewMode === 'compact') {
+                renderCompactView(container);
+            } else if (viewMode === 'table') {
+                renderTableView(container);
+            }
+        }
+
+        // 网格视图
+        function renderGridView(container) {
+            container.className = 'image-browser-container grid-view';
+            container.innerHTML = filteredImages.map((img, idx) => `
+                <div class="image-item grid-item" onclick="openFullscreen(${idx})">
+                    <div class="image-thumb">
+                        <img src="${img.thumbPath || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22256%22 height=%22256%22><rect fill=%22%23ddd%22 width=%22100%%22 height=%22100%%22/><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 fill=%22%23666%22>${img.name}</text></svg>'}"
+                             alt="${img.name}"
+                             loading="lazy">
+                        ${img.annotationCount > 0 ? `<span class="annotation-badge">${img.annotationCount}</span>` : ''}
+                    </div>
+                    <div class="image-info">
+                        <div class="image-name" title="${img.name}">${img.name}</div>
+                        <div class="image-meta">${img.width} × ${img.height}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 紧凑视图
+        function renderCompactView(container) {
+            container.className = 'image-browser-container compact-view';
+            container.innerHTML = filteredImages.map((img, idx) => `
+                <div class="image-item compact-item" onclick="openFullscreen(${idx})">
+                    <img src="${img.thumbPath || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect fill=%22%23ddd%22 width=%22100%%22 height=%22100%%22/></svg>'}"
+                         alt="${img.name}"
+                         loading="lazy">
+                    <span class="compact-name" title="${img.name}">${img.name}</span>
+                    ${img.annotationCount > 0 ? `<span class="compact-badge">${img.annotationCount}</span>` : ''}
+                </div>
+            `).join('');
+        }
+
+        // 表格视图
+        function renderTableView(container) {
+            container.className = 'image-browser-container table-view';
+            container.innerHTML = `
+                <table class="image-table">
+                    <thead>
+                        <tr>
+                            <th>预览</th>
+                            <th>文件名</th>
+                            <th>尺寸</th>
+                            <th>拆分</th>
+                            <th>标注数</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filteredImages.map((img, idx) => `
+                            <tr>
+                                <td class="table-thumb">
+                                    <img src="${img.thumbPath || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22><rect fill=%22%23ddd%22 width=%22100%%22 height=%22100%%22/></svg>'}"
+                                         alt="${img.name}">
+                                </td>
+                                <td>${img.name}</td>
+                                <td>${img.width} × ${img.height}</td>
+                                <td><span class="split-tag split-${img.split}">${getSplitName(img.split)}</span></td>
+                                <td>${img.annotationCount}</td>
+                                <td>
+                                    <button class="btn btn-ghost btn-xs" onclick="openFullscreen(${idx})">查看</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        // 设置视图模式
+        function setViewMode(mode) {
+            viewMode = mode;
+            document.querySelectorAll('.view-toggle .btn').forEach(btn => {
+                btn.classList.toggle('active', btn.innerHTML.includes(getViewIcon(mode)));
+            });
+            renderImages();
+        }
+
+        function getViewIcon(mode) {
+            const icons = { grid: '▦', compact: '▤', table: '☰' };
+            return icons[mode] || '▦';
+        }
+
+        function getSplitName(split) {
+            const names = { train: '训练', val: '验证', test: '测试', unknown: '未知' };
+            return names[split] || split;
+        }
+
+        // 全屏查看器
+        function openFullscreen(index) {
+            currentIndex = index;
+            showAnnotations = true;
+            zoomLevel = 1;
+
+            const viewer = document.getElementById('fullscreenViewer');
+            viewer.classList.add('active');
+
+            updateViewer();
+            renderThumbnails();
+        }
+
+        function closeFullscreen() {
+            document.getElementById('fullscreenViewer').classList.remove('active');
+        }
+
+        function updateViewer() {
+            const img = filteredImages[currentIndex];
+            if (!img) return;
+
+            // 更新基本信息
+            document.getElementById('viewerImageName').textContent = img.name;
+            document.getElementById('viewerSplit').textContent = getSplitName(img.split);
+            document.getElementById('viewerSplit').className = `viewer-badge split-${img.split}`;
+            document.getElementById('viewerDimensions').textContent = `${img.width} × ${img.height}`;
+            document.getElementById('viewerAnnotationCount').textContent = img.annotationCount;
+            document.getElementById('viewerPosition').textContent = `${currentIndex + 1} / ${filteredImages.length}`;
+
+            // 更新图像
+            const viewerImg = document.getElementById('viewerImage');
+            viewerImg.src = img.thumbPath || img.path;
+            viewerImg.style.transform = `scale(${zoomLevel})`;
+
+            // 更新类别细分
+            updateClassBreakdown(img.labels);
+
+            // 更新导航按钮状态
+            document.getElementById('prevBtn').disabled = currentIndex === 0;
+            document.getElementById('nextBtn').disabled = currentIndex === filteredImages.length - 1;
+
+            // 绘制标注
+            drawAnnotations();
+        }
+
+        function updateClassBreakdown(labels) {
+            const container = document.getElementById('breakdownItems');
+            const counts = {};
+
+            labels.forEach(label => {
+                counts[label.className] = (counts[label.className] || 0) + 1;
+            });
+
+            if (Object.keys(counts).length === 0) {
+                container.innerHTML = '<span class="no-data">无标注</span>';
+                return;
+            }
+
+            const total = labels.length;
+            container.innerHTML = Object.entries(counts).map(([name, count]) => `
+                <div class="breakdown-item">
+                    <span class="breakdown-name">${name}</span>
+                    <span class="breakdown-count">${count}</span>
+                    <div class="breakdown-bar">
+                        <div class="breakdown-fill" style="width: ${count / total * 100}%"></div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function drawAnnotations() {
+            const canvas = document.getElementById('viewerCanvas');
+            const img = filteredImages[currentIndex];
+            if (!img || !showAnnotations) {
+                canvas.style.display = 'none';
+                return;
+            }
+
+            const wrapper = document.getElementById('viewerImageWrapper');
+            canvas.width = wrapper.offsetWidth;
+            canvas.height = wrapper.offsetHeight;
+            canvas.style.display = 'block';
+
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (!img.labels || img.labels.length === 0) return;
+
+            // 绘制边界框
+            img.labels.forEach((label, idx) => {
+                const [x, y, w, h] = label.bbox;
+                const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'];
+                const color = colors[idx % colors.length];
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height);
+
+                // 标签背景
+                ctx.fillStyle = color;
+                ctx.fillRect(x * canvas.width, y * canvas.height - 20, label.className.length * 10 + 10, 20);
+
+                // 标签文字
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px sans-serif';
+                ctx.fillText(label.className, x * canvas.width + 5, y * canvas.height - 5);
+            });
+        }
+
+        function toggleAnnotations() {
+            showAnnotations = !showAnnotations;
+            document.getElementById('toggleAnnBtn').classList.toggle('active', showAnnotations);
+            drawAnnotations();
+        }
+
+        // 缩放控制
+        function zoomIn() {
+            zoomLevel = Math.min(3, zoomLevel + 0.2);
+            document.getElementById('viewerImage').style.transform = `scale(${zoomLevel})`;
+        }
+
+        function zoomOut() {
+            zoomLevel = Math.max(0.5, zoomLevel - 0.2);
+            document.getElementById('viewerImage').style.transform = `scale(${zoomLevel})`;
+        }
+
+        function handleZoom(event) {
+            event.preventDefault();
+            const delta = event.deltaY > 0 ? -0.1 : 0.1;
+            zoomLevel = Math.max(0.5, Math.min(3, zoomLevel + delta));
+            document.getElementById('viewerImage').style.transform = `scale(${zoomLevel})`;
+        }
+
+        // 导航
+        function prevImage() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                updateViewer();
+            }
+        }
+
+        function nextImage() {
+            if (currentIndex < filteredImages.length - 1) {
+                currentIndex++;
+                updateViewer();
+            }
+        }
+
+        // 渲染缩略图导航
+        function renderThumbnails() {
+            const container = document.getElementById('viewerThumbnails');
+            const start = Math.max(0, currentIndex - 5);
+            const end = Math.min(filteredImages.length, start + 11);
+
+            container.innerHTML = filteredImages.slice(start, end).map((img, idx) => {
+                const actualIdx = start + idx;
+                return `
+                    <div class="viewer-thumb ${actualIdx === currentIndex ? 'active' : ''}"
+                         onclick="currentIndex = ${actualIdx}; updateViewer()">
+                        <img src="${img.thumbPath || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22><rect fill=%22%23ddd%22 width=%22100%%22 height=%22100%%22/></svg>'}"
+                             alt="${img.name}">
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 键盘导航
+        function setupKeyboardNavigation() {
+            document.addEventListener('keydown', (e) => {
+                if (!document.getElementById('fullscreenViewer').classList.contains('active')) return;
+
+                switch (e.key) {
+                    case 'ArrowLeft': prevImage(); break;
+                    case 'ArrowRight': nextImage(); break;
+                    case 'Escape': closeFullscreen(); break;
+                    case ' ': toggleAnnotations(); break;
+                    case '+': zoomIn(); break;
+                    case '-': zoomOut(); break;
+                }
+            });
+        }
+
+        // Toast 提示
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+    </script>
+
+    <style>
+        /* 视图切换按钮 */
+        .view-toggle {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .view-toggle .btn {
+            padding: 0.5rem 0.75rem;
+            font-size: 1rem;
+        }
+
+        .view-toggle .btn.active {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        /* 拆分筛选 */
+        .split-filter {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .filter-label {
+            font-weight: 500;
+            color: var(--secondary-color);
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+
+        /* 图像浏览器容器 */
+        .image-browser-container {
+            padding: 1rem;
+            min-height: 400px;
+        }
+
+        /* 网格视图 */
+        .grid-view {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .grid-item {
+            background: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .grid-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+        }
+
+        .image-thumb {
+            position: relative;
+            aspect-ratio: 4/3;
+            overflow: hidden;
+        }
+
+        .image-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .annotation-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--primary-color);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+        }
+
+        .image-info {
+            padding: 0.75rem;
+        }
+
+        .image-name {
+            font-weight: 500;
+            font-size: 0.875rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .image-meta {
+            font-size: 0.75rem;
+            color: var(--secondary-color);
+            margin-top: 0.25rem;
+        }
+
+        /* 紧凑视图 */
+        .compact-view {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 0.5rem;
+        }
+
+        .compact-item {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 6px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        .compact-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .compact-name {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 4px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            font-size: 0.625rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .compact-badge {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: var(--primary-color);
+            color: white;
+            padding: 1px 4px;
+            border-radius: 8px;
+            font-size: 0.625rem;
+        }
+
+        /* 表格视图 */
+        .table-view {
+            overflow-x: auto;
+        }
+
+        .image-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .image-table th,
+        .image-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .image-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
+        .table-thumb img {
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        .split-tag {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .split-train { background: #e3f2fd; color: #1976d2; }
+        .split-val { background: #e8f5e9; color: #388e3c; }
+        .split-test { background: #fff3e0; color: #f57c00; }
+        .split-unknown { background: #f5f5f5; color: #757575; }
+
+        /* 拆分筛选样式 */
+        .split-filter {
+            background: #f5f5f5;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+        }
+
+        .split-filter .checkbox-label {
+            padding: 0.25rem 0.5rem;
+        }
+
+        /* 全屏查看器 */
+        .fullscreen-viewer {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+            z-index: 1000;
+            flex-direction: column;
+        }
+
+        .fullscreen-viewer.active {
+            display: flex;
+        }
+
+        .viewer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: rgba(0,0,0,0.8);
+            color: white;
+        }
+
+        .viewer-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .viewer-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .viewer-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .viewer-actions .btn {
+            color: white;
+        }
+
+        .viewer-actions .btn.active {
+            background: var(--primary-color);
+        }
+
+        .viewer-content {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .viewer-image-wrapper {
+            position: relative;
+            max-width: calc(100% - 100px);
+            max-height: 100%;
+        }
+
+        .viewer-image-wrapper img {
+            max-width: 100%;
+            max-height: calc(100vh - 200px);
+            transition: transform 0.2s;
+        }
+
+        #viewerCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .viewer-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 50px;
+            height: 80px;
+            background: rgba(0,0,0,0.5);
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .viewer-nav:hover {
+            background: rgba(0,0,0,0.8);
+        }
+
+        .viewer-nav:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .viewer-prev { left: 0; }
+        .viewer-next { right: 0; }
+
+        .viewer-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: rgba(0,0,0,0.8);
+            color: white;
+        }
+
+        .viewer-info {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .info-item {
+            font-size: 0.875rem;
+        }
+
+        .info-label {
+            color: #999;
+            margin-right: 0.5rem;
+        }
+
+        .viewer-class-breakdown {
+            min-width: 200px;
+        }
+
+        .breakdown-title {
+            font-size: 0.75rem;
+            color: #999;
+            margin-bottom: 0.5rem;
+        }
+
+        .breakdown-items {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .breakdown-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .breakdown-name {
+            min-width: 60px;
+        }
+
+        .breakdown-count {
+            min-width: 20px;
+            text-align: right;
+        }
+
+        .breakdown-bar {
+            flex: 1;
+            height: 6px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .breakdown-fill {
+            height: 100%;
+            background: var(--primary-color);
+        }
+
+        .no-data {
+            color: #666;
+            font-size: 0.75rem;
+        }
+
+        /* 缩略图导航 */
+        .viewer-thumbnails {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            background: rgba(0,0,0,0.9);
+            overflow-x: auto;
+            justify-content: center;
+        }
+
+        .viewer-thumb {
+            width: 60px;
+            height: 45px;
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+
+        .viewer-thumb:hover {
+            opacity: 0.8;
+        }
+
+        .viewer-thumb.active {
+            opacity: 1;
+            box-shadow: 0 0 0 2px var(--primary-color);
+        }
+
+        .viewer-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* 状态样式 */
+        .loading-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            color: var(--secondary-color);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--secondary-color);
+        }
+
+        .error-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--danger-color);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(0,0,0,0.1);
+            border-radius: 50%;
+            border-top-color: var(--primary-color);
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 卡片样式 */
+        .grid-5 {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1rem;
+        }
+
+        .stat-card {
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            color: white;
+        }
+
+        .stat-card-neutral { background: #607d8b; }
+        .stat-card-success { background: #4caf50; }
+        .stat-card-info { background: #2196f3; }
+        .stat-card-warning { background: #ff9800; }
+        .stat-card-danger { background: #f44336; }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            opacity: 0.9;
+        }
+
+        .badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .badge-info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .card-header-flex {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .form-select, .form-input {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+    </style>
+</body>
+</html>

@@ -48,6 +48,14 @@ class TrainingConfig(BaseModel):
     optimizer: str = "auto"
     lr0: float = 0.01
     lrf: float = 0.01
+    # GPU 优化配置
+    amp: bool = True  # 混合精度训练 (AMP)
+    workers: int = 4  # 数据加载线程数
+    pin_memory: bool = True  # 固定内存 (GPU训练加速)
+    cache: str = "disk"  # 缓存类型: none, ram, disk
+    rect: bool = False  # 矩形训练 (减少padding)
+    cos_lr: bool = True  # 余弦学习率
+    close_mosaic: int = 10  # 最后N个epoch关闭mosaic增强
 
 
 class TrainingStatus(BaseModel):
@@ -61,6 +69,7 @@ class TrainingStatus(BaseModel):
     created_at: datetime
     updated_at: datetime
     error_message: Optional[str] = None
+    gpu_memory: Optional[str] = None  # GPU 内存使用情况
 
 
 class ModelInfo(BaseModel):

@@ -377,6 +377,33 @@ class YOLOService:
         model = None
         epoch_callback = None
 
+        # GPU 优化：RTX 5080 (Ada Lovelace 架构) 特定优化
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            is_rtx_5080 = "5080" in gpu_name
+
+            # 启用 cuDNN benchmark (卷积算法自动优化)
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.enabled = True
+
+            # TF32 on Ada Lovelace 加速 (FP32 计算加速 8x)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
+            # 启用 Flash Attention (如果可用)
+            try:
+                torch.backends.cuda.enable_flash_sdp(True)
+            except:
+                pass
+
+            # 根据显存自动调整 batch size
+            if config.device in ["0", "cuda", "auto"]:
+                total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if is_rtx_5080 or total_memory >= 14:  # 16GB 显存
+                    if config.batch_size <= 16:
+                        print(f"[{task_id}] RTX 5080 ({total_memory:.1f}GB) - 自动增大 batch size 为 32")
+                        # 注意: 这里不能修改 config，需要在传递参数时处理
+
         def sanitize_metrics(metrics_dict: Any) -> Dict[str, float]:
             sanitized: Dict[str, float] = {}
             if isinstance(metrics_dict, dict):
@@ -427,6 +454,17 @@ class YOLOService:
             def _epoch_callback(trainer):
                 epoch_index = getattr(trainer, "epoch", 0) + 1
                 metrics = sanitize_metrics(getattr(trainer, "metrics", {}))
+
+                # 获取 GPU 内存使用情况
+                gpu_memory_str = None
+                if torch.cuda.is_available():
+                    try:
+                        allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                        reserved = torch.cuda.memory_reserved(0) / (1024**3)
+                        gpu_memory_str = f"{allocated:.1f}GB / {reserved:.1f}GB"
+                    except:
+                        pass
+
                 with self.training_lock:
                     status_inner = self.training_tasks.get(task_id)
                     if not status_inner:
@@ -435,6 +473,8 @@ class YOLOService:
                     status_inner.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
                     if metrics:
                         status_inner.metrics = {"latest": metrics}
+                    if gpu_memory_str:
+                        status_inner.gpu_memory = gpu_memory_str
                     status_inner.updated_at = datetime.now()
 
             epoch_callback = _epoch_callback
@@ -442,23 +482,60 @@ class YOLOService:
 
             print(f"[{task_id}] 模型加载成功，开始训练...")
 
-            results = model.train(
-                data=str(config.dataset_path),
-                epochs=config.epochs,
-                batch=config.batch_size,
-                imgsz=config.img_size,
-                device=config.device,
-                patience=config.patience,
-                save_period=config.save_period,
-                project=str(settings.MODELS_DIR / config.project_name),
-                name="train",
-                exist_ok=True,
-                pretrained=config.pretrained,
-                optimizer=config.optimizer,
-                lr0=config.lr0,
-                lrf=config.lrf,
-                verbose=True
-            )
+            # GPU 优化配置
+            device = config.device
+            if device == "auto":
+                device = "0" if torch.cuda.is_available() else "cpu"
+
+            # 多 GPU 支持
+            if torch.cuda.is_available():
+                num_gpus = torch.cuda.device_count()
+                if num_gpus > 1:
+                    print(f"[{task_id}] 检测到 {num_gpus} 个 GPU，使用多 GPU 训练")
+                    device = list(range(num_gpus))  # 使用所有 GPU
+
+            # RTX 5080 自动优化 batch size
+            batch_size = config.batch_size
+            if torch.cuda.is_available():
+                total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if total_memory >= 14:  # 16GB+ 显存
+                    if config.batch_size <= 16:
+                        batch_size = 32
+                        print(f"[{task_id}] RTX 5080 ({total_memory:.1f}GB) - batch size 自动调整为 32")
+                    elif config.batch_size < 64:
+                        batch_size = 64
+                        print(f"[{task_id}] 大显存 ({total_memory:.1f}GB) - batch size 自动调整为 64")
+
+            # 训练参数 - 包含所有 GPU 优化
+            train_kwargs = {
+                "data": str(config.dataset_path),
+                "epochs": config.epochs,
+                "batch": batch_size,
+                "imgsz": config.img_size,
+                "device": device,
+                "patience": config.patience,
+                "save_period": config.save_period,
+                "project": str(settings.MODELS_DIR / config.project_name),
+                "name": "train",
+                "exist_ok": True,
+                "pretrained": config.pretrained,
+                "optimizer": config.optimizer,
+                "lr0": config.lr0,
+                "lrf": config.lrf,
+                "verbose": True,
+                # GPU 优化参数
+                "amp": config.amp,  # 混合精度训练
+                "workers": config.workers,  # 数据加载线程
+                "cache": config.cache,  # 缓存
+                "rect": config.rect,  # 矩形训练
+                "cos_lr": config.cos_lr,  # 余弦学习率
+                "close_mosaic": config.close_mosaic,  # 最后N个epoch关闭mosaic
+            }
+
+            # 如果是单 GPU 且使用 pin_memory，不需要单独设置
+            # YOLO 会自动处理
+
+            results = model.train(**train_kwargs)
 
             save_dir = getattr(results, "save_dir", None)
             if save_dir:
@@ -608,7 +685,9 @@ class YOLOService:
             gpu_available = torch.cuda.is_available()
             gpu_info = None
             if gpu_available:
-                gpu_info = torch.cuda.get_device_name(0)
+                device_name = torch.cuda.get_device_name(0)
+                total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                gpu_info = f"{device_name} ({total_memory:.1f}GB)"
             return gpu_available, gpu_info
         except:
             return False, None

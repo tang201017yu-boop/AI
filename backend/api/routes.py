@@ -548,7 +548,11 @@ async def solution_object_counting(
             conf=conf,
             output_path=output_path
         )
-        
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
         return SolutionResponse(**result)
         
     except Exception as e:
@@ -595,7 +599,11 @@ async def solution_heatmap(
             conf=conf,
             output_path=output_path
         )
-        
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
         return SolutionResponse(**result)
         
     except Exception as e:
@@ -646,7 +654,11 @@ async def solution_speed_estimation(
             conf=conf,
             output_path=output_path
         )
-        
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
         return SolutionResponse(**result)
         
     except Exception as e:
@@ -687,12 +699,17 @@ async def solution_distance_calculation(
             classes=class_list,
             conf=conf
         )
-        
+
+        # 转换为相对路径
+        output_image = result.get("output_image")
+        if output_image:
+            output_image = f"/uploads/{Path(output_image).name}"
+
         return SolutionResponse(
             success=result["success"],
             message=result["message"],
             results={"distances": result.get("distances", [])},
-            output_path=result.get("output_image")
+            output_path=output_image
         )
         
     except Exception as e:
@@ -739,7 +756,11 @@ async def solution_object_blur(
             blur_ratio=blur_ratio,
             output_path=output_path
         )
-        
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
         return SolutionResponse(**result)
         
     except Exception as e:
@@ -780,15 +801,21 @@ async def solution_object_crop(
             classes=class_list,
             conf=conf
         )
-        
+
+        # 更新裁剪图片路径为相对路径
+        cropped_images = result.get("cropped_images", [])
+        for img in cropped_images:
+            if img.get("crop_path"):
+                img["crop_path"] = f"/uploads/{Path(img['crop_path']).name}"
+
         return SolutionResponse(
             success=result["success"],
             message=result["message"],
             results={
                 "total_crops": result.get("total_crops", 0),
-                "cropped_images": result.get("cropped_images", [])
+                "cropped_images": cropped_images
             },
-            output_path=result.get("output_dir")
+            output_path=f"/uploads/{Path(result.get('output_dir', '')).name}"
         )
         
     except Exception as e:
@@ -839,7 +866,11 @@ async def solution_queue_management(
             conf=conf,
             output_path=output_path
         )
-        
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
         return SolutionResponse(**result)
         
     except Exception as e:

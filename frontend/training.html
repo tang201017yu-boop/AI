@@ -217,6 +217,7 @@
                                 </div>
                                 <div style="margin-top: 0.5rem; color: var(--secondary-color); font-size: 0.9rem;">
                                     <div>Epoch: ${task.current_epoch}/${task.total_epochs}</div>
+                                    ${task.gpu_memory ? `<div>GPU 显存: ${task.gpu_memory}</div>` : ''}
                                     ${metricsText ? `<div>指标: ${metricsText}</div>` : ''}
                                     <div>更新时间: ${updatedAt}</div>
                                     ${task.error_message ? `<div style="color: #ef4444;">错误: ${task.error_message}</div>` : ''}

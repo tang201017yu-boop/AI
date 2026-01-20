@@ -1,0 +1,528 @@
+"""
+YOLO 引擎 - YOLO Model Engine
+处理模型加载、推理和训练的核心功能
+"""
+import os
+import time
+import threading
+import shutil
+import logging
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, Future
+import numpy as np
+from PIL import Image
+
+try:
+    import torch
+    from ultralytics import YOLO
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    print("Warning: torch/ultralytics not installed")
+
+from .config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class YOLOEngine:
+    """YOLO 模型引擎 - 核心模型处理类"""
+
+    def __init__(self):
+        if not TORCH_AVAILABLE:
+            raise ImportError("PyTorch is not available")
+
+        self.models: Dict[str, YOLO] = {}
+        self.training_tasks: Dict[str, 'TrainingStatus'] = {}
+        self.training_futures: Dict[str, Future] = {}
+        self.training_lock = threading.Lock()
+        self.model_cache_lock = threading.Lock()
+        self.model_aliases: Dict[str, str] = {}
+        self.model_metadata_cache: Dict[str, Tuple[float, 'ModelInfo']] = {}
+        self.executor = ThreadPoolExecutor(
+            max_workers=settings.MAX_TRAINING_WORKERS,
+            thread_name_prefix="yolo-train"
+        )
+
+        # GPU 优化
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            try:
+                torch.backends.cuda.enable_flash_sdp(True)
+            except:
+                pass
+
+        self._index_existing_models()
+
+    def _index_existing_models(self) -> None:
+        """索引已存在的模型"""
+        for path in self._iter_model_paths():
+            try:
+                resolved = path.resolve()
+            except FileNotFoundError:
+                continue
+            self.model_aliases.setdefault(resolved.name, str(resolved))
+
+    def _iter_model_paths(self):
+        """迭代所有模型文件路径"""
+        seen = set()
+        for root in settings.model_search_paths:
+            if not root.exists():
+                continue
+            for path in root.glob("**/*.pt"):
+                try:
+                    resolved = path.resolve()
+                except FileNotFoundError:
+                    continue
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                yield resolved
+
+    def _resolve_model_path(self, model_identifier: Optional[str]) -> str:
+        """解析模型标识符"""
+        if not model_identifier:
+            return settings.DEFAULT_MODEL
+
+        identifier = model_identifier.strip()
+        alias = Path(identifier).name
+
+        with self.model_cache_lock:
+            mapped = self.model_aliases.get(identifier) or self.model_aliases.get(alias)
+            if mapped and Path(mapped).exists():
+                return str(Path(mapped).resolve())
+
+        candidate = Path(identifier)
+        if candidate.exists():
+            return str(candidate.resolve())
+
+        # 搜索已配置的路径
+        for root in settings.model_search_paths:
+            direct = root / alias
+            if direct.exists():
+                return str(direct.resolve())
+            nested = next(root.glob(f"**/{alias}"), None)
+            if nested and nested.exists():
+                return str(nested.resolve())
+
+        return identifier
+
+    def load_model(self, model_identifier: Optional[str] = None) -> YOLO:
+        """加载模型"""
+        resolved_path = self._resolve_model_path(model_identifier)
+        cache_key = resolved_path
+
+        with self.model_cache_lock:
+            if cache_key in self.models:
+                return self.models[cache_key]
+
+        try:
+            model = YOLO(resolved_path)
+        except Exception as e:
+            raise FileNotFoundError(f"无法加载模型 {model_identifier}: {e}")
+
+        with self.model_cache_lock:
+            self.models[cache_key] = model
+
+        return model
+
+    def infer(
+        self,
+        image_path: str,
+        model_identifier: str = None,
+        confidence: float = None,
+        iou_threshold: float = None,
+        img_size: int = None
+    ) -> Dict[str, Any]:
+        """执行推理"""
+        start_time = time.time()
+
+        model_identifier = model_identifier or settings.DEFAULT_MODEL
+        confidence = confidence or settings.CONFIDENCE_THRESHOLD
+        iou_threshold = iou_threshold or settings.IOU_THRESHOLD
+        img_size = img_size or settings.DEFAULT_IMG_SIZE
+
+        model = self.load_model(model_identifier)
+        results = model.predict(
+            source=image_path,
+            conf=confidence,
+            iou=iou_threshold,
+            imgsz=img_size,
+            verbose=False
+        )
+
+        detections = []
+        if len(results) > 0:
+            boxes = results[0].boxes
+            for i in range(len(boxes)):
+                box = boxes[i]
+                detections.append({
+                    "class_id": int(box.cls[0]),
+                    "class_name": model.names[int(box.cls[0])],
+                    "confidence": float(box.conf[0]),
+                    "bbox": box.xyxy[0].tolist()
+                })
+
+        inference_time = time.time() - start_time
+
+        return {
+            "success": True,
+            "message": "推理完成",
+            "detections": detections,
+            "inference_time": inference_time
+        }
+
+    def train(self, config: 'TrainingConfig') -> str:
+        """开始训练（异步）"""
+        task_id = f"train_{int(time.time())}"
+
+        status = TrainingStatus(
+            task_id=task_id,
+            status="pending",
+            progress=0.0,
+            current_epoch=0,
+            total_epochs=config.epochs,
+            created_at=__import__('datetime').datetime.now(),
+            updated_at=__import__('datetime').datetime.now()
+        )
+
+        with self.training_lock:
+            self.training_tasks[task_id] = status
+
+        config_copy = config.copy(deep=True)
+        future = self.executor.submit(self._train_worker, task_id, config_copy)
+        self.training_futures[task_id] = future
+
+        return task_id
+
+    def _train_worker(self, task_id: str, config: 'TrainingConfig'):
+        """训练工作函数"""
+        try:
+            model_type = config.model_type or "yolo11n"
+            total_epochs = config.epochs
+
+            print(f"[{task_id}] 开始训练 - 模型: {model_type}")
+
+            base_model_path = self._resolve_model_path(
+                config.model_path or f"{model_type}.pt"
+            )
+            model = YOLO(base_model_path)
+
+            with self.training_lock:
+                status = self.training_tasks.get(task_id)
+                if status:
+                    status.status = "running"
+
+            # 自动调整 batch size (大显存 GPU)
+            batch_size = config.batch_size
+            if torch.cuda.is_available():
+                total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if total_memory >= 14 and config.batch_size <= 16:
+                    batch_size = 32
+                    print(f"[{task_id}] 自动增大 batch size 到 32 ({total_memory:.1f}GB)")
+
+            # 获取项目路径
+            project_dir = settings.MODELS_DIR / config.project_name
+            project_dir.mkdir(parents=True, exist_ok=True)
+
+            # 训练回调 - 收集指标
+            def epoch_callback(trainer):
+                epoch_index = getattr(trainer, "epoch", 0) + 1
+
+                # 获取损失
+                losses = {}
+                if hasattr(trainer, 'loss_items'):
+                    loss_items = trainer.loss_items
+                    if loss_items is not None:
+                        losses = {
+                            "box_loss": float(loss_items[0]) if len(loss_items) > 0 else 0,
+                            "cls_loss": float(loss_items[1]) if len(loss_items) > 1 else 0,
+                            "dfl_loss": float(loss_items[2]) if len(loss_items) > 2 else 0
+                        }
+
+                # 获取指标
+                metrics = getattr(trainer, "metrics", {})
+
+                # 获取系统统计
+                gpu_mem = None
+                gpu_util = None
+                sys_mem = None
+                if torch.cuda.is_available():
+                    try:
+                        allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                        reserved = torch.cuda.memory_reserved(0) / (1024**3)
+                        gpu_mem = f"{allocated:.1f}GB / {reserved:.1f}GB"
+
+                        # GPU 利用率 (近似)
+                        if hasattr(torch.cuda, 'utilization'):
+                            gpu_util = torch.cuda.utilization(0)
+                    except:
+                        pass
+
+                # 获取系统内存
+                try:
+                    import psutil
+                    process = psutil.Process()
+                    sys_mem = process.memory_info().rss / (1024**3)
+                except:
+                    pass
+
+                with self.training_lock:
+                    status = self.training_tasks.get(task_id)
+                    if status:
+                        status.current_epoch = epoch_index
+                        status.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
+                        status.gpu_memory = gpu_mem
+                        status.gpu_utilization = gpu_util
+                        status.system_memory = sys_mem
+
+                        # 添加指标到历史
+                        status.add_metrics(epoch_index, metrics, losses)
+
+                        # 更新最新指标
+                        status.metrics = {
+                            "latest": metrics,
+                            "losses": losses
+                        }
+
+            model.add_callback("on_train_epoch_end", epoch_callback)
+
+            # 完成回调
+            def finish_callback(trainer):
+                with self.training_lock:
+                    status = self.training_tasks.get(task_id)
+                    if status:
+                        status.status = "completed"
+                        status.progress = 100.0
+
+                        # 设置最佳检查点路径
+                        best_pt = Path(settings.MODELS_DIR) / config.project_name / "train" / "weights" / "best.pt"
+                        if best_pt.exists():
+                            status.checkpoint_path = str(best_pt)
+
+                        # 最终最佳指标已保存在 best_metrics 中
+
+            model.add_callback("on_train_end", finish_callback)
+
+            # 执行训练
+            device = config.device
+            if device == "auto":
+                device = "0" if torch.cuda.is_available() else "cpu"
+
+            results = model.train(
+                data=str(config.dataset_path),
+                epochs=config.epochs,
+                batch=batch_size,
+                imgsz=config.img_size,
+                device=device,
+                patience=config.patience,
+                save_period=config.save_period,
+                project=str(settings.MODELS_DIR / config.project_name),
+                name="train",
+                exist_ok=True,
+                pretrained=config.pretrained,
+                optimizer=config.optimizer,
+                amp=config.amp if hasattr(config, 'amp') else True,
+                workers=config.workers if hasattr(config, 'workers') else 8,
+                cache=settings.DEFAULT_CACHE,
+            )
+
+            print(f"[{task_id}] 训练完成")
+
+        except Exception as e:
+            print(f"[{task_id}] 训练失败: {e}")
+            import traceback
+            traceback.print_exc()
+            with self.training_lock:
+                status = self.training_tasks.get(task_id)
+                if status:
+                    status.status = "failed"
+                    status.error_message = str(e)
+
+    def get_training_status(self, task_id: str) -> Optional['TrainingStatus']:
+        """获取训练状态"""
+        with self.training_lock:
+            status = self.training_tasks.get(task_id)
+            return status.copy(deep=True) if status else None
+
+    def list_training_statuses(self) -> List['TrainingStatus']:
+        """列出所有训练任务"""
+        with self.training_lock:
+            return [status.copy(deep=True) for status in self.training_tasks.values()]
+
+    def export_model(self, model_path: str, format: str = "onnx", **kwargs) -> Dict[str, Any]:
+        """导出模型"""
+        try:
+            model = YOLO(model_path)
+            export_path = model.export(
+                format=format,
+                imgsz=kwargs.get("imgsz", 640),
+                half=kwargs.get("half", False),
+                simplify=kwargs.get("simplify", True),
+            )
+            return {
+                "success": True,
+                "message": "导出成功",
+                "export_path": str(export_path)
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"导出失败: {str(e)}",
+                "export_path": None
+            }
+
+    def get_device_info(self) -> Tuple[bool, Optional[str]]:
+        """获取 GPU 信息"""
+        try:
+            gpu_available = torch.cuda.is_available()
+            if gpu_available:
+                name = torch.cuda.get_device_name(0)
+                memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                return True, f"{name} ({memory:.1f}GB)"
+            return False, None
+        except:
+            return False, None
+
+
+# 数据类型定义 (避免循环导入)
+class TrainingStatus:
+    """训练状态"""
+    task_id: str
+    status: str
+    progress: float
+    current_epoch: int
+    total_epochs: int
+    metrics: Dict[str, Any] = None
+    metrics_history: List[Dict[str, Any]] = None  # 完整的指标历史
+    losses_history: Dict[str, List[float]] = None  # 损失曲线历史
+    created_at: Any
+    updated_at: Any
+    error_message: str = None
+    gpu_memory: str = None
+    gpu_utilization: float = None
+    system_memory: float = None
+    best_metrics: Dict[str, float] = None  # 最佳指标
+    checkpoint_path: str = None
+
+    def __init__(self):
+        self.metrics_history = []
+        self.losses_history = {
+            "box_loss": [],
+            "cls_loss": [],
+            "dfl_loss": []
+        }
+        self.best_metrics = {
+            "mAP50": 0.0,
+            "mAP50-95": 0.0,
+            "precision": 0.0,
+            "recall": 0.0
+        }
+
+    def copy(self, deep: bool = False):
+        """创建副本"""
+        import copy
+        if deep:
+            new_status = copy.deepcopy(self)
+        else:
+            new_status = TrainingStatus()
+            new_status.task_id = self.task_id
+            new_status.status = self.status
+            new_status.progress = self.progress
+            new_status.current_epoch = self.current_epoch
+            new_status.total_epochs = self.total_epochs
+            new_status.metrics = self.metrics
+            new_status.metrics_history = list(self.metrics_history)
+            new_status.losses_history = {k: list(v) for k, v in self.losses_history.items()}
+            new_status.created_at = self.created_at
+            new_status.updated_at = self.updated_at
+            new_status.error_message = self.error_message
+            new_status.gpu_memory = self.gpu_memory
+            new_status.gpu_utilization = self.gpu_utilization
+            new_status.system_memory = self.system_memory
+            new_status.best_metrics = dict(self.best_metrics)
+            new_status.checkpoint_path = self.checkpoint_path
+        return new_status
+
+    def add_metrics(self, epoch: int, metrics: Dict[str, Any], losses: Dict[str, float]):
+        """添加指标记录"""
+        # 记录损失
+        for loss_name, loss_value in losses.items():
+            if loss_name in self.losses_history:
+                self.losses_history[loss_name].append(loss_value)
+
+        # 记录完整指标
+        record = {
+            "epoch": epoch,
+            "metrics": dict(metrics),
+            "losses": dict(losses),
+            "timestamp": time.time()
+        }
+        self.metrics_history.append(record)
+
+        # 更新最佳指标
+        if "metrics/mAP50(B)" in metrics:
+            if metrics["metrics/mAP50(B)"] > self.best_metrics["mAP50"]:
+                self.best_metrics["mAP50"] = metrics["metrics/mAP50(B)"]
+        if "metrics/mAP50-95(B)" in metrics:
+            if metrics["metrics/mAP50-95(B)"] > self.best_metrics["mAP50-95"]:
+                self.best_metrics["mAP50-95"] = metrics["metrics/mAP50-95(B)"]
+        if "metrics/precision(B)" in metrics:
+            if metrics["metrics/precision(B)"] > self.best_metrics["precision"]:
+                self.best_metrics["precision"] = metrics["metrics/precision(B)"]
+        if "metrics/recall(B)" in metrics:
+            if metrics["metrics/recall(B)"] > self.best_metrics["recall"]:
+                self.best_metrics["recall"] = metrics["metrics/recall(B)"]
+
+    def get_chart_data(self) -> Dict[str, Any]:
+        """获取图表数据"""
+        return {
+            "epochs": list(range(1, len(self.metrics_history) + 1)),
+            "losses": {
+                name: list(values) for name, values in self.losses_history.items()
+            },
+            "metrics_history": self.metrics_history,
+            "best_metrics": self.best_metrics
+        }
+
+
+class TrainingConfig:
+    """训练配置"""
+    project_name: str
+    dataset_path: str
+    model_type: str = "yolo11n"
+    model_path: str = None
+    epochs: int = 100
+    batch_size: int = 32
+    img_size: int = 640
+    device: str = "auto"
+    patience: int = 50
+    save_period: int = 10
+    pretrained: bool = True
+    optimizer: str = "auto"
+    amp: bool = True
+    workers: int = 8
+
+    def copy(self, deep: bool = False):
+        """创建副本"""
+        import copy
+        return copy.deepcopy(self) if deep else TrainingConfig()
+
+
+class ModelInfo:
+    """模型信息"""
+    name: str
+    path: str
+    size: int
+    created_at: Any
+    model_type: str = "yolo"
+    task: str = "detect"
+    input_shape: List[int] = None
+    classes: List[str] = None
+
+
+# 全局实例
+yolo_engine = YOLOEngine() if TORCH_AVAILABLE else None
