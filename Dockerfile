@@ -13,20 +13,22 @@ WORKDIR /build
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip config set global.trusted-host https://pypi.tuna.tsinghua.edu.cn
 
-# 安装编译工具
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+# 预编译 wheel 无需编译工具，跳过 apt-get 加速构建
 
 # 复制依赖文件并安装
 COPY requirements.txt .
+
+# 使用预编译 wheel（CPU 版本，无需编译）
+RUN pip install --no-cache-dir --prefix=/install \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 再安装其他依赖
 RUN pip download --no-cache-dir -r requirements.txt -d /tmp/wheels && \
     pip install --no-cache-dir --prefix=/install \
         --no-index --find-links=/tmp/wheels \
-        -r requirements.txt && \
-    pip install --no-cache-dir --prefix=/install \
-        torch torchvision --index-url https://download.pytorch.org/whl/cpu
+        -r requirements.txt
 
 # ============== 第二阶段：运行时 ==============
 FROM python:3.12-slim AS runtime
