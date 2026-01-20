@@ -14,6 +14,7 @@ from backend.modules.data_preparation.annotation_service import annotation_servi
 from backend.modules.data_preparation.sam_service import sam_service
 from backend.modules.data_preparation.storage_service import storage_service
 from backend.modules.data_preparation.statistics_service import statistics_service
+from backend.modules.data_preparation.augmentation_service import augmentation_service, AugmentationConfig
 
 router = APIRouter()
 
@@ -336,4 +337,245 @@ async def clear_statistics_cache(name: str):
     """清除统计缓存"""
     statistics_service.clear_cache()
     return {"success": True, "message": "缓存已清除"}
+
+
+# ==================== 数据增强 ====================
+
+@router.get("/augmentation/transforms")
+async def get_available_transforms():
+    """获取可用的增强变换"""
+    try:
+        transforms = augmentation_service.get_available_transforms()
+        return {"success": True, "transforms": transforms}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/augmentation/preview")
+async def preview_augmentation(
+    file: UploadFile = File(...),
+    num_previews: int = Query(4)
+):
+    """
+    预览增强效果
+
+    上传一张图片，返回原图和增强后的图片（base64 编码）
+    """
+    try:
+        # 保存临时文件
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=f".{file.filename.split('.')[-1] if '.' in file.filename else 'jpg'}"
+        ) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        # 生成预览
+        results = augmentation_service.preview_augmentation(
+            tmp_path,
+            num_previews=num_previews
+        )
+
+        # 删除临时文件
+        tmp_path.unlink()
+
+        if results:
+            return {"success": True, "previews": results}
+        else:
+            raise HTTPException(status_code=500, detail="预览生成失败")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/datasets/{name}/augment")
+async def augment_dataset(
+    name: str,
+    # 增强配置
+    horizontal_flip: bool = Query(True),
+    vertical_flip: bool = Query(False),
+    rotate: bool = Query(True),
+    scale: bool = Query(True),
+    translate: bool = Query(False),
+    brightness_contrast: bool = Query(True),
+    hue_saturation: bool = Query(True),
+    blur: bool = Query(False),
+    noise: bool = Query(False),
+    cutout: bool = Query(False),
+    # 参数配置
+    rotate_limit: int = Query(45),
+    scale_range: float = Query(0.1),
+    brightness_range: float = Query(0.2),
+    contrast_range: float = Query(0.2),
+    num_augmented: int = Query(5),
+    output_format: str = Query("jpg")
+):
+    """
+    增强数据集
+
+    基于 Albumentations 库对数据集进行图像增强。
+
+    支持的增强类型:
+    - 几何变换: 翻转、旋转、缩放、平移
+    - 光照变换: 亮度、对比度、色调、饱和度
+    - 噪声变换: 模糊、高斯噪声、Cutout
+
+    输出:
+    - 增强后的图片保存到 {数据集名}_augmented/images/
+    - 标签文件保存到 {数据集名}_augmented/labels/
+    """
+    try:
+        # 验证数据集存在
+        dataset_path = settings.DATASETS_DIR / name
+        if not dataset_path.exists():
+            raise HTTPException(status_code=404, detail="数据集不存在")
+
+        # 创建增强配置
+        config = AugmentationConfig(
+            horizontal_flip=horizontal_flip,
+            vertical_flip=vertical_flip,
+            rotate=rotate,
+            scale=scale,
+            translate=translate,
+            brightness_contrast=brightness_contrast,
+            hue_saturation=hue_saturation,
+            blur=blur,
+            noise=noise,
+            cutout=cutout,
+            rotate_limit=rotate_limit,
+            scale_range=scale_range,
+            brightness_range=brightness_range,
+            contrast_range=contrast_range,
+            num_augmented=num_augmented,
+            output_format=output_format
+        )
+
+        # 生成输出目录
+        output_name = f"{name}_augmented"
+        output_dir = settings.DATASETS_DIR / output_name
+
+        # 执行增强
+        result = augmentation_service.augment_dataset(
+            input_dir=dataset_path,
+            output_dir=output_dir,
+            config=config
+        )
+
+        if result.success:
+            return {
+                "success": True,
+                "message": result.message,
+                "data": {
+                    "output_dataset": output_name,
+                    "original_images": result.total_images,
+                    "augmented_images": result.total_augmented,
+                    "output_dir": result.output_dir,
+                    "samples": result.samples[:5]  # 返回前5个样本
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.message)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/datasets/{name}/augment/custom")
+async def augment_dataset_custom(
+    name: str,
+    config_json: str = Form(...)
+):
+    """
+    自定义配置增强数据集
+
+    通过 JSON 格式的自定义配置进行增强。
+    """
+    try:
+        import json as json_module
+
+        # 解析配置
+        config_dict = json_module.loads(config_json)
+
+        # 验证数据集存在
+        dataset_path = settings.DATASETS_DIR / name
+        if not dataset_path.exists():
+            raise HTTPException(status_code=404, detail="数据集不存在")
+
+        # 创建配置
+        config = AugmentationConfig(
+            horizontal_flip=config_dict.get('horizontal_flip', True),
+            vertical_flip=config_dict.get('vertical_flip', False),
+            rotate=config_dict.get('rotate', True),
+            scale=config_dict.get('scale', True),
+            translate=config_dict.get('translate', False),
+            brightness_contrast=config_dict.get('brightness_contrast', True),
+            hue_saturation=config_dict.get('hue_saturation', True),
+            blur=config_dict.get('blur', False),
+            noise=config_dict.get('noise', False),
+            cutout=config_dict.get('cutout', False),
+            rotate_limit=config_dict.get('rotate_limit', 45),
+            scale_range=config_dict.get('scale_range', 0.1),
+            brightness_range=config_dict.get('brightness_range', 0.2),
+            contrast_range=config_dict.get('contrast_range', 0.2),
+            num_augmented=config_dict.get('num_augmented', 5),
+            output_format=config_dict.get('output_format', 'jpg')
+        )
+
+        # 生成输出目录
+        output_name = f"{name}_augmented"
+        output_dir = settings.DATASETS_DIR / output_name
+
+        # 执行增强
+        result = augmentation_service.augment_dataset(
+            input_dir=dataset_path,
+            output_dir=output_dir,
+            config=config
+        )
+
+        if result.success:
+            return {
+                "success": True,
+                "message": result.message,
+                "data": {
+                    "output_dataset": output_name,
+                    "original_images": result.total_images,
+                    "augmented_images": result.total_augmented
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.message)
+
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="JSON 格式错误")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/datasets/augmented/list")
+async def list_augmented_datasets():
+    """列出所有增强后的数据集"""
+    try:
+        augmented_datasets = []
+        for ds_dir in settings.DATASETS_DIR.iterdir():
+            if ds_dir.is_dir() and ds_dir.name.endswith('_augmented'):
+                info_file = ds_dir / 'augmentation_info.json'
+                if info_file.exists():
+                    import json
+                    with open(info_file, 'r') as f:
+                        info = json.load(f)
+                    augmented_datasets.append({
+                        "name": ds_dir.name,
+                        "original_images": info.get('original_images', 0),
+                        "augmented_images": info.get('augmented_images', 0),
+                        "created_at": info.get('created_at', '')
+                    })
+
+        return {"success": True, "datasets": augmented_datasets}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 

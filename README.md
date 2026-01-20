@@ -59,6 +59,15 @@
 - SAM 智能分割辅助标注
 - 导出为 YOLO 格式数据集
 
+### 数据增强
+- 基于 Albumentations 库的图像增强
+- 支持 YOLO 格式边界框保持
+- 几何变换：翻转、旋转、缩放、平移
+- 光照变换：亮度、对比度、色调、饱和度
+- 噪声与特效：模糊、高斯噪声、随机遮挡 (Cutout)
+- 实时预览增强效果
+- 生成增强数据集用于模型训练
+
 ### 模型训练
 - 基于 Ultralytics YOLO (YOLO11/ YOLO8)
 - 支持自定义训练参数配置
@@ -136,7 +145,10 @@ YOLO-/
 │   │   │   ├── routes.py       # API 路由
 │   │   │   ├── dataset_service.py    # 数据集服务
 │   │   │   ├── annotation_service.py # 标注服务
-│   │   │   └── sam_service.py        # SAM 分割服务
+│   │   │   ├── sam_service.py        # SAM 分割服务
+│   │   │   ├── augmentation_service.py # 数据增强服务
+│   │   │   ├── storage_service.py    # 智能存储服务
+│   │   │   └── statistics_service.py # 统计服务
 │   │   │
 │   │   ├── training/           # 训练模块
 │   │   │   ├── routes.py       # API 路由
@@ -168,6 +180,7 @@ YOLO-/
 │   ├── annotation.html         # 数据标注页面
 │   ├── image_browser.html      # 图像浏览器页面
 │   ├── solutions.html          # 解决方案页面
+│   ├── augmentation.html       # 数据增强页面
 │   │
 │   └── static/                 # 静态资源
 │       ├── css/
@@ -325,11 +338,28 @@ uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
 ### 数据集接口
 
-#### GET `/api/v1/datasets`
+#### GET `/api/v1/datasets/list`
 获取数据集列表
 
 #### POST `/api/v1/datasets/upload`
 上传数据集
+
+### 数据增强接口
+
+#### GET `/api/v1/augmentation/transforms`
+获取可用的增强变换列表
+
+#### POST `/api/v1/augmentation/preview`
+预览增强效果（上传图片，返回原图和增强图）
+
+#### POST `/api/v1/datasets/{name}/augment`
+增强数据集（简单参数配置）
+
+#### POST `/api/v1/datasets/{name}/augment/custom`
+增强数据集（自定义 JSON 配置）
+
+#### GET `/api/v1/datasets/augmented/list`
+获取增强数据集列表
 
 ### 训练接口
 

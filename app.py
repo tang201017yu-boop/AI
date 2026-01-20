@@ -69,7 +69,7 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "public, max-age=3600, must-revalidate"
             response.headers["ETag"] = APP_VERSION_TIMESTAMP
-        elif request.url.path.endswith(".html") or request.url.path in ["/", "/inference", "/training", "/models", "/datasets", "/annotation", "/solutions", "/image_browser"]:
+        elif request.url.path.endswith(".html") or request.url.path in ["/", "/inference", "/training", "/models", "/datasets", "/annotation", "/solutions", "/image_browser", "/augmentation"]:
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -202,6 +202,15 @@ async def solutions_page(request: Request):
 async def image_browser_page(request: Request):
     """图像浏览器页面"""
     return templates.TemplateResponse("image_browser.html", {
+        "request": request,
+        "version": APP_VERSION_TIMESTAMP
+    })
+
+
+@app.get("/augmentation", response_class=HTMLResponse)
+async def augmentation_page(request: Request):
+    """数据增强页面"""
+    return templates.TemplateResponse("augmentation.html", {
         "request": request,
         "version": APP_VERSION_TIMESTAMP
     })
