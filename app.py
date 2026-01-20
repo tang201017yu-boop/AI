@@ -41,6 +41,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # 使用新的核心配置
 from backend.core.config import settings
 from backend.core.yolo_engine import yolo_engine
+from backend.core.database import postgres_service
+from backend.core.s3_storage import s3_service
 
 # 导入各模块路由
 from backend.modules.data_preparation.routes import router as data_prep_router
@@ -128,6 +130,22 @@ async def warmup_services():
     # 预加载数据集列表
     from backend.modules.data_preparation import dataset_service
     tasks.append(loop.run_in_executor(None, dataset_service.list_datasets))
+
+    # 初始化 PostgreSQL 数据库
+    print("正在初始化 PostgreSQL 数据库...")
+    try:
+        postgres_service.init_database()
+        print("PostgreSQL 数据库初始化完成")
+    except Exception as e:
+        print(f"PostgreSQL 初始化失败: {e}")
+
+    # 初始化 S3 存储
+    print("正在初始化 S3 存储...")
+    try:
+        s3_service.init_storage()
+        print("S3 存储初始化完成")
+    except Exception as e:
+        print(f"S3 存储初始化失败: {e}")
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)

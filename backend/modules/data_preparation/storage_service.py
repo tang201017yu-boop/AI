@@ -74,16 +74,16 @@ class StorageService:
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.TABLE_FILES} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_hash TEXT UNIQUE NOT NULL,      # SHA256 内容哈希
-                phash TEXT,                           # 感知哈希
-                file_path TEXT NOT NULL,              # 相对路径
-                file_size INTEGER,                    # 文件大小
-                width INTEGER,                        # 图片宽度
-                height INTEGER,                       # 图片高度
-                file_type TEXT,                       # 文件类型
-                created_at TEXT,                      # 创建时间
-                reference_count INTEGER DEFAULT 1,    # 引用计数
-                is_deleted INTEGER DEFAULT 0          # 软删除标记
+                file_hash TEXT UNIQUE NOT NULL,
+                phash TEXT,
+                file_path TEXT NOT NULL,
+                file_size INTEGER,
+                width INTEGER,
+                height INTEGER,
+                file_type TEXT,
+                created_at TEXT,
+                reference_count INTEGER DEFAULT 1,
+                is_deleted INTEGER DEFAULT 0
             )
         """)
 
@@ -91,9 +91,9 @@ class StorageService:
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.TABLE_DUPLICATES} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                original_file_id INTEGER,             # 原始文件ID
-                duplicate_file_id INTEGER,            # 重复文件ID
-                similarity REAL,                      # 相似度
+                original_file_id INTEGER,
+                duplicate_file_id INTEGER,
+                similarity REAL,
                 created_at TEXT,
                 FOREIGN KEY (original_file_id) REFERENCES {self.TABLE_FILES}(id),
                 FOREIGN KEY (duplicate_file_id) REFERENCES {self.TABLE_FILES}(id)
@@ -105,7 +105,7 @@ class StorageService:
             CREATE TABLE IF NOT EXISTS {self.TABLE_CHECKSUMS} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_id INTEGER,
-                checksum_type TEXT,                   # md5, sha256
+                checksum_type TEXT,
                 checksum_value TEXT,
                 verified_at TEXT,
                 is_valid INTEGER DEFAULT 1,

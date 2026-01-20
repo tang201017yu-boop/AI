@@ -71,6 +71,36 @@ class Settings:
     # CORS 配置
     CORS_ORIGINS: List[str] = ["*"]
 
+    # ==================== PostgreSQL 配置 ====================
+    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "postgres")
+    POSTGRES_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "opencv_platform")
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
+    POSTGRES_POOL_SIZE: int = int(os.getenv("POSTGRES_POOL_SIZE", "10"))
+
+    @property
+    def postgres_url(self) -> str:
+        """获取 PostgreSQL 连接 URL"""
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+
+    # ==================== S3/MinIO 配置 ====================
+    S3_ENDPOINT_URL: str = os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
+    S3_ACCESS_KEY: str = os.getenv("S3_ACCESS_KEY", "minioadmin")
+    S3_SECRET_KEY: str = os.getenv("S3_SECRET_KEY", "minioadmin")
+    S3_BUCKET: str = os.getenv("S3_BUCKET", "opencv-platform")
+    S3_REGION: str = os.getenv("S3_REGION", "us-east-1")
+    S3_USE_SSL: bool = os.getenv("S3_USE_SSL", "false").lower() == "true"
+
+    @property
+    def s3_public_url(self) -> str:
+        """获取 S3 公开访问 URL"""
+        return f"{self.S3_ENDPOINT_URL}/{self.S3_BUCKET}"
+
+    # ==================== 存储后端选择 ====================
+    STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")  # s3 或 local
+    USE_VECTOR_SEARCH: bool = os.getenv("USE_VECTOR_SEARCH", "true").lower() == "true"
+
     @staticmethod
     def _unique_paths(paths: List[Path]) -> List[Path]:
         seen = set()
