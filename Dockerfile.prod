@@ -56,9 +56,9 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DISABLE_REQUIRE=1
 
-# 安装运行时系统依赖（最小化）
+# 安装运行时系统依赖（最小化，Debian trixie 适配）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -66,6 +66,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libxcb1 \
     libxkbcommon0 \
+    libdrm2 \
+    libgbm1 \
+    libasound2 \
     curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean

@@ -38,9 +38,9 @@ LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (Pytho
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip config set global.trusted-host https://pypi.tuna.tsinghua.edu.cn
 
-# 安装运行时系统依赖
+# 安装运行时系统依赖 (Debian trixie 适配)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -48,6 +48,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libxcb1 \
     libxkbcommon0 \
+    libdrm2 \
+    libgbm1 \
+    libasound2 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
