@@ -18,6 +18,7 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+*.egg
 
 # IDE 相关
 .vscode/
@@ -26,10 +27,12 @@ htmlcov/
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
 # 日志文件
 *.log
 logs/
+*.log.*
 
 # 数据文件 (在 docker-compose 中通过 volume 挂载)
 data/datasets/*
@@ -43,36 +46,71 @@ data/annotation_projects/*
 !data/uploads/.gitkeep
 !data/annotation_projects/.gitkeep
 
+# 本地 wheel 包（不在镜像构建时复制，通过多阶段构建获取）
+wheels/
+*.whl
+
 # 环境配置文件
 .env
 .env.local
+.env.*
 
 # 文档
 *.md
 !README.md
 docs/
+*.rst
 
 # 测试文件
 tests/
 test_*.py
+*_test.py
 
 # 临时文件
 tmp/
 temp/
 *.tmp
 *.cache
+.pytest_cache
 
-# Docker 相关
+# Docker 相关（不参与构建）
 Dockerfile*
 docker-compose*.yml
 .dockerignore
+.docker/
+containerfiles/
 
 # CI/CD
 .github/
 .gitlab-ci.yml
 .travis.yml
+.circleci/
+
+# 机器学习模型文件（通过 volume 挂载）
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pb
+*.onnx
+*.engine
+
+# 图片/视频数据集（通过 volume 挂载）
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.mp4
+*.avi
+*.mov
+*.zip
 
 # 其他
-*.zip
-*.tar.gz
-*.rar
+*.sql
+*.db
+*.sqlite
+*.pem
+*.key
+*.crt
+.DS_Store

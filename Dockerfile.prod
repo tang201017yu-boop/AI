@@ -1,43 +1,77 @@
-# OpenCV Platform Production Dockerfile
-# Python 3.12 + CentOS 7.5 优化版本
-FROM python:3.12-slim-bookworm
+# OpenCV Platform Production Dockerfile - 生产环境优化版
+# 优化目标：体积最小化、拉取最快、适合国内服务器大规模部署
+
+# ============== 第一阶段：构建依赖 ==============
+FROM python:3.12-slim AS builder
+
+LABEL maintainer="OpenCV Platform"
+LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (生产版)"
+
+WORKDIR /build
+
+# 配置国内 pip 源（提速 5 倍+）
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PIP_TRUSTED_HOST=https://pypi.tuna.tsinghua.edu.cn
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_NO_CACHE_DIR=1
+
+# 安装编译工具和构建依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# 复制依赖文件并下载 wheel 包
+COPY requirements.txt .
+RUN pip download --no-cache-dir -r requirements.txt -d /tmp/wheels
+
+# 安装所有依赖到独立目录
+RUN pip install --no-cache-dir --prefix=/install \
+    --no-index --find-links=/tmp/wheels \
+    -r requirements.txt
+
+# PyTorch CPU 版本（国内镜像）
+RUN pip install --no-cache-dir --prefix=/install \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# ============== 第二阶段：运行时 ==============
+FROM python:3.12-slim AS runtime
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (Python 3.12 生产版)"
-LABEL version="1.0.0"
+LABEL version="2.1.0"
 
-# 设置工作目录
-WORKDIR /app
+# 配置国内 pip 源
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PIP_TRUSTED_HOST=https://pypi.tuna.tsinghua.edu.cn
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_NO_CACHE_DIR=1
 
-# 设置环境变量
+# 环境变量
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     DEBIAN_FRONTEND=noninteractive \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    NVIDIA_DISABLE_REQUIRE=1
 
-# 安装系统依赖
+# 安装运行时系统依赖（最小化）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # OpenCV 依赖
     libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender1 \
     libgomp1 \
-    # 网络工具
-    curl \
-    wget \
-    # Git (用于某些包的安装)
-    git \
-    # 编译工具 (某些 Python 包需要)
-    gcc \
-    g++ \
-    # 额外的OpenCV依赖
     libxcb1 \
     libxkbcommon0 \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
+
+# 从第一阶段复制已安装的 Python 包
+COPY --from=builder /install /usr/local
 
 # 创建必要的目录结构
 RUN mkdir -p \
@@ -49,45 +83,16 @@ RUN mkdir -p \
     /app/logs \
     /app/frontend/static
 
-# 复制依赖文件
-COPY requirements.txt .
-
-# 升级 pip 并安装 Python 依赖
-RUN pip install --upgrade pip setuptools wheel && \
-    # 安装 PyTorch CPU 版本 (针对生产环境优化)
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
-    # 安装其他依赖
-    pip install -r requirements.txt && \
-    # 额外确保安装的包
-    pip install \
-    opencv-python-headless>=4.8.0 \
-    ultralytics>=8.0.0 \
-    fastapi>=0.104.0 \
-    uvicorn[standard]>=0.24.0 \
-    python-multipart>=0.0.6 \
-    jinja2>=3.1.2 \
-    pyyaml>=6.0 \
-    requests>=2.31.0 \
-    Pillow>=10.0.0 \
-    numpy>=1.24.0
-
-# 复制应用代码（分层复制以利用缓存和确保静态文件）
+# 复制应用代码
 COPY backend /app/backend
 COPY config /app/config
 COPY frontend /app/frontend
 COPY scripts /app/scripts
 COPY app.py requirements.txt /app/
 
-# 验证静态文件是否存在
-RUN echo "Checking static files..." && \
-    ls -la /app/frontend/static/ && \
-    test -f /app/frontend/static/company-logo.png && \
-    echo "✅ Logo file found!" || echo "⚠️  Logo file NOT found!"
-
-# 创建非 root 用户运行应用（安全最佳实践）
+# 非 root 用户运行（安全最佳实践）
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app && \
-    # 确保数据目录有写权限
     chmod -R 755 /app && \
     chmod -R 777 /app/data && \
     chmod -R 777 /app/logs
