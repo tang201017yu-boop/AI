@@ -24,13 +24,33 @@ async def start_training(
     batch_size: int = 32,
     img_size: int = 640,
     device: str = "auto",
-    pretrained: bool = True,
     optimizer: str = "auto",
     amp: bool = True,
     workers: int = 8,
+    # 微调参数
+    lr0: float = 0.01,
+    lrf: float = 0.01,
+    warmup_epochs: float = 3.0,
+    warmup_bias_lr: float = 0.1,
+    mosaic: float = 1.0,
+    close_mosaic_epochs: int = 10,
     **kwargs
 ):
-    """开始训练"""
+    """
+    开始训练
+
+    优化器说明:
+    - optimizer: 优化器类型，支持 SGD, Adam, AdamW, NAdam, RAdam, RMSProp，设置为 "auto" 自动匹配
+    - AdamW 是 YOLO 系列模型的推荐优化器
+
+    微调参数说明:
+    - lr0: 初始学习率，微调时建议 0.001-0.01
+    - lrf: 最终学习率因子 (相对于 lr0)
+    - warmup_epochs: 预热轮数，设置为 0 可立即使用较高学习率（适合微调）
+    - warmup_bias_lr: 预热期间 bias 的学习率
+    - mosaic: 马赛克增强概率 (0-1)，处理小目标时建议保持开启
+    - close_mosaic_epochs: 训练后期关闭马赛克增强的轮数
+    """
     result = training_service.start_training(
         project_name=project_name,
         dataset_path=dataset_path,
@@ -39,15 +59,49 @@ async def start_training(
         batch_size=batch_size,
         img_size=img_size,
         device=device,
-        pretrained=pretrained,
         optimizer=optimizer,
         amp=amp,
         workers=workers,
+        lr0=lr0,
+        lrf=lrf,
+        warmup_epochs=warmup_epochs,
+        warmup_bias_lr=warmup_bias_lr,
+        mosaic=mosaic,
+        close_mosaic_epochs=close_mosaic_epochs,
         **kwargs
     )
     if result["success"]:
         return result
     raise HTTPException(status_code=500, detail=result["message"])
+
+
+@router.post("/training/resume")
+async def resume_training(
+    checkpoint_path: str,
+    dataset_path: str = None
+):
+    """
+    从检查点恢复训练
+
+    Args:
+        checkpoint_path: 检查点文件路径 (.pt)
+        dataset_path: 数据集路径（可选）
+    """
+    from backend.core.yolo_engine import yolo_engine
+
+    try:
+        task_id = yolo_engine.resume_training(checkpoint_path, dataset_path)
+        return {
+            "success": True,
+            "message": "恢复训练已开始",
+            "task_id": task_id
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"恢复训练失败: {str(e)}")
 
 
 @router.get("/training/status/{task_id}")
@@ -72,6 +126,108 @@ async def cancel_training(task_id: str):
     if result["success"]:
         return result
     raise HTTPException(status_code=400, detail=result["message"])
+
+
+# ==================== 模型评估 ====================
+
+@router.post("/training/validate")
+async def validate_model(
+    model_path: str,
+    data: str = "coco.yaml",  # 数据集配置文件
+    imgsz: int = 640,
+    conf: float = 0.001,
+    iou: float = 0.6,
+    rect: bool = True,
+    split: str = "val"
+):
+    """
+    验证模型性能
+
+    返回详细的评估指标：
+    - mAP@0.5, mAP@0.5:0.95
+    - Precision, Recall
+    - F1 score
+    - 各类别 AP
+    - 推理速度统计
+    """
+    from backend.core.yolo_engine import yolo_engine
+
+    try:
+        # 加载模型
+        model = yolo_engine.load_model(model_path)
+
+        # 运行验证
+        results = model.val(
+            data=data,
+            imgsz=imgsz,
+            conf=conf,
+            iou=iou,
+            rect=rect,
+            split=split
+        )
+
+        # 提取评估指标
+        metrics = {
+            "mAP50": float(results.box.map50) if hasattr(results.box, 'map50') else 0.0,
+            "mAP50_95": float(results.box.map) if hasattr(results.box, 'map') else 0.0,
+            "mAP75": float(results.box.map75) if hasattr(results.box, 'map75') else 0.0,
+            "precision": float(results.box.mp) if hasattr(results.box, 'mp') else 0.0,
+            "recall": float(results.box.mr) if hasattr(results.box, 'mr') else 0.0,
+            "f1": float(results.box.f1) if hasattr(results.box, 'f1') else 0.0,
+            "per_class_ap": dict(zip(results.box.ap_class_index, results.box.all_ap)) if hasattr(results.box, 'ap_class_index') else {}
+        }
+
+        # 速度指标
+        if hasattr(results, 'speed'):
+            metrics["speed"] = {
+                "preprocess_ms": results.speed.get('preprocess', 0),
+                "inference_ms": results.speed.get('inference', 0),
+                "loss_ms": results.speed.get('loss', 0),
+                "postprocess_ms": results.speed.get('postprocess', 0)
+            }
+
+        return {
+            "success": True,
+            "model_path": model_path,
+            "metrics": metrics,
+            "message": "验证完成"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"验证失败: {str(e)}")
+
+
+@router.get("/training/metrics/{task_id}")
+async def get_training_metrics(task_id: str):
+    """
+    获取训练任务的详细指标
+
+    返回：
+    - 损失曲线 (box_loss, cls_loss, dfl_loss)
+    - 精度指标 (mAP50, mAP50-95, precision, recall)
+    - F1 曲线
+    """
+    from backend.core.yolo_engine import yolo_engine
+
+    status = yolo_engine.get_training_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    chart_data = status.get_chart_data()
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "status": status.status,
+        "current_epoch": status.current_epoch,
+        "total_epochs": status.total_epochs,
+        "best_metrics": status.best_metrics,
+        "chart_data": {
+            "epochs": chart_data["epochs"],
+            "losses": chart_data["losses"],
+            "metrics_history": chart_data["metrics_history"]
+        }
+    }
 
 
 # ==================== 实验管理 ====================

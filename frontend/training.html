@@ -27,57 +27,153 @@
     <div class="container">
         <div class="card">
             <div class="card-header">🚀 模型训练</div>
-            
+
             <form id="training-form">
-                <div class="grid grid-2">
-                    <div class="form-group">
-                        <label class="form-label">项目名称</label>
-                        <input type="text" id="project-name" class="form-control" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">数据集路径</label>
-                        <input type="text" id="dataset-path" class="form-control" placeholder="data/datasets/my_dataset/data.yaml" required list="dataset-options">
-                        <datalist id="dataset-options"></datalist>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">模型类型</label>
-                        <select id="model-type" class="form-control">
-                            <option value="yolo11n" selected>YOLO11n ⭐</option>
-                            <option value="yolo11s">YOLO11s</option>
-                            <option value="yolo11m">YOLO11m</option>
-                            <option value="yolo11l">YOLO11l</option>
-                            <option value="yolo11x">YOLO11x</option>
-                            <option disabled>─────────────</option>
-                            <option value="yolov8n">YOLOv8n</option>
-                            <option value="yolov8s">YOLOv8s</option>
-                            <option value="yolov8m">YOLOv8m</option>
-                            <option value="yolov8l">YOLOv8l</option>
-                            <option value="yolov8x">YOLOv8x</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="grid-column: span 2;">
-                        <label class="form-label">选择已下载模型（可选）</label>
-                        <select id="base-model-select" class="form-control">
-                            <option value="">使用上方模型类型对应的官方预训练权重</option>
-                        </select>
-                        <small style="color: var(--secondary-color); display: block; margin-top: 0.25rem;">
-                            选择模型管理中已下载的模型继续训练，未选择时将使用官方预训练权重。
-                        </small>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">训练轮数</label>
-                        <input type="number" id="epochs" class="form-control" value="100" min="1">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">批次大小</label>
-                        <input type="number" id="batch-size" class="form-control" value="16" min="1">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">图像尺寸</label>
-                        <input type="number" id="img-size" class="form-control" value="640" min="320" step="32">
+                <!-- 基础配置 -->
+                <div class="config-section">
+                    <div class="config-section-title">基础配置</div>
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label class="form-label">项目名称</label>
+                            <input type="text" id="project-name" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">数据集路径</label>
+                            <input type="text" id="dataset-path" class="form-control" placeholder="data/datasets/my_dataset/data.yaml" required list="dataset-options">
+                            <datalist id="dataset-options"></datalist>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">模型类型</label>
+                            <select id="model-type" class="form-control">
+                                <option value="yolo26n" selected>YOLO26n ⭐</option>
+                                <option value="yolo26s">YOLO26s</option>
+                                <option value="yolo26m">YOLO26m</option>
+                                <option value="yolo26l">YOLO26l</option>
+                                <option value="yolo26x">YOLO26x</option>
+                                <option disabled>─────────────</option>
+                                <option value="yolo11n">YOLO11n</option>
+                                <option value="yolo11s">YOLO11s</option>
+                                <option value="yolo11m">YOLO11m</option>
+                                <option value="yolo11l">YOLO11l</option>
+                                <option value="yolo11x">YOLO11x</option>
+                                <option disabled>─────────────</option>
+                                <option value="yolov8n">YOLOv8n</option>
+                                <option value="yolov8s">YOLOv8s</option>
+                                <option value="yolov8m">YOLOv8m</option>
+                                <option value="yolov8l">YOLOv8l</option>
+                                <option value="yolov8x">YOLOv8x</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label class="form-label">选择已下载模型（可选）</label>
+                            <select id="base-model-select" class="form-control">
+                                <option value="">使用上方模型类型对应的官方预训练权重</option>
+                            </select>
+                            <small style="color: var(--secondary-color); display: block; margin-top: 0.25rem;">
+                                选择模型管理中已下载的模型继续训练，未选择时将使用官方预训练权重。
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">训练轮数</label>
+                            <input type="number" id="epochs" class="form-control" value="100" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">批次大小</label>
+                            <input type="number" id="batch-size" class="form-control" value="16" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">图像尺寸</label>
+                            <input type="number" id="img-size" class="form-control" value="640" min="320" step="32">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">优化器</label>
+                            <select id="optimizer" class="form-control">
+                                <option value="auto" selected>自动匹配 (推荐)</option>
+                                <option value="AdamW">AdamW</option>
+                                <option value="SGD">SGD</option>
+                                <option value="Adam">Adam</option>
+                                <option value="NAdam">NAdam</option>
+                                <option value="RAdam">RAdam</option>
+                                <option value="RMSProp">RMSProp</option>
+                            </select>
+                            <small style="color: var(--secondary-color); display: block; margin-top: 0.25rem;">
+                                自动匹配会根据模型类型选择最佳优化器
+                            </small>
+                        </div>
                     </div>
                 </div>
-                
+
+                <!-- 微调参数 -->
+                <div class="config-section">
+                    <div class="config-section-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span>微调参数</span>
+                        <button type="button" class="btn btn-ghost btn-xs" onclick="toggleAdvancedSettings()">
+                            <span id="advanced-toggle-text">展开</span> 高级选项
+                        </button>
+                    </div>
+
+                    <div id="advanced-settings" class="advanced-settings collapsed">
+                        <!-- 学习率配置 -->
+                        <div class="subsection">
+                            <div class="subsection-title">学习率配置</div>
+                            <div class="grid grid-3">
+                                <div class="form-group">
+                                    <label class="form-label">初始学习率 (lr0)</label>
+                                    <input type="number" id="lr0" class="form-control" value="0.01" min="0.0001" max="1" step="0.001">
+                                    <small>微调时建议 0.001-0.01</small>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">最终学习率因子 (lrf)</label>
+                                    <input type="number" id="lrf" class="form-control" value="0.01" min="0.001" max="1" step="0.01">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">预热轮数</label>
+                                    <input type="number" id="warmup-epochs" class="form-control" value="3.0" min="0" step="0.5">
+                                    <small>设置为 0 可立即使用高学习率</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 数据增强 -->
+                        <div class="subsection">
+                            <div class="subsection-title">数据增强（处理小目标）</div>
+                            <div class="grid grid-3">
+                                <div class="form-group">
+                                    <label class="form-label">马赛克增强</label>
+                                    <select id="mosaic" class="form-control">
+                                        <option value="1.0" selected>开启 (1.0)</option>
+                                        <option value="0.9">0.9</option>
+                                        <option value="0.5">0.5</option>
+                                        <option value="0.0">关闭</option>
+                                    </select>
+                                    <small>处理小目标时建议开启</small>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">关闭马赛克的轮数</label>
+                                    <input type="number" id="close-mosaic-epochs" class="form-control" value="10" min="0">
+                                    <small>训练后期关闭以稳定训练</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 快捷预设 -->
+                        <div class="subsection">
+                            <div class="subsection-title">快捷预设</div>
+                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                <button type="button" class="btn btn-outline btn-sm" onclick="applyPreset('default')">
+                                    默认配置
+                                </button>
+                                <button type="button" class="btn btn-outline btn-sm" onclick="applyPreset('finetune')">
+                                    微调预设
+                                </button>
+                                <button type="button" class="btn btn-outline btn-sm" onclick="applyPreset('small_objects')">
+                                    小目标优化
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary">开始训练</button>
             </form>
         </div>
@@ -154,7 +250,7 @@
 
         document.getElementById('training-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const config = {
                 project_name: document.getElementById('project-name').value,
                 dataset_path: document.getElementById('dataset-path').value,
@@ -162,7 +258,14 @@
                 epochs: parseInt(document.getElementById('epochs').value),
                 batch_size: parseInt(document.getElementById('batch-size').value),
                 img_size: parseInt(document.getElementById('img-size').value),
-                device: 'cpu'
+                optimizer: document.getElementById('optimizer').value,
+                device: 'cpu',
+                // 微调参数
+                lr0: parseFloat(document.getElementById('lr0').value),
+                lrf: parseFloat(document.getElementById('lrf').value),
+                warmup_epochs: parseFloat(document.getElementById('warmup-epochs').value),
+                mosaic: parseFloat(document.getElementById('mosaic').value),
+                close_mosaic_epochs: parseInt(document.getElementById('close-mosaic-epochs').value)
             };
 
             const selectedBaseModel = baseModelSelect.value.trim();
@@ -188,6 +291,51 @@
                 showAlert('错误: ' + error.message, 'danger');
             }
         });
+
+        // 展开/收起高级设置
+        function toggleAdvancedSettings() {
+            const settings = document.getElementById('advanced-settings');
+            const toggleText = document.getElementById('advanced-toggle-text');
+            settings.classList.toggle('collapsed');
+            toggleText.textContent = settings.classList.contains('collapsed') ? '展开' : '收起';
+        }
+
+        // 快捷预设
+        function applyPreset(preset) {
+            const presets = {
+                default: {
+                    lr0: 0.01,
+                    lrf: 0.01,
+                    warmup_epochs: 3.0,
+                    mosaic: 1.0,
+                    close_mosaic_epochs: 10
+                },
+                finetune: {
+                    lr0: 0.001,
+                    lrf: 0.01,
+                    warmup_epochs: 0,
+                    mosaic: 1.0,
+                    close_mosaic_epochs: 10
+                },
+                small_objects: {
+                    lr0: 0.01,
+                    lrf: 0.01,
+                    warmup_epochs: 3.0,
+                    mosaic: 1.0,
+                    close_mosaic_epochs: 15
+                }
+            };
+
+            const p = presets[preset];
+            if (p) {
+                document.getElementById('lr0').value = p.lr0;
+                document.getElementById('lrf').value = p.lrf;
+                document.getElementById('warmup-epochs').value = p.warmup_epochs;
+                document.getElementById('mosaic').value = p.mosaic;
+                document.getElementById('close-mosaic-epochs').value = p.close_mosaic_epochs;
+                showAlert(`已应用 "${preset === 'default' ? '默认' : preset === 'finetune' ? '微调' : '小目标优化'}" 预设`, 'info');
+            }
+        }
 
         async function loadTasks() {
             try {

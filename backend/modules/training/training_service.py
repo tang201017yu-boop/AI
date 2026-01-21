@@ -59,8 +59,17 @@ class TrainingService:
         batch_size: int = 32,
         img_size: int = 640,
         device: str = "auto",
-        pretrained: bool = True,
         optimizer: str = "auto",
+        amp: bool = True,
+        workers: int = 8,
+        # 微调参数
+        lr0: float = 0.01,
+        lrf: float = 0.01,
+        warmup_epochs: float = 3.0,
+        warmup_bias_lr: float = 0.1,
+        mosaic: float = 1.0,
+        mosaic_scale: tuple = (0.1, 1.5),
+        close_mosaic_epochs: int = 10,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -74,8 +83,23 @@ class TrainingService:
             batch_size: 批大小
             img_size: 输入图片尺寸
             device: 设备 (auto/cpu/cuda/0)
-            pretrained: 是否使用预训练权重
-            optimizer: 优化器
+            optimizer: 优化器 (auto/AdamW/SGD/Adam/NAdam/RAdam/RMSProp)
+                - auto: 根据模型类型自动选择（推荐）
+                - AdamW: YOLO 系列推荐，稳定性好
+                - SGD: 传统优化器，收敛稳定
+                - Adam: 自适应学习率，适合大多数场景
+                - NAdam/RAdam/RMSProp: 其他优化器选项
+            amp: 是否使用混合精度训练
+            workers: 数据加载线程数
+
+        微调参数:
+            lr0: 初始学习率 (微调时建议 0.001-0.01)
+            lrf: 最终学习率因子 (相对于 lr0)
+            warmup_epochs: 预热轮数 (设置为 0 可立即使用高学习率)
+            warmup_bias_lr: 预热期间 bias 的学习率
+            mosaic: 马赛克增强概率 (0-1)
+            mosaic_scale: 马赛克缩放范围
+            close_mosaic_epochs: 关闭马赛克的轮数
         """
         if not ULTRALYTICS_AVAILABLE:
             return {"success": False, "message": "Ultralytics 未安装"}
@@ -97,7 +121,15 @@ class TrainingService:
                 pretrained=pretrained,
                 optimizer=optimizer,
                 amp=kwargs.get("amp", True),
-                workers=kwargs.get("workers", 8)
+                workers=kwargs.get("workers", 8),
+                # 微调参数
+                lr0=lr0,
+                lrf=lrf,
+                warmup_epochs=warmup_epochs,
+                warmup_bias_lr=warmup_bias_lr,
+                mosaic=mosaic,
+                mosaic_scale=mosaic_scale,
+                close_mosaic_epochs=close_mosaic_epochs
             )
 
             # 开始训练
@@ -111,8 +143,16 @@ class TrainingService:
                 "dataset_path": dataset_path,
                 "epochs": epochs,
                 "batch_size": batch_size,
+                "optimizer": optimizer,
                 "status": "running",
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
+                "fine_tune_params": {
+                    "lr0": lr0,
+                    "lrf": lrf,
+                    "warmup_epochs": warmup_epochs,
+                    "mosaic": mosaic,
+                    "close_mosaic_epochs": close_mosaic_epochs
+                }
             }
             self.experiments[task_id] = experiment
 

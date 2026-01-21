@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # OpenCV Platform Production Dockerfile - 生产环境优化版
 # 优化目标：体积最小化、拉取最快、适合国内服务器大规模部署
 
@@ -11,11 +12,15 @@ WORKDIR /build
 
 # 配置国内 pip 源（提速 5 倍+）
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ENV PIP_TRUSTED_HOST=https://pypi.tuna.tsinghua.edu.cn
+ENV PIP_EXTRA_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PIP_NO_CACHE_DIR=1
+ENV PIP_CONNECTION_TIMEOUT=60
+ENV PIP_RETRIES=3
+ENV PIP_FIND_LINKS=https://mirror.sjtu.edu.cn/pytorch-wheels
 
-# 安装编译工具和构建依赖
+# 安装编译工具和构建依赖（仅用于某些需要编译的包）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
@@ -27,15 +32,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 
 # 使用预编译 wheel（CPU 版本，无需编译）
+# 优先使用清华镜像，fallback 到官方
 RUN pip install --no-cache-dir --prefix=/install \
     torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple/torch \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    --trusted-host pypi.tuna.tsinghua.edu.cn || \
+    pip install --no-cache-dir --prefix=/install \
+        torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cpu
 
-# 再安装其他依赖
+# 再安装其他依赖（使用 --prefer-binary 优先使用二进制包）
 RUN pip download --no-cache-dir -r requirements.txt -d /tmp/wheels && \
     pip install --no-cache-dir --prefix=/install \
         --no-index --find-links=/tmp/wheels \
+        --prefer-binary \
         -r requirements.txt
 
 # ============== 第二阶段：运行时 ==============
@@ -47,7 +58,7 @@ LABEL version="2.1.0"
 
 # 配置国内 pip 源
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ENV PIP_TRUSTED_HOST=https://pypi.tuna.tsinghua.edu.cn
+ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PIP_NO_CACHE_DIR=1
 
@@ -56,6 +67,10 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DISABLE_REQUIRE=1
+
+# 使用阿里云镜像站作为 apt 源（国内服务器提速）
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
 
 # 安装运行时系统依赖（最小化，Debian trixie 适配）
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -198,6 +198,79 @@ class YOLOEngine:
 
         return task_id
 
+    def resume_training(self, checkpoint_path: str, dataset_path: str = None) -> str:
+        """
+        从检查点恢复训练
+
+        Args:
+            checkpoint_path: 检查点文件路径 (.pt)
+            dataset_path: 数据集路径（可选，如果检查点已包含则不需要）
+
+        Returns:
+            task_id: 训练任务 ID
+        """
+        from pathlib import Path
+
+        checkpoint = Path(checkpoint_path)
+        if not checkpoint.exists():
+            raise FileNotFoundError(f"检查点文件不存在: {checkpoint_path}")
+
+        # 从检查点获取训练信息
+        try:
+            checkpoint_model = YOLO(str(checkpoint))
+            # Ultralytics 检查点包含训练历史
+            if hasattr(checkpoint_model, 'resume'):
+                # 使用模型自带的 resume 功能
+                pass
+        except Exception as e:
+            raise ValueError(f"无法加载检查点: {e}")
+
+        # 生成新的任务 ID
+        task_id = f"resume_{int(time.time())}"
+
+        # 尝试从检查点获取已训练的轮数
+        start_epoch = 0
+        if hasattr(checkpoint_model, 'trainer') and checkpoint_model.trainer is not None:
+            trainer = checkpoint_model.trainer
+            if hasattr(trainer, 'epoch'):
+                start_epoch = trainer.epoch
+            if hasattr(trainer, 'args') and hasattr(trainer.args, 'epochs'):
+                total_epochs = trainer.args.epochs
+            else:
+                total_epochs = 100
+        else:
+            total_epochs = 100
+
+        # 创建状态
+        status = TrainingStatus(
+            task_id=task_id,
+            status="pending",
+            progress=min(100.0, start_epoch / max(total_epochs, 1) * 100.0),
+            current_epoch=start_epoch,
+            total_epochs=total_epochs,
+            created_at=__import__('datetime').datetime.now(),
+            updated_at=__import__('datetime').datetime.now()
+        )
+
+        with self.training_lock:
+            self.training_tasks[task_id] = status
+
+        # 创建恢复训练配置
+        config = TrainingConfig(
+            project_name=checkpoint.parent.parent.name,  # 从路径提取项目名
+            model_type=checkpoint.parent.parent.name,
+            epochs=total_epochs,
+            resume=str(checkpoint)  # 设置恢复路径
+        )
+        if dataset_path:
+            config.dataset_path = dataset_path
+
+        config_copy = config.copy(deep=True)
+        future = self.executor.submit(self._train_worker, task_id, config_copy)
+        self.training_futures[task_id] = future
+
+        return task_id
+
     def _train_worker(self, task_id: str, config: 'TrainingConfig'):
         """训练工作函数"""
         try:
@@ -206,10 +279,15 @@ class YOLOEngine:
 
             print(f"[{task_id}] 开始训练 - 模型: {model_type}")
 
-            base_model_path = self._resolve_model_path(
-                config.model_path or f"{model_type}.pt"
-            )
-            model = YOLO(base_model_path)
+            # 检查是否是恢复训练
+            if config.resume and Path(config.resume).exists():
+                print(f"[{task_id}] 从检查点恢复: {config.resume}")
+                model = YOLO(config.resume)
+            else:
+                base_model_path = self._resolve_model_path(
+                    config.model_path or f"{model_type}.pt"
+                )
+                model = YOLO(base_model_path)
 
             with self.training_lock:
                 status = self.training_tasks.get(task_id)
@@ -312,23 +390,48 @@ class YOLOEngine:
             if device == "auto":
                 device = "0" if torch.cuda.is_available() else "cpu"
 
-            results = model.train(
-                data=str(config.dataset_path),
-                epochs=config.epochs,
-                batch=batch_size,
-                imgsz=config.img_size,
-                device=device,
-                patience=config.patience,
-                save_period=config.save_period,
-                project=str(settings.MODELS_DIR / config.project_name),
-                name="train",
-                exist_ok=True,
-                pretrained=config.pretrained,
-                optimizer=config.optimizer,
-                amp=config.amp if hasattr(config, 'amp') else True,
-                workers=config.workers if hasattr(config, 'workers') else 8,
-                cache=settings.DEFAULT_CACHE,
-            )
+            # 自动匹配优化器
+            optimizer = config.optimizer
+            if optimizer == "auto":
+                # 根据模型类型自动选择最佳优化器
+                model_type_lower = config.model_type.lower() if config.model_type else ""
+                if any(x in model_type_lower for x in ['yolo26', 'yolo11', 'yolov8', 'yolov10']):
+                    optimizer = "AdamW"  # YOLO 系列推荐使用 AdamW
+                elif any(x in model_type_lower for x in ['yolox', 'yolov5']):
+                    optimizer = "SGD"  # YOLOX/YOLOv5 传统上使用 SGD
+                else:
+                    optimizer = "AdamW"  # 默认使用 AdamW
+                print(f"[{task_id}] 自动选择优化器: {optimizer}")
+
+            # 构建训练参数
+            train_kwargs = {
+                'data': str(config.dataset_path),
+                'epochs': config.epochs,
+                'batch': batch_size,
+                'imgsz': config.img_size,
+                'device': device,
+                'patience': config.patience,
+                'save_period': config.save_period,
+                'project': str(settings.MODELS_DIR / config.project_name),
+                'name': 'train',
+                'exist_ok': True,
+                'pretrained': config.pretrained,
+                'optimizer': optimizer,
+                'amp': config.amp if hasattr(config, 'amp') else True,
+                'workers': config.workers if hasattr(config, 'workers') else 8,
+                'cache': settings.DEFAULT_CACHE,
+                # 学习率参数
+                'lr0': getattr(config, 'lr0', 0.01),
+                'lrf': getattr(config, 'lrf', 0.01),
+                'warmup_epochs': getattr(config, 'warmup_epochs', 3.0),
+                'warmup_bias_lr': getattr(config, 'warmup_bias_lr', 0.1),
+                # 马赛克增强参数
+                'mosaic': getattr(config, 'mosaic', 1.0),
+                'mosaic_scale': getattr(config, 'mosaic_scale', (0.1, 1.5)),
+                'close_mosaic_epochs': getattr(config, 'close_mosaic_epochs', 10),
+            }
+
+            results = model.train(**train_kwargs)
 
             print(f"[{task_id}] 训练完成")
 
@@ -505,6 +608,27 @@ class TrainingConfig:
     optimizer: str = "auto"
     amp: bool = True
     workers: int = 8
+    resume: str = None  # 恢复训练的检查点路径
+
+    # ==================== 微调优化参数 ====================
+    # 学习率配置
+    lr0: float = 0.01  # 初始学习率
+    lrf: float = 0.01  # 最终学习率（相对于 lr0）
+    warmup_epochs: float = 3.0  # 预热轮数，设置为 0 可立即使用较高学习率
+    warmup_bias_lr: float = 0.1  # 预热期间 bias 的学习率
+
+    # 图像平铺处理小目标
+    mosaic: float = 1.0  # 马赛克增强 (0-1)
+    mosaic_scale: tuple = (0.1, 1.5)  # 马赛克缩放范围
+    close_mosaic_epochs: int = 10  # 关闭马赛克增强的轮数
+
+    # 混合精度训练
+    amp: bool = True
+
+    # 验证参数
+    val_conf: float = 0.001  # 验证时的置信度阈值
+    val_iou: float = 0.6  # 验证时的 IoU 阈值
+    val_rect: bool = True  # 验证时使用矩形图像
 
     def copy(self, deep: bool = False):
         """创建副本"""
