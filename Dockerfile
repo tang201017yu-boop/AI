@@ -46,11 +46,11 @@ COPY requirements.txt .
 # 先安装 ultralytics（会同时安装大部分依赖）
 RUN pip install --no-cache-dir ultralytics
 
-# 再安装其他依赖（过滤掉已安装的）
+# 再安装其他依赖
 RUN pip install --no-cache-dir \
     opencv-python supervision Pillow pyyaml albumentations \
     psycopg2-binary psycopg[binary] pgvector boto3 requests \
-    fastapi uvicorn python-multipart jinja2
+    fastapi uvicorn[standard] python-multipart jinja2
 
 # ============== 第三阶段：运行时 ==============
 FROM python:3.12-slim-bookworm AS runtime
