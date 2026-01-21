@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.4
 # OpenCV Platform Dockerfile - 开发/测试版本（CPU 优化）
 # 优化目标：体积小、拉取快、适合国内服务器
 

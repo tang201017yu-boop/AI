@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.4
 # OpenCV Platform Production Dockerfile - 生产环境优化版
 # 优化目标：体积最小化、拉取最快、适合国内服务器大规模部署
 

@@ -41,6 +41,14 @@
 数据标注 → 模型训练 → 模型管理 → 推理部署
 ```
 
+**v2.2 更新：**
+- **训练功能增强**：支持手动选择优化器（AdamW/SGD/Adam等）和自动匹配
+- **默认模型更新**：YOLO26 系列成为默认首选模型
+- **微调参数优化**：可手动配置学习率、马赛克增强、预热轮数等
+- **国内部署优化**：Docker 镜像构建针对国内网络环境深度优化
+- 模型评估功能：验证模型性能并获取 mAP、Precision、Recall 等指标
+- 训练恢复支持：从检查点继续中断的训练
+
 **v2.1 更新：**
 - 新增项目管理功能（项目创建、活动日志、模型迁移）
 - 新增模型库管理（上传、验证图表、17种格式导出）
@@ -69,8 +77,11 @@
 - 生成增强数据集用于模型训练
 
 ### 模型训练
-- 基于 Ultralytics YOLO (YOLO11/ YOLO8)
-- 支持自定义训练参数配置
+- 基于 Ultralytics YOLO (YOLO26/ YOLO11/ YOLO8)
+- **YOLO26 默认首选**：最新一代 YOLO 模型作为默认训练选项
+- **优化器选择**：支持手动选择（AdamW/SGD/Adam/NAdam/RAdam/RMSProp）或自动匹配
+- **微调参数**：可配置初始学习率(lr0)、最终学习率因子(lrf)、预热轮数、马赛克增强
+- **训练恢复**：支持从检查点继续中断的训练
 - 实时训练进度监控
 - 损失曲线和性能指标可视化
 - 自动保存最佳模型权重
@@ -244,15 +255,30 @@ docker compose -f docker-compose.dev.yml down
 
 #### 部署优化（国内服务器）
 
-Dockerfile 已针对国内服务器优化，实施以下策略：
+Dockerfile 已针对国内服务器深度优化，支持阿里云、腾讯云等主流国内服务器：
 
 | 优化项 | 说明 | 预期收益 |
 |--------|------|----------|
 | 清华 pip 源 | `pypi.tuna.tsinghua.edu.cn` | 下载提速 5 倍+ |
+| PyTorch 镜像 | 优先清华镜像，fallback 官方 | PyTorch 下载提速 3 倍 |
+| 阿里云 apt 源 | `mirrors.aliyun.com` | 系统包下载提速 2-4 倍 |
+| 上海交大镜像 | PyTorch wheels 镜像站 | 额外加速保障 |
 | slim 基础镜像 | `python:3.12-slim` | 体积减小 40% |
 | 多阶段构建 | 分离编译依赖和运行时 | 最终镜像再省 30% |
 | 离线 wheel 安装 | `pip download` + `pip install --no-index` | 网络抖动时稳定 |
 | 构建上下文优化 | `.dockerignore` 排除大文件 | 构建更快 |
+
+**推荐构建方式：**
+```bash
+# 标准构建
+docker build -t opencv-platform .
+
+# 或启用 BuildKit 加速
+DOCKER_BUILDKIT=1 docker build -t opencv-platform .
+
+# 或使用 docker buildx（支持多平台）
+docker buildx build --platform linux/amd64 -t opencv-platform .
+```
 
 **GPU 支持（需要 NVIDIA Docker）：**
 ```yaml
@@ -310,8 +336,13 @@ uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
 1. 准备 YOLO 格式数据集
 2. 访问训练页面
-3. 配置参数（模型类型、轮数、批次大小等）
+3. 配置参数：
+   - **模型类型**：默认 YOLO26n，支持 YOLO26/11/8 全系列
+   - **优化器**：选择自动匹配（推荐）或手动指定（AdamW/SGD/Adam/NAdam/RAdam/RMSProp）
+   - **训练参数**：轮数、批次大小、图像尺寸
+   - **微调参数**（可选）：初始学习率、最终学习率因子、预热轮数、马赛克增强
 4. 开始训练，实时监控进度
+5. 训练中断后可从检查点恢复
 
 ### 3. 模型管理
 
@@ -371,6 +402,21 @@ uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
 #### GET `/api/v1/training/{task_id}/metrics`
 获取训练指标
+
+#### POST `/api/v1/training/validate`
+验证模型性能，返回 mAP@0.5、mAP@0.5:0.95、Precision、Recall、F1 等指标
+
+#### POST `/api/v1/training/resume`
+从检查点恢复训练
+
+#### GET `/api/v1/training/{task_id}/checkpoints`
+获取训练检查点列表
+
+#### GET `/api/v1/training/tasks`
+列出所有训练任务
+
+#### POST `/api/v1/training/cancel/{task_id}`
+取消训练任务
 
 ### 模型接口
 
