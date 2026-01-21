@@ -81,9 +81,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# 跨阶段复制（分层复制优化）
+# 跨阶段复制（从 pytorch-base 和 builder 复制）
 COPY --from=pytorch-base /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
 COPY --from=pytorch-base /usr/local/bin/ /usr/local/bin/
+COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # 复制应用代码
 COPY backend /app/backend
