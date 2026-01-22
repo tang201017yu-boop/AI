@@ -8,8 +8,41 @@
 | CPU | Intel Core i7/i9 或 AMD Ryzen 7/9 |
 | 内存 | 32GB DDR5 |
 | 存储 | 1TB NVMe SSD |
-| CUDA | 12.4+ |
+| CUDA | 12.4+ (本项目使用 12.4.0) |
 | Python | 3.10+ |
+
+## GPU 环境要求
+
+```bash
+# 检查 CUDA 版本
+nvcc --version
+nvidia-smi
+
+# 预期输出:
+# +-----------------------------------------------------------------------------------------+
+# | NVIDIA-SMI 580.95.05       Driver Version: 580.95.05   CUDA Version: 13.0              |
+# |-----------------------------------------+------------------------+----------------------+
+# | GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+# |  0  NVIDIA GeForce RTX 5080        Off |   00000000:02:00.0 Off |                      |
+# +-----------------------------------------+------------------------+----------------------+
+```
+
+## Docker GPU 支持
+
+确保服务器已安装 nvidia-container-toolkit：
+
+```bash
+# 检查 GPU Docker 支持
+docker run --rm --gpus all nvidia/cuda:12.4.0-cudnn-runtime-ubuntu22.04 nvidia-smi
+
+# 如果上面的命令失败，安装 nvidia-container-toolkit:
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | \
+    sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+```
 
 ## 快速部署
 
@@ -32,14 +65,43 @@ cd YOLO-
 ### 方式二：Docker GPU 部署（推荐用于生产）
 
 ```bash
-# 构建并启动
-docker compose -f docker-compose.gpu.yml up -d
+# 1. 克隆项目
+git clone <your-repo>
+cd YOLO-
 
-# 查看日志
-docker logs -f opencv-platform-gpu
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env，确保以下配置:
+# STORAGE_BACKEND=s3
+# POSTGRES_HOST=postgres
+
+# 3. 部署（使用 GPU）
+docker compose -f docker-compose.gpu.yml up -d --build
+
+# 4. 验证部署
+curl http://localhost:8000/api/v1/system/health
+
+# 预期返回:
+# {"status":"healthy","version":"2.2.0","mode":"standalone","timestamp":"..."}
+
+# 5. 查看 GPU 使用
+docker stats opencv-platform-gpu
 
 # 停止服务
 docker compose -f docker-compose.gpu.yml down
+```
+
+## Dockerfile GPU 配置
+
+项目使用 `nvidia/cuda:12.4.0-cudnn-runtime-ubuntu22.04` 作为基础镜像：
+
+```dockerfile
+# Dockerfile.gpu
+FROM nvidia/cuda:12.4.0-cudnn-runtime-ubuntu22.04 AS pytorch-base
+
+# 安装 PyTorch GPU 版本
+RUN pip install torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cu124
 ```
 
 ## GPU 优化配置
