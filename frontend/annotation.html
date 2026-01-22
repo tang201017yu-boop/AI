@@ -1156,6 +1156,49 @@
     <input type="file" id="imageUpload" multiple accept="image/*" style="display: none;">
 
     <script>
+        // ==================== 调试日志工具 ====================
+        /**
+         * 调试日志工具
+         * 用于追踪标注功能的执行流程，方便问题排查
+         *
+         * 使用方法:
+         *   log('步骤1: 开始加载')        // 普通日志
+         *   log.warn('警告信息')         // 警告日志
+         *   log.error('错误信息')        // 错误日志
+         *   log.info('详细信息', data)   // 带数据的日志
+         */
+        const log = {
+            prefix: '[标注]',
+            _print: function(level, color, args) {
+                const timestamp = new Date().toLocaleTimeString();
+                const msg = args.map(arg => {
+                    if (typeof arg === 'object') {
+                        return JSON.stringify(arg, null, 2);
+                    }
+                    return String(arg);
+                }).join(' ');
+                console.log(`%c${timestamp} ${this.prefix} [${level}]`, `color: ${color}`, ...args);
+            },
+            // 普通日志
+            log: function(...args) { this._print('LOG', '#666', args); },
+            // 信息日志
+            info: function(...args) { this._print('INFO', '#2196F3', args); },
+            // 警告日志
+            warn: function(...args) { this._print('WARN', '#FF9800', args); },
+            // 错误日志
+            error: function(...args) { this._print('ERROR', '#f44336', args); },
+            // 分组日志
+            group: function(label) { console.group(`${this.prefix} ${label}`); },
+            groupEnd: function() { console.groupEnd(); },
+            // 追踪函数调用
+            trace: function(label) { this._print('TRACE', '#9C27B0', [label]); }
+        };
+
+        // 启动日志
+        log.info('========== 标注页面加载 ==========');
+        log.info('浏览器信息:', navigator.userAgent);
+        log.info('屏幕尺寸:', window.innerWidth, 'x', window.innerHeight);
+
         // ==================== 全局状态 ====================
         const state = {
             project: null,
@@ -1574,37 +1617,74 @@
         }
 
         // ==================== YOLO 自动标注 ====================
+        /**
+         * 运行 YOLO 自动标注
+         *
+         * 流程:
+         * 1. 检查当前是否有选中的图片
+         * 2. 获取 Canvas 上的图片数据
+         * 3. 调用后端 /api/v1/inference/predict 接口
+         * 4. 解析返回的检测结果
+         * 5. 将检测结果转换为标注格式
+         * 6. 更新标注列表和统计信息
+         */
         async function runAutoAnnotation() {
+            // 1. 检查状态
             if (!state.currentImage) {
+                log.warn('未选择图片，无法进行自动标注');
                 showToast('请先选择图片', 'warning');
                 return;
             }
 
+            log.info('开始自动标注:', {
+                image: state.currentImage,
+                model: document.getElementById('autoModel').value,
+                confidence: document.getElementById('confThreshold').value
+            });
+
             showLoading(true, '正在运行自动标注...');
 
             try {
-                const formData = new FormData();
-                formData.append('model_name', document.getElementById('autoModel').value || 'yolo11n.pt');
-                formData.append('confidence', document.getElementById('confThreshold').value);
+                // 2. 准备请求数据
+                const modelName = document.getElementById('autoModel').value || 'yolo11n.pt';
+                const confidence = document.getElementById('confThreshold').value;
 
-                // 获取图片数据
+                log.info('准备请求数据:', { modelName, confidence });
+
+                const formData = new FormData();
+                formData.append('model_name', modelName);
+                formData.append('confidence', confidence);
+
+                // 3. 获取 Canvas 图片数据
                 const imgData = state.canvas.toDataURL('image/jpeg', 0.9);
                 const blob = await (await fetch(imgData)).blob();
                 formData.append('file', blob, 'image.jpg');
 
+                log.info('图片数据准备完成:', { blobSize: blob.size, blobType: blob.type });
+
+                // 4. 调用后端 API
+                log.info('调用 API: POST /api/v1/inference/predict');
                 const response = await fetch('/api/v1/inference/predict', {
                     method: 'POST',
                     body: formData
                 });
 
-                const result = await response.json();
+                log.info('API 响应状态:', response.status, response.statusText);
 
-                if (result.success && result.detections) {
+                const result = await response.json();
+                log.info('API 返回结果:', result);
+
+                // 5. 处理检测结果
+                if (result.success && result.detections && result.detections.length > 0) {
+                    log.info('检测成功，准备转换标注格式');
+
                     saveToHistory();
                     const newAnnotations = [];
 
-                    result.detections.forEach(det => {
+                    result.detections.forEach((det, index) => {
+                        log.debug(`处理检测结果 ${index + 1}:`, det);
                         const [x1, y1, x2, y2] = det.bbox;
+
                         newAnnotations.push({
                             type: 'rect',
                             class: det.class_name,
@@ -1615,19 +1695,34 @@
                         });
                     });
 
+                    log.info('转换完成，生成标注:', {
+                        count: newAnnotations.length,
+                        classes: [...new Set(newAnnotations.map(a => a.class))]
+                    });
+
+                    // 6. 更新状态
                     state.annotations[state.currentImage] = newAnnotations;
                     state.unsavedChanges = true;
+
+                    // 7. 更新界面
                     renderAnnotations();
                     updateStats();
+
+                    log.info('自动标注完成:', newAnnotations.length, '个对象');
                     showToast(`自动标注完成: ${newAnnotations.length} 个对象`, 'success');
+                } else if (result.success && (!result.detections || result.detections.length === 0)) {
+                    log.warn('未检测到任何对象');
+                    showToast('未检测到任何对象', 'warning');
                 } else {
+                    log.error('自动标注失败:', result.message || '未知错误');
                     showToast('自动标注失败: ' + (result.message || '未知错误'), 'error');
                 }
             } catch (error) {
-                console.error('自动标注错误:', error);
+                log.error('自动标注异常:', error);
                 showToast('自动标注失败: ' + error.message, 'error');
             } finally {
                 showLoading(false);
+                log.debug('自动标注流程结束');
             }
         }
 
@@ -2298,26 +2393,63 @@
             }
         }
 
+        /**
+         * 加载项目图片列表
+         *
+         * 流程:
+         * 1. 检查项目是否已加载
+         * 2. 调用 API 获取图片列表
+         * 3. 解析返回结果（支持新旧两种格式）
+         * 4. 更新状态并渲染图片列表
+         * 5. 自动加载第一张图片
+         */
         async function loadProjectImages() {
-            if (!state.project) return;
+            if (!state.project) {
+                log.warn('项目未加载，无法获取图片列表');
+                return;
+            }
+
+            log.info('加载项目图片列表:', { project: state.project.name });
 
             try {
-                const response = await fetch(`/api/v1/annotation/projects/${state.project.name}/images`);
-                const result = await response.json();
+                // 1. 调用 API
+                const url = `/api/v1/annotation/projects/${state.project.name}/images`;
+                log.info('调用 API:', url);
 
-                if (result.success) {
+                const response = await fetch(url);
+                log.info('API 响应:', response.status, response.statusText);
+
+                const result = await response.json();
+                log.info('API 返回结果:', result);
+
+                // 2. 处理返回结果
+                if (result.success && result.images) {
                     // 支持新格式 {name, url} 和旧格式 字符串
-                    state.images = (result.images || []).map(img => typeof img === 'string' ? img : img.name);
-                    state.imageUrls = (result.images || []).map(img => typeof img === 'string' ? null : img.url);
+                    state.images = result.images.map(img => typeof img === 'string' ? img : img.name);
+                    state.imageUrls = result.images.map(img => typeof img === 'string' ? null : img.url);
+
+                    log.info('图片列表加载成功:', {
+                        count: state.images.length,
+                        firstImage: state.images[0] || '无'
+                    });
+
+                    // 3. 渲染图片列表
                     renderImageList(state.images);
 
+                    // 4. 加载第一张图片
                     if (state.images.length > 0) {
+                        log.info('自动加载第一张图片:', state.images[0]);
                         loadImageAtIndex(0);
+                    } else {
+                        log.warn('项目中没有图片');
                     }
+                } else {
+                    log.error('获取图片列表失败:', result.message);
+                    showToast('加载图片列表失败: ' + (result.message || '未知错误'), 'error');
                 }
             } catch (error) {
-                console.error('加载图片失败:', error);
-                showToast('加载图片列表失败', 'error');
+                log.error('加载图片列表异常:', error);
+                showToast('加载图片列表失败: ' + error.message, 'error');
             }
         }
 
