@@ -2,7 +2,7 @@
 # 优化目标：充分发挥 RTX 5080 性能，支持 CUDA 加速训练和推理
 
 # ============== 第一阶段：PyTorch CUDA 基础 ==============
-FROM nvidia/cuda:12.6-cudnn9-runtime-ubuntu22.04 AS pytorch-base
+FROM nvidia/cuda:12.4.0-cudnn-runtime-ubuntu22.04 AS pytorch-base
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
