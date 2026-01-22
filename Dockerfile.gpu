@@ -98,6 +98,12 @@ ENV NVIDIA_DISABLE_REQUIRE=1
 
 # 安装运行时依赖（不含编译工具）
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-venv \
     libgl1-mesa-glx \
