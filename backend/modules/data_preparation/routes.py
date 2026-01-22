@@ -163,7 +163,7 @@ async def add_images(project_name: str, files: List[UploadFile] = File(...)):
 async def get_project_images(project_name: str):
     """获取项目图片列表"""
     images = annotation_service.get_project_images(project_name)
-    return {"success": True, "images": images}
+    return {"success": True, "images": images, "total": len(images)}
 
 
 @router.get("/annotation/projects/{project_name}/image/{image_name}")

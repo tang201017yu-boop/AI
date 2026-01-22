@@ -24,6 +24,7 @@ OpenCV Platform - 主应用入口
 """
 import sys
 import asyncio
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -37,30 +38,71 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 # 使用新的核心配置
 from backend.core.config import settings
-from backend.core.yolo_engine import yolo_engine
-from backend.core.database import postgres_service
-from backend.core.s3_storage import s3_service
 
-# 导入各模块路由
-from backend.modules.data_preparation.routes import router as data_prep_router
-from backend.modules.training.routes import router as training_router
-from backend.modules.inference.routes import router as inference_router
-from backend.modules.solutions.routes import router as solutions_router
+# 检查是否为本地开发模式
+DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
+REMOTE_API_URL = os.getenv("REMOTE_API_URL", "http://localhost:8000")
 
 # 版本戳 - 用于缓存破坏
 APP_VERSION_TIMESTAMP = datetime.now().strftime("%Y%m%d%H%M%S")
 
 # 创建 FastAPI 应用
 app = FastAPI(
-    title=settings.APP_NAME,
+    title=settings.APP_NAME if not DEV_MODE else f"{settings.APP_NAME} (开发模式)",
     version=settings.APP_VERSION,
     description="基于 Ultralytics YOLO 的开源计算机视觉平台，提供数据标注、模型训练、API 部署的完整工作流",
     docs_url="/api/docs",
     redoc_url="/api/redoc"
 )
+
+
+# API 代理中间件（本地开发模式）
+class ProxyAPIMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # 只代理 /api/v1/ 开头的请求
+        if DEV_MODE and str(request.url.path).startswith("/api/v1/"):
+            import httpx
+
+            # 构建远程请求 URL
+            remote_url = f"{REMOTE_API_URL.rstrip('/')}{request.url.path}"
+
+            # 获取请求体
+            body = await request.body()
+
+            # 转发请求到远程服务器
+            try:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    headers = dict(request.headers)
+                    headers.pop("host", None)
+
+                    request_method = request.method
+                    remote_response = await client.request(
+                        method=request_method,
+                        url=remote_url,
+                        headers=headers,
+                        content=body,
+                        params=request.query_params
+                    )
+
+                    return JSONResponse(
+                        content=remote_response.json(),
+                        status_code=remote_response.status_code
+                    )
+            except Exception as e:
+                return JSONResponse(
+                    status_code=502,
+                    content={"success": False, "message": f"代理请求失败: {str(e)}"}
+                )
+
+        return await call_next(request)
+
+
+app.add_middleware(ProxyAPIMiddleware)
+
 
 # 缓存控制中间件
 class CacheControlMiddleware(BaseHTTPMiddleware):
@@ -99,6 +141,11 @@ uploads_dir = settings.UPLOADS_DIR
 if uploads_dir.exists():
     app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
+# 挂载标注项目图片目录
+annotation_images_dir = settings.ANNOTATION_PROJECTS_DIR
+if annotation_images_dir.exists():
+    app.mount("/annotation-images", StaticFiles(directory=str(annotation_images_dir)), name="annotation_images")
+
 # 模板引擎
 templates_dir = project_root / "frontend"
 templates = Jinja2Templates(directory=str(templates_dir))
@@ -121,8 +168,18 @@ app.include_router(solutions_router, prefix="/api/v1", tags=["智能解决方案
 @app.on_event("startup")
 async def warmup_services():
     """预加载模型与数据集索引，减少首次访问延迟"""
+    if DEV_MODE:
+        print("=" * 50)
+        print("  🏠 本地开发模式")
+        print(f"  🔗 远程API: {REMOTE_API_URL}")
+        print("  ⚠️  API 请求将转发到远程服务器")
+        print("=" * 50)
+        return
+
     loop = asyncio.get_running_loop()
     tasks = []
+
+    from backend.core.yolo_engine import yolo_engine
 
     if yolo_engine:
         tasks.append(loop.run_in_executor(None, lambda: yolo_engine._iter_model_paths()))
@@ -130,6 +187,9 @@ async def warmup_services():
     # 预加载数据集列表
     from backend.modules.data_preparation import dataset_service
     tasks.append(loop.run_in_executor(None, dataset_service.list_datasets))
+
+    from backend.core.database import postgres_service
+    from backend.core.s3_storage import s3_service
 
     # 初始化 PostgreSQL 数据库
     print("正在初始化 PostgreSQL 数据库...")

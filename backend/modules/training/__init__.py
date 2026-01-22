@@ -4,6 +4,6 @@
 """
 
 from .training_service import training_service
-from .export_service import export_service
+from .training_service import export_service
 
 __all__ = ['training_service', 'export_service']

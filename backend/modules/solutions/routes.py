@@ -63,6 +63,9 @@ async def solution_object_counting(
 
 # ==================== 热图生成 ====================
 
+# 存储正在进行的任务
+heatmap_tasks = {}
+
 @router.post("/solutions/heatmap")
 async def solution_heatmap(
     file: UploadFile = File(...),
@@ -71,27 +74,75 @@ async def solution_heatmap(
     classes: Optional[str] = Form(None),
     conf: float = Form(0.25)
 ):
-    """热图生成"""
+    """热图生成（异步）"""
+    import uuid
+    from concurrent.futures import ThreadPoolExecutor
+
+    # 生成任务 ID
+    task_id = str(uuid.uuid4())[:8]
+
+    # 保存上传的视频
     filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
     file_path = settings.UPLOADS_DIR / filename
     save_uploaded_file(file, str(file_path))
 
+    output_path = str(settings.UPLOADS_DIR / f"heatmap_{task_id}_{filename}")
+
+    # 初始化任务状态
+    heatmap_tasks[task_id] = {
+        "status": "processing",
+        "progress": 0,
+        "message": "正在处理...",
+        "output_path": None
+    }
+
     class_list = json.loads(classes) if classes else None
-    output_path = str(settings.UPLOADS_DIR / f"heatmap_{filename}")
 
-    result = solutions_service.generate_heatmap(
-        source=str(file_path),
-        model_name=model_name,
-        colormap=colormap,
-        classes=class_list,
-        conf=conf,
-        output_path=output_path
-    )
+    # 在后台线程中执行
+    def process_heatmap():
+        try:
+            # 定义进度回调函数
+            def update_progress(progress, message):
+                heatmap_tasks[task_id]["progress"] = progress
+                heatmap_tasks[task_id]["message"] = message
 
-    if result.get("output_path"):
-        result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+            result = solutions_service.generate_heatmap(
+                source=str(file_path),
+                model_name=model_name,
+                colormap=colormap,
+                classes=class_list,
+                conf=conf,
+                output_path=output_path,
+                progress_callback=update_progress
+            )
+            heatmap_tasks[task_id]["status"] = "completed" if result.get("success") else "failed"
+            heatmap_tasks[task_id]["message"] = result.get("message", "")
+            heatmap_tasks[task_id]["progress"] = 100
+            if result.get("output_path"):
+                heatmap_tasks[task_id]["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+        except Exception as e:
+            heatmap_tasks[task_id]["status"] = "failed"
+            heatmap_tasks[task_id]["message"] = str(e)
+            heatmap_tasks[task_id]["progress"] = 0
 
-    return result
+    # 提交到线程池执行
+    executor = ThreadPoolExecutor(max_workers=2)
+    executor.submit(process_heatmap)
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "message": "任务已提交，请轮询获取进度"
+    }
+
+
+@router.get("/solutions/heatmap/status/{task_id}")
+async def get_heatmap_status(task_id: str):
+    """获取热图生成进度"""
+    task = heatmap_tasks.get(task_id)
+    if task:
+        return task
+    return {"status": "not_found", "message": "任务不存在"}
 
 
 # ==================== 速度估算 ====================

@@ -16,6 +16,8 @@ try:
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
 
+from backend.core.config import settings
+
 
 class TrainingService:
     """训练服务"""

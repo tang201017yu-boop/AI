@@ -235,13 +235,14 @@ class InferenceService:
 
         return f"data:image/jpeg;base64,{img_base64}"
 
-    def stream_infer(self, image_data: bytes, model_name: str = None):
+    def stream_infer(self, image_data: bytes, model_name: str = None, confidence: float = None):
         """
         流式推理（用于实时推理 API）
 
         Args:
             image_data: 图片二进制数据
             model_name: 模型名称
+            confidence: 置信度阈值
 
         Returns:
             检测结果
@@ -257,9 +258,9 @@ class InferenceService:
             return {"success": False, "message": "图片解码失败"}
 
         model = yolo_engine.load_model(model_name)
-        confidence = settings.CONFIDENCE_THRESHOLD
+        conf = confidence if confidence is not None else settings.CONFIDENCE_THRESHOLD
 
-        result = model.predict(image, conf=confidence, verbose=False)
+        result = model.predict(image, conf=conf, verbose=False)
 
         detections = []
         if result and len(result) > 0:

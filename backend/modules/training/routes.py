@@ -1,7 +1,7 @@
 """
 训练模块路由 - Training Routes
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile
 from typing import Optional, Dict, Any
 import json
 

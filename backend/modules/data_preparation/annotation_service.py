@@ -220,7 +220,7 @@ class AnnotationService:
 
         return lines
 
-    def get_project_images(self, project_name: str) -> List[str]:
+    def get_project_images(self, project_name: str) -> List[Dict[str, str]]:
         """获取项目图片列表"""
         project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
         images_dir = project_dir / "images"
@@ -228,7 +228,14 @@ class AnnotationService:
         if not images_dir.exists():
             return []
 
-        return [f.name for f in images_dir.iterdir() if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']]
+        images = []
+        for f in images_dir.iterdir():
+            if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
+                images.append({
+                    "name": f.name,
+                    "url": f"/annotation-images/{project_name}/images/{f.name}"
+                })
+        return images
 
     def get_annotation(self, project_name: str, image_name: str) -> Dict[str, Any]:
         """获取图片标注"""

@@ -1,0 +1,15 @@
+{
+  "name": "wuyu",
+  "task_type": "detect",
+  "classes": [
+    "person",
+    "car",
+    "dog",
+    "cat"
+  ],
+  "created_at": "2026-01-22T11:54:09.496080",
+  "images": [
+    "test.jpg"
+  ],
+  "annotations": {}
+}

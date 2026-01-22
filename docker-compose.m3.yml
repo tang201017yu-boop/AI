@@ -1,0 +1,158 @@
+# OpenCV Platform - macOS M3 本地开发配置
+# 使用 CPU + MPS (Metal Performance Shaders) 加速
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: opencv-postgres
+    environment:
+      POSTGRES_DB: opencv_platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opencv-network
+    restart: unless-stopped
+
+  # MinIO S3 存储
+  minio:
+    image: minio/minio:latest
+    container_name: opencv-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - opencv-network
+    restart: unless-stopped
+
+  # OpenCV Platform (M3 优化)
+  opencv-platform-m3:
+    build:
+      context: .
+      dockerfile: Dockerfile.m3
+    image: opencv-platform:m3
+    container_name: opencv-platform-m3
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - ./config:/app/config
+      - ./app.py:/app/app.py
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+
+    environment:
+      APP_NAME: "OpenCV Platform (M3)"
+      APP_VERSION: "2.2.0-m3"
+      DEBUG: "True"
+      API_PORT: 8000
+      DATA_DIR: /app/data
+      DATASETS_DIR: /app/data/datasets
+      MODELS_DIR: /app/data/models
+      EXPORTS_DIR: /app/data/exports
+      UPLOADS_DIR: /app/data/uploads
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app
+      RELOAD: "True"
+
+      # M3 MPS 加速
+      DEVICE: "mps"
+
+      # PostgreSQL 配置
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: opencv_platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+      # S3 配置
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: opencv-platform
+      STORAGE_BACKEND: s3
+
+      # MPS 优化
+      PYTORCH_ENABLE_MPS_FALLBACK: 1
+
+    command: >
+      uvicorn app:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/backend
+      --reload-dir /app/frontend
+      --log-level info
+
+    networks:
+      - opencv-network
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  opencv-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

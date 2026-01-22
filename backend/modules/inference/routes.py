@@ -85,6 +85,26 @@ async def infer_video(
     return result
 
 
+# ==================== 自动标注推理 ====================
+
+@router.post("/inference/predict")
+async def predict_for_annotation(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    confidence: Optional[float] = Form(0.25)
+):
+    """YOLO自动标注推理 - 返回检测结果用于标注"""
+    print(f"[Auto-Annotate] 收到请求: model={model_name}, conf={confidence}, file={file.filename}")
+    # 读取图片数据
+    image_data = await file.read()
+    print(f"[Auto-Annotate] 图片大小: {len(image_data)} bytes")
+
+    result = inference_service.stream_infer(image_data, model_name, confidence)
+    print(f"[Auto-Annotate] 结果: success={result.get('success')}, detections={result.get('num_detections')}")
+
+    return result
+
+
 # ==================== 批量推理 ====================
 
 @router.post("/inference/batch")

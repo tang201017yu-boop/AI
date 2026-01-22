@@ -42,20 +42,27 @@ class Settings:
     ANNOTATION_PROJECTS_DIR: Path = ANNOTATION_PROJECTS_DIR
 
     # 模型配置
-    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "yolo11n.pt")
+    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "yolo26n.pt")
     CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.25"))
     IOU_THRESHOLD: float = float(os.getenv("IOU_THRESHOLD", "0.45"))
 
-    # 训练配置 (RTX 5080 优化)
+    # 训练配置 (RTX 5080 优化 - 16GB显存)
     DEFAULT_EPOCHS: int = int(os.getenv("DEFAULT_EPOCHS", "100"))
-    DEFAULT_BATCH_SIZE: int = int(os.getenv("DEFAULT_BATCH_SIZE", "32"))
+    DEFAULT_BATCH_SIZE: int = int(os.getenv("DEFAULT_BATCH_SIZE", "32"))  # RTX 5080 可用较大批次
     DEFAULT_IMG_SIZE: int = int(os.getenv("DEFAULT_IMG_SIZE", "640"))
-    MAX_TRAINING_WORKERS: int = max(1, int(os.getenv("MAX_TRAINING_WORKERS", "1")))
+    MAX_TRAINING_WORKERS: int = max(1, int(os.getenv("MAX_TRAINING_WORKERS", "8")))
 
     # GPU 优化配置
-    DEFAULT_AMP: bool = os.getenv("DEFAULT_AMP", "True").lower() == "true"
+    DEFAULT_AMP: bool = os.getenv("DEFAULT_AMP", "True").lower() == "true"  # 混合精度
     DEFAULT_WORKERS: int = int(os.getenv("DEFAULT_WORKERS", "8"))
     DEFAULT_CACHE: str = os.getenv("DEFAULT_CACHE", "ram")
+
+    # CUDA 优化
+    CUDA_LAUNCH_BLOCKING: int = int(os.getenv("CUDA_LAUNCH_BLOCKING", "0"))
+
+    # RTX 5080 特定优化
+    CUDA_TF32: bool = os.getenv("CUDA_TF32", "True").lower() == "true"  # 启用 TF32 加速
+    CUDNN_BENCHMARK: bool = os.getenv("CUDNN_BENCHMARK", "True").lower() == "true"  # cuDNN 自动调优
 
     # 缓存与扫描配置
     MODEL_METADATA_CACHE_TTL: int = int(os.getenv("MODEL_METADATA_CACHE_TTL", "30"))
@@ -98,8 +105,8 @@ class Settings:
         return f"{self.S3_ENDPOINT_URL}/{self.S3_BUCKET}"
 
     # ==================== 存储后端选择 ====================
-    STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")  # s3 或 local
-    USE_VECTOR_SEARCH: bool = os.getenv("USE_VECTOR_SEARCH", "true").lower() == "true"
+    STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "local")  # s3 或 local
+    USE_VECTOR_SEARCH: bool = os.getenv("USE_VECTOR_SEARCH", "false").lower() == "true"  # 默认关闭
 
     @staticmethod
     def _unique_paths(paths: List[Path]) -> List[Path]:

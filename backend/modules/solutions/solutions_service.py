@@ -14,8 +14,45 @@ try:
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
+    print("Warning: ultralytics not installed")
 
 from backend.core.config import settings
+
+
+def _to_numpy(frame):
+    """将帧转换为 numpy uint8 数组（兼容 MPS/tensor）"""
+    if frame is None:
+        return None
+
+    # 如果已经是 numpy 数组
+    if isinstance(frame, np.ndarray):
+        # 确保是 uint8
+        if frame.dtype != np.uint8:
+            if frame.dtype in [np.float32, np.float64]:
+                frame = (frame * 255).clip(0, 255).astype(np.uint8)
+            else:
+                frame = frame.astype(np.uint8)
+        return frame
+
+    # PyTorch tensor 或 MPS array
+    if hasattr(frame, 'cpu'):
+        frame = frame.cpu().numpy()
+    elif hasattr(frame, 'numpy'):
+        frame = frame.numpy()
+    else:
+        try:
+            frame = np.array(frame)
+        except:
+            return None
+
+    # 确保是 uint8
+    if frame.dtype != np.uint8:
+        if frame.dtype in [np.float32, np.float64]:
+            frame = (frame * 255).clip(0, 255).astype(np.uint8)
+        else:
+            frame = frame.astype(np.uint8)
+
+    return frame
 
 
 def get_model_path(model: YOLO) -> str:
@@ -174,52 +211,99 @@ class SolutionsService:
         colormap: int = cv2.COLORMAP_JET,
         classes: List[int] = None,
         conf: float = 0.25,
-        output_path: str = None
+        output_path: str = None,
+        progress_callback: callable = None
     ) -> Dict[str, Any]:
         """生成热图"""
         try:
+            import scipy.ndimage as ndi
+
             model = self.load_model(model_name)
             model_path = get_model_path(model)
 
-            heatmap = solutions.Heatmap(
-                show=False,
-                model=model_path,
-                colormap=colormap,
-                classes=classes,
-                line_width=2
-            )
-
             cap = cv2.VideoCapture(source)
+            if not cap.isOpened():
+                return {"success": False, "message": "无法打开视频文件"}
+
+            # 获取视频总帧数
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total_frames <= 0:
+                total_frames = 100  # 默认估计值
+
             if output_path:
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
                 out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
 
+            # 初始化热图累计器（2D 数组）
+            heatmap_2d = np.zeros((height, width), dtype=np.float32)
+
             frame_count = 0
-            while cap.isOpened():
-                success, frame = cap.read()
+            while True:
+                success, orig_frame = cap.read()
                 if not success:
                     break
 
-                heatmap(frame)
+                # 确保帧是 numpy uint8
+                frame = _to_numpy(orig_frame)
+                if frame is None:
+                    continue
+
+                # YOLO 推理获取检测结果
+                results = model.predict(frame, conf=conf, classes=classes, verbose=False)
+                boxes = results[0].boxes.xyxy.cpu().numpy() if len(results[0].boxes) > 0 else []
+
+                # 累加热图（2D）
+                for box in boxes:
+                    x1, y1, x2, y2 = map(int, box[:4])
+                    # 在检测框区域添加高斯热点
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(width, x2), min(height, y2)
+
+                    # 创建单个检测的热图
+                    single_heatmap = np.zeros((height, width), dtype=np.float32)
+                    single_heatmap[y1:y2, x1:x2] = 1.0
+
+                    # 高斯模糊
+                    single_heatmap = ndi.gaussian_filter(single_heatmap, sigma=15)
+
+                    heatmap_2d += single_heatmap
+
+                # 归一化并应用颜色映射
+                if frame_count >= 0 and np.max(heatmap_2d) > 0:
+                    heatmap_normalized = (heatmap_2d / np.max(heatmap_2d)).clip(0, 1)
+                    heatmap_colored = cv2.applyColorMap((heatmap_normalized * 255).astype(np.uint8), colormap)
+
+                    # 混合原始帧和热图
+                    alpha = 0.5
+                    annotated_frame = cv2.addWeighted(frame, 1 - alpha, heatmap_colored, alpha, 0)
+                else:
+                    annotated_frame = frame
+
                 frame_count += 1
 
-                if output_path:
-                    out.write(frame)
+                # 更新进度
+                if progress_callback:
+                    progress = int((frame_count / total_frames) * 100)
+                    progress_callback(progress, f"正在处理第 {frame_count}/{total_frames} 帧")
+
+                if output_path and out is not None:
+                    out.write(annotated_frame)
 
             cap.release()
-            if output_path:
+            if output_path and out is not None:
                 out.release()
 
             return {
                 "success": True,
-                "message": "热图生成完成",
+                "message": f"热图生成完成，共处理 {frame_count} 帧",
                 "total_frames": frame_count,
                 "output_path": output_path
             }
         except Exception as e:
-            return {"success": False, "message": f"热图生成失败: {str(e)}"}
+            import traceback
+            return {"success": False, "message": f"热图生成失败: {str(e)}\n{traceback.format_exc()}"}
 
     # ==================== 速度估算 ====================
     def estimate_speed(

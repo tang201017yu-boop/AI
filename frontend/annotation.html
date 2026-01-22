@@ -1584,13 +1584,13 @@
 
             try {
                 const formData = new FormData();
-                formData.append('model', document.getElementById('autoModel').value);
-                formData.append('conf', document.getElementById('confThreshold').value);
+                formData.append('model_name', document.getElementById('autoModel').value || 'yolo11n.pt');
+                formData.append('confidence', document.getElementById('confThreshold').value);
 
                 // 获取图片数据
                 const imgData = state.canvas.toDataURL('image/jpeg', 0.9);
                 const blob = await (await fetch(imgData)).blob();
-                formData.append('image', blob, 'image.jpg');
+                formData.append('file', blob, 'image.jpg');
 
                 const response = await fetch('/api/v1/inference/predict', {
                     method: 'POST',
@@ -1604,17 +1604,15 @@
                     const newAnnotations = [];
 
                     result.detections.forEach(det => {
-                        if (det.confidence >= parseFloat(document.getElementById('confThreshold').value)) {
-                            const [x1, y1, x2, y2] = det.bbox;
-                            newAnnotations.push({
-                                type: state.project?.task_type === 'segment' && det.mask ? 'polygon' : 'rect',
-                                class: det.class_name,
-                                color: state.classColors[det.class_name] || COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)],
-                                bbox: det.bbox,
-                                points: det.mask || null,
-                                confidence: det.confidence
-                            });
-                        }
+                        const [x1, y1, x2, y2] = det.bbox;
+                        newAnnotations.push({
+                            type: 'rect',
+                            class: det.class_name,
+                            color: state.classColors[det.class_name] || COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)],
+                            bbox: det.bbox,
+                            points: null,
+                            confidence: det.confidence
+                        });
                     });
 
                     state.annotations[state.currentImage] = newAnnotations;
@@ -1626,6 +1624,7 @@
                     showToast('自动标注失败: ' + (result.message || '未知错误'), 'error');
                 }
             } catch (error) {
+                console.error('自动标注错误:', error);
                 showToast('自动标注失败: ' + error.message, 'error');
             } finally {
                 showLoading(false);
@@ -2147,6 +2146,7 @@
             if (index < 0 || index >= state.images.length) return;
 
             const imageName = state.images[index];
+            const imageUrl = state.imageUrls ? state.imageUrls[index] : null;
             state.currentImageIndex = index;
 
             // 更新导航
@@ -2154,7 +2154,7 @@
             document.getElementById('prevImage').disabled = index === 0;
             document.getElementById('nextImage').disabled = index === state.images.length - 1;
 
-            loadImageToCanvas(imageName);
+            loadImageToCanvas(imageName, imageUrl);
         }
 
         // ==================== 项目管理 ====================
@@ -2306,7 +2306,9 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    state.images = result.images || [];
+                    // 支持新格式 {name, url} 和旧格式 字符串
+                    state.images = (result.images || []).map(img => typeof img === 'string' ? img : img.name);
+                    state.imageUrls = (result.images || []).map(img => typeof img === 'string' ? null : img.url);
                     renderImageList(state.images);
 
                     if (state.images.length > 0) {
@@ -2315,10 +2317,7 @@
                 }
             } catch (error) {
                 console.error('加载图片失败:', error);
-                // 使用示例图片
-                state.images = ['image_00001.jpg', 'image_00002.jpg', 'image_00003.jpg'];
-                renderImageList(state.images);
-                if (state.images.length > 0) loadImageAtIndex(0);
+                showToast('加载图片列表失败', 'error');
             }
         }
 
@@ -2342,7 +2341,7 @@
             }).join('');
         }
 
-        function loadImageToCanvas(imageName) {
+        function loadImageToCanvas(imageName, imageUrl = null) {
             state.currentImage = imageName;
 
             if (!state.annotations[imageName]) {
@@ -2385,7 +2384,15 @@
                 showToast(`无法加载图片: ${imageName}`, 'error');
             };
 
-            img.src = imageName.startsWith('/') ? imageName : `/uploads/${imageName}`;
+            // 使用传入的URL，或回退到构造的路径
+            if (imageUrl) {
+                img.src = imageUrl;
+            } else if (imageName.startsWith('/')) {
+                img.src = imageName;
+            } else {
+                const projectName = state.project ? state.project.name : '';
+                img.src = `/annotation-images/${projectName}/images/${imageName}`;
+            }
         }
 
         // ==================== 保存 ====================
