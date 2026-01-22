@@ -30,7 +30,6 @@ RUN add-apt-repository -y ppa:deadsnakes/ppa \
     python3.12 \
     python3.12-dev \
     python3.12-venv \
-    python3.12-distutils \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
@@ -69,7 +68,6 @@ RUN add-apt-repository -y ppa:deadsnakes/ppa \
     python3.12 \
     python3.12-dev \
     python3.12-venv \
-    python3.12-distutils \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建虚拟环境并安装依赖
