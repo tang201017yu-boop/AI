@@ -2,7 +2,7 @@
 # 优化目标：充分发挥 RTX 5080 性能，支持 CUDA 加速训练和推理
 
 # ============== 第一阶段：PyTorch CUDA 基础 ==============
-FROM nvidia/cuda:12.4-cudnn9-runtime-ubuntu22.04 AS pytorch-base
+FROM nvidia/cuda:12.6-cudnn9-runtime-ubuntu22.04 AS pytorch-base
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
@@ -29,17 +29,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# 使用清华源安装 PyTorch GPU 版本（CUDA 12.4）
+# 使用清华源安装 PyTorch GPU 版本（CUDA 12.6）
 # RTX 5080 需要 CUDA 12.4+ 和 PyTorch 2.5+
 RUN pip install --no-cache-dir \
-        torch==2.5.1+cu124 \
-        torchvision==0.20.1+cu124 \
-        torchaudio==2.5.1+cu124 \
+        torch==2.5.1+cu126 \
+        torchvision==0.20.1+cu126 \
+        torchaudio==2.5.1+cu126 \
         --index-url https://pypi.tuna.tsinghua.edu.cn/simple/torch \
-        --extra-index-url https://download.pytorch.org/whl/cu124 \
+        --extra-index-url https://download.pytorch.org/whl/cu126 \
     || pip install --no-cache-dir \
         torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/cu124
+        --index-url https://download.pytorch.org/whl/cu126
 
 # ============== 第二阶段：构建依赖 ==============
 FROM pytorch-base AS builder
@@ -66,7 +66,7 @@ RUN pip install --no-cache-dir \
     fastapi uvicorn[standard] python-multipart jinja2
 
 # ============== 第三阶段：运行时 ==============
-FROM nvidia/cuda:12.4-cudnn9-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.6-cudnn9-runtime-ubuntu22.04 AS runtime
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
