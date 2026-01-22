@@ -15,10 +15,15 @@ ENV PIP_NO_CACHE_DIR=1
 ENV PIP_TIMEOUT=120
 ENV PIP_RETRIES=5
 
-# 安装 Python 和 PyTorch GPU 版本
+# 安装 Python 3.12（Ubuntu 22.04 默认没有 Python 3.12）
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-dev \
+    python3.12-venv \
     python3-pip \
     libgl1-mesa-glx \
     libglib2.0-0 \
