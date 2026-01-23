@@ -249,6 +249,7 @@ class InferenceService:
         """
         from backend.core.yolo_engine import yolo_engine
         import numpy as np
+        import time
 
         # 解码图片
         nparr = np.frombuffer(image_data, np.uint8)
@@ -260,7 +261,10 @@ class InferenceService:
         model = yolo_engine.load_model(model_name)
         conf = confidence if confidence is not None else settings.CONFIDENCE_THRESHOLD
 
+        # 计时推理时间
+        start_time = time.time()
         result = model.predict(image, conf=conf, verbose=False)
+        inference_time = time.time() - start_time
 
         detections = []
         if result and len(result) > 0:
@@ -273,10 +277,15 @@ class InferenceService:
                     "bbox": boxes[i].xyxy[0].tolist()
                 })
 
+        # 图片形状 (height, width, channels)
+        image_shape = image.shape if len(image.shape) == 3 else [image.shape[0], image.shape[1], 1]
+
         return {
             "success": True,
             "detections": detections,
-            "num_detections": len(detections)
+            "num_detections": len(detections),
+            "inference_time": inference_time,
+            "image_shape": image_shape
         }
 
 
