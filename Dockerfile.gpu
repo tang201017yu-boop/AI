@@ -1,113 +1,82 @@
 # OpenCV Platform Dockerfile - GPU 优化版本
 # 优化目标：充分发挥 RTX 5080 性能，支持 CUDA 加速训练和推理
 
-# ============== 第一阶段：PyTorch CUDA 基础 ==============
-# 使用 NVCR 镜像仓库（中国区加速）
-# FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS pytorch-base
-# 使用代理
-FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS pytorch-base
+# ============== 第一阶段：构建阶段 ==============
+FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV PIP_NO_CACHE_DIR=1
-ENV PIP_TIMEOUT=180
-ENV PIP_RETRIES=5
 ENV PYTHONUNBUFFERED=1
 
-# 安装编译工具和 Python 3.12（使用 deadsnakes PPA）
+WORKDIR /build
+
+# 安装构建依赖和 Python 3.12
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     apt-transport-https \
     ca-certificates \
     curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN add-apt-repository -y ppa:deadsnakes/ppa \
+    gcc \
+    g++ \
+    make \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-dev \
     python3.12-venv \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    libgomp1 \
+    python3.12-distutils \
     && rm -rf /var/lib/apt/lists/*
 
-# 升级 pip 并安装 PyTorch GPU 版本
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir \
-        torch==2.5.1+cu124 \
-        torchvision==0.20.1+cu124 \
-        torchaudio==2.5.1+cu124 \
-        --index-url https://pypi.tuna.tsinghua.edu.cn/simple/torch \
-        --extra-index-url https://download.pytorch.org/whl/cu124 \
-    || pip install --no-cache-dir \
-        torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/cu124
+# 安装 pip
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
-# ============== 第二阶段：构建依赖 ==============
-# 使用 NVCR 镜像仓库（中国区加速）
-#FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS builder
-# 使用代理
-FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
-
-WORKDIR /build
-
-# 安装编译工具
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ make \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-# 安装 Python 3.12
-RUN add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    python3.12 \
-    python3.12-dev \
-    python3.12-venv \
-    && rm -rf /var/lib/apt/lists/*
-
-# 创建虚拟环境并安装依赖
+# 创建虚拟环境
 RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# 配置 pip
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_TIMEOUT=180
+ENV PIP_RETRIES=5
 
-# ============== 第三阶段：运行时 ==============
-# 使用 NVCR 镜像仓库（中国区加速）
-#FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+# 升级 pip 工具链
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# 安装 PyTorch（直接从官方源，清华镜像没有 CUDA 版本）
+RUN pip install --no-cache-dir \
+    torch==2.5.1+cu124 \
+    torchvision==0.20.1+cu124 \
+    torchaudio==2.5.1+cu124 \
+    --index-url https://download.pytorch.org/whl/cu124
+
+# 安装其他依赖（从清华镜像加速）
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    -r requirements.txt
+
+# ============== 第二阶段：运行时 ==============
 FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV PIP_NO_CACHE_DIR=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV PATH="/opt/venv/bin:$PATH"
 ENV NVIDIA_DISABLE_REQUIRE=1
 
-# 安装运行时依赖（不含编译工具）
+# 只安装运行时依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN add-apt-repository -y ppa:deadsnakes/ppa \
+    curl \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     python3.12 \
@@ -120,13 +89,8 @@ RUN add-apt-repository -y ppa:deadsnakes/ppa \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 跨阶段复制（从 builder）
+# 从构建阶段复制完整的虚拟环境
 COPY --from=builder /opt/venv /opt/venv
-
-# 跨阶段复制 PyTorch（从 pytorch-base）
-COPY --from=pytorch-base /usr/lib/python3.12/dist-packages/ /usr/lib/python3.12/dist-packages/
-COPY --from=pytorch-base /usr/local/lib/python3.12/dist-packages/ /usr/local/lib/python3.12/dist-packages/
-COPY --from=pytorch-base /usr/local/bin/ /usr/local/bin/
 
 # 复制应用代码
 COPY backend /app/backend
@@ -137,19 +101,25 @@ COPY app.py requirements.txt /app/
 
 # 创建目录
 WORKDIR /app
-RUN mkdir -p data/datasets data/models data/exports data/uploads logs frontend/static
+RUN mkdir -p \
+    data/datasets \
+    data/models \
+    data/exports \
+    data/uploads \
+    logs \
+    frontend/static
 
-# 非 root 用户
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app && \
-    chmod -R 755 /app && \
-    chmod -R 777 /app/data /app/logs
+# 创建非 root 用户并设置权限
+RUN useradd -m -u 1000 appuser \
+    && chown -R appuser:appuser /app \
+    && chmod -R 755 /app \
+    && chmod -R 777 /app/data /app/logs
 
 USER appuser
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health').read()" || exit 1
+    CMD python3.12 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health').read()" || exit 1
 
-CMD ["python", "app.py"]
+CMD ["python3.12", "app.py"]
