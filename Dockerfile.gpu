@@ -2,7 +2,8 @@
 # 优化目标：充分发挥 RTX 5080 性能，支持 CUDA 加速训练和推理
 
 # ============== 第一阶段：PyTorch CUDA 基础 ==============
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS pytorch-base
+# 使用 NVCR 镜像仓库（中国区加速）
+FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS pytorch-base
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
@@ -51,7 +52,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
         --index-url https://download.pytorch.org/whl/cu124
 
 # ============== 第二阶段：构建依赖 ==============
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS builder
+# 使用 NVCR 镜像仓库（中国区加速）
+FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS builder
 
 WORKDIR /build
 
@@ -79,7 +81,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # ============== 第三阶段：运行时 ==============
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runtime
+# 使用 NVCR 镜像仓库（中国区加速）
+FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
