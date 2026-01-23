@@ -603,6 +603,12 @@ async def list_models(project_id: str = None):
     return model_service.list_models(project_id)
 
 
+@router.get("/models/list")
+async def list_models_alias(project_id: str = None):
+    """列出所有模型（兼容前端）"""
+    return model_service.list_models(project_id)
+
+
 @router.get("/models/{model_id}")
 async def get_model(model_id: str):
     """获取模型详情"""
