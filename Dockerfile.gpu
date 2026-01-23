@@ -5,7 +5,7 @@
 # 使用 NVCR 镜像仓库（中国区加速）
 # FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS pytorch-base
 # 使用代理
-FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
+FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS pytorch-base
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
@@ -87,7 +87,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ============== 第三阶段：运行时 ==============
 # 使用 NVCR 镜像仓库（中国区加速）
 #FROM registry.cn-north-1.nvidia.com/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
-FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
+FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
