@@ -723,9 +723,11 @@
                             'completed': '已完成',
                             'failed': '失败'
                         };
+                        // 从 task_id 提取项目名 (格式: train_xxx)
+                        const projectName = task.task_id ? task.task_id.replace(/^train_/, '训练任务 ') : '未知任务';
                         select.innerHTML += `
                             <option value="${task.task_id}">
-                                ${task.project_name || task.task_id} (${statusNames[task.status] || task.status})
+                                ${projectName} (${statusNames[task.status] || task.status})
                             </option>
                         `;
                     });
@@ -883,7 +885,8 @@
                     updateStatus(data.status);
                     updateChartData(data.chart_data);
                     updateSystemStats(data.system_stats);
-                    updateBestMetrics(data.status.best_metrics);
+                    // best_metrics 在 chart_data 中
+                    updateBestMetrics(data.chart_data?.best_metrics || {});
                     await loadCheckpoints();
                 }
             } catch (error) {

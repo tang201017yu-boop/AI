@@ -120,7 +120,7 @@ class TrainingService:
                 batch_size=batch_size,
                 img_size=img_size,
                 device=device,
-                pretrained=pretrained,
+                pretrained=True,
                 optimizer=optimizer,
                 amp=kwargs.get("amp", True),
                 workers=kwargs.get("workers", 8),
@@ -187,7 +187,8 @@ class TrainingService:
                     "total_epochs": status.total_epochs,
                     "metrics": status.metrics,
                     "gpu_memory": status.gpu_memory,
-                    "error_message": status.error_message
+                    "error_message": status.error_message,
+                    "updatedAt": status.updated_at.isoformat() if hasattr(status, 'updated_at') and status.updated_at else None
                 }
             }
 

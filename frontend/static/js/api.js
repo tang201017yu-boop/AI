@@ -193,7 +193,9 @@ class API {
         formData.append('file', file);
 
         if (options.model_name) formData.append('model_name', options.model_name);
+        if (options.model_path) formData.append('model_path', options.model_path);
         if (options.confidence !== undefined) formData.append('confidence', options.confidence);
+        if (options.iou_threshold !== undefined) formData.append('iou_threshold', options.iou_threshold);
         if (options.draw_results !== undefined) formData.append('draw_results', options.draw_results);
 
         const response = await fetch(`${API_BASE}/inference/image`, {

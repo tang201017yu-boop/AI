@@ -273,7 +273,7 @@
                 config.model_path = selectedBaseModel;
             } else {
                 const fallbackName = `${config.model_type}.pt`;
-                const localPath = localModelMap.get(fallbackName) || API.getLocalModelPath(fallbackName);
+                const localPath = localModelMap.get(fallbackName);
                 if (localPath) {
                     config.model_path = localPath;
                 }
@@ -353,7 +353,7 @@
                                     ? 'primary'
                                     : 'warning';
                         const metricsText = renderMetrics(task.metrics);
-                        const updatedAt = task.updated_at ? formatDate(task.updated_at) : '-';
+                        const updatedAt = task.updatedAt || task.updated_at || '-';
                         return `
                             <div class="card" style="margin-bottom: 1rem;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">

@@ -155,8 +155,16 @@ class YOLOEngine:
         )
 
         detections = []
+        image_shape = None
         if len(results) > 0:
             boxes = results[0].boxes
+            # 获取图片尺寸
+            try:
+                orig_img = results[0].orig_img
+                image_shape = list(orig_img.shape)
+            except:
+                image_shape = [0, 0, 3]
+
             for i in range(len(boxes)):
                 box = boxes[i]
                 detections.append({
@@ -172,7 +180,8 @@ class YOLOEngine:
             "success": True,
             "message": "推理完成",
             "detections": detections,
-            "inference_time": inference_time
+            "inference_time": inference_time,
+            "image_shape": image_shape
         }
 
     def train(self, config: 'TrainingConfig') -> str:
