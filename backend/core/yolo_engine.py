@@ -8,6 +8,7 @@ import threading
 import shutil
 import logging
 from pathlib import Path
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, Future
 import numpy as np
@@ -639,9 +640,6 @@ class TrainingStatus:
             "metrics_history": self.metrics_history,
             "best_metrics": self.best_metrics
         }
-
-
-from dataclasses import dataclass, field
 
 
 @dataclass
