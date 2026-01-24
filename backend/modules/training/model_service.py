@@ -505,17 +505,27 @@ class ModelManagementService:
         format: str,
         img_size: int = 640,
         half: bool = False,
-        simplify: bool = True
+        int8: bool = False,
+        simplify: bool = True,
+        dynamic: bool = False,
+        optimize: bool = False,
+        workspace: int = 4,
+        nms: bool = False
     ) -> Dict[str, Any]:
         """
-        导出模型为指定格式
+        导出模型为指定格式 - 增强版
 
         Args:
             model_id: 模型ID
-            format: 导出格式
-            img_size: 输入尺寸
-            half: 是否使用FP16
-            simplify: 是否简化模型
+            format: 导出格式 (onnx/torchscript/tensorrt/openvino/coreml/tflite等)
+            img_size: 输入尺寸 (支持 int 或 tuple)
+            half: 是否使用FP16半精度
+            int8: 是否使用INT8量化 (边缘设备优化)
+            simplify: 是否简化模型 (ONNX)
+            dynamic: 是否支持动态输入尺寸
+            optimize: 是否优化模型 (移动端)
+            workspace: TensorRT 显存限制 (GB)
+            nms: 是否添加 NMS 后处理
 
         Returns:
             导出结果
@@ -540,17 +550,47 @@ class ModelManagementService:
             # 加载模型
             model = YOLO(model_path)
 
+            # 构建导出参数
+            export_kwargs = {
+                "format": format,
+                "imgsz": img_size,
+                "half": half and format_info.get("half_support", False),
+                "simplify": simplify and format == "onnx",
+                "project": str(self.exports_dir),
+                "name": f"{model_data['name']}_{format}"
+            }
+
+            # 动态尺寸支持
+            if dynamic:
+                export_kwargs["dynamic"] = True
+
+            # INT8 量化 (仅部分格式支持)
+            if int8 and format in ["onnx", "tensorrt", "openvino", "tflite", "edgetpu"]:
+                export_kwargs["int8"] = True
+
+            # TensorRT 优化
+            if format == "tensorrt":
+                export_kwargs["workspace"] = workspace
+
+            # 移动端优化
+            if optimize and format == "torchscript":
+                export_kwargs["optimize"] = True
+
+            # NMS 后处理
+            if nms and format in ["onnx", "openvino"]:
+                export_kwargs["nms"] = True
+
             # 执行导出
-            export_path = model.export(
-                format=format,
-                imgsz=img_size,
-                half=half and format_info.get("half_support", False),
-                simplify=simplify,
-                project=str(self.exports_dir),
-                name=f"{model_data['name']}_{format}"
-            )
+            export_path = model.export(**export_kwargs)
 
             export_path = Path(export_path)
+            original_size = model_path and Path(model_path).stat().st_size / (1024 * 1024)
+            exported_size = export_path.stat().st_size / (1024 * 1024)
+
+            # 计算压缩比
+            compression_ratio = None
+            if original_size and original_size > 0:
+                compression_ratio = round(original_size / exported_size, 2) if exported_size > 0 else None
 
             return {
                 "success": True,
@@ -558,14 +598,72 @@ class ModelManagementService:
                 "export": {
                     "format": format,
                     "format_name": format_info["name"],
+                    "extension": format_info["ext"],
                     "path": str(export_path),
-                    "size_mb": round(export_path.stat().st_size / (1024 * 1024), 2),
-                    "download_url": f"/download{export_path}"
+                    "size_mb": round(exported_size, 2),
+                    "original_size_mb": round(original_size, 2) if original_size else None,
+                    "compression_ratio": compression_ratio,
+                    "half_enabled": export_kwargs.get("half", False),
+                    "int8_enabled": export_kwargs.get("int8", False),
+                    "download_url": f"/api/v1/models/{model_id}/export/download/{export_path.name}"
                 }
             }
 
         except Exception as e:
             return {"success": False, "message": f"导出失败: {str(e)}"}
+
+    def get_export_recommendation(self, model_id: str, use_case: str = "general") -> Dict[str, Any]:
+        """
+        根据使用场景推荐导出格式
+
+        Args:
+            model_id: 模型ID
+            use_case: 使用场景 (general/realtime/cpu/edge/mobile)
+
+        Returns:
+            推荐格式和参数
+        """
+        recommendations = {
+            "general": {
+                "format": "onnx",
+                "half": True,
+                "description": "通用场景，跨平台兼容"
+            },
+            "realtime": {
+                "format": "tensorrt",
+                "half": True,
+                "workspace": 4,
+                "description": "实时推理，NVIDIA GPU 优化，最高 5 倍加速"
+            },
+            "cpu": {
+                "format": "openvino",
+                "half": True,
+                "description": "Intel CPU 优化，最高 3 倍加速"
+            },
+            "edge": {
+                "format": "edgetpu",
+                "int8": True,
+                "half": True,
+                "description": "Google Edge TPU 边缘设备"
+            },
+            "mobile": {
+                "format": "coreml",
+                "int8": True,
+                "description": "Apple 设备 (iOS/macOS)"
+            },
+            "web": {
+                "format": "tfjs",
+                "half": False,
+                "description": "浏览器推理"
+            },
+            "china": {
+                "format": "mnn",
+                "half": True,
+                "description": "阿里巴巴 MNN，中国平台推荐"
+            }
+        }
+
+        return recommendations.get(use_case, recommendations["general"])
 
     def get_export_formats(self) -> Dict[str, Any]:
         """获取支持的导出格式"""
@@ -608,23 +706,165 @@ class ModelManagementService:
     def test_inference(
         self,
         model_id: str,
-        image_path: str = None,
-        image_data: bytes = None,
+        source=None,  # 支持多种输入: 路径/URL/数据
         conf_threshold: float = 0.25,
-        iou_threshold: float = 0.45
+        iou_threshold: float = 0.45,
+        img_size: int = 640,
+        device: str = "auto",
+        stream: bool = False,
+        half: bool = False,
+        batch: int = 1,
+        save_result: bool = False,
+        save_dir: str = None
     ) -> Dict[str, Any]:
         """
-        测试模型推理
+        测试模型推理 - 增强版
 
         Args:
             model_id: 模型ID
-            image_path: 图片路径
-            image_data: 图片数据 (bytes)
-            conf_threshold: 置信度阈值
-            iou_threshold: IOU阈值
+            source: 输入源 (文件路径/URL/bytes数据/目录)
+            conf_threshold: 置信度阈值 (0-1)
+            iou_threshold: NMS的IOU阈值 (0-1)
+            img_size: 输入图片尺寸
+            device: 计算设备 (auto/cpu/cuda:0)
+            stream: 流模式 (内存优化)
+            half: 半精度推理 (FP16)
+            batch: 批处理大小
+            save_result: 是否保存结果
+            save_dir: 结果保存目录
 
         Returns:
             推理结果
+        """
+        if not TORCH_AVAILABLE:
+            return {"success": False, "message": "PyTorch 未安装"}
+
+        model_result = self.get_model(model_id)
+        if not model_result["success"]:
+            return model_result
+
+        model_path = model_result["model"]["path"]
+        model_info = model_result["model"]
+
+        try:
+            model = YOLO(model_path)
+
+            # 准备输入源
+            input_source = source
+            temp_files = []
+
+            # 处理 bytes 数据
+            if isinstance(source, bytes):
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                    tmp.write(source)
+                    input_source = tmp.name
+                    temp_files.append(tmp.name)
+
+            # 执行推理
+            results = model.predict(
+                source=input_source,
+                conf=conf_threshold,
+                iou=iou_threshold,
+                imgsz=img_size,
+                device=device,
+                stream_buffer=stream,
+                half=half,
+                batch=batch,
+                save=save_result,
+                save_dir=save_dir,
+                verbose=False
+            )
+
+            # 解析结果
+            all_detections = []
+            result_images = []
+
+            for idx, result in enumerate(results):
+                # 基础检测结果
+                detections = []
+
+                if result.boxes is not None and len(result.boxes) > 0:
+                    boxes = result.boxes
+                    for i in range(len(boxes)):
+                        box = boxes[i]
+                        detection = {
+                            "class_id": int(box.cls[0]),
+                            "class_name": model.names[int(box.cls[0])] if hasattr(model, 'names') else f"class_{int(box.cls[0])}",
+                            "confidence": round(float(box.conf[0]), 4),
+                            "bbox": box.xyxy[0].tolist()
+                        }
+                        detections.append(detection)
+
+                # 保存结果图片路径
+                if hasattr(result, 'save_path') and result.save_path:
+                    result_images.append(str(result.save_path))
+
+                all_detections.append({
+                    "index": idx,
+                    "image_path": getattr(result, 'path', None),
+                    "detections": detections,
+                    "total": len(detections)
+                })
+
+            # 清理临时文件
+            for temp_file in temp_files:
+                try:
+                    Path(temp_file).unlink()
+                except:
+                    pass
+
+            # 保存结果
+            saved_path = None
+            if save_result and result_images:
+                saved_path = result_images[0] if len(result_images) == 1 else result_images
+
+            return {
+                "success": True,
+                "detections": all_detections,
+                "total_detections": sum(d['total'] for d in all_detections),
+                "total_images": len(all_detections),
+                "model_info": {
+                    "task_type": model_info["task_type"],
+                    "num_classes": model_info["num_classes"],
+                    "model_name": model_info.get("model_type", "unknown")
+                },
+                "parameters": {
+                    "conf_threshold": conf_threshold,
+                    "iou_threshold": iou_threshold,
+                    "img_size": img_size,
+                    "device": device,
+                    "half": half
+                },
+                "saved_path": saved_path
+            }
+
+        except Exception as e:
+            return {"success": False, "message": f"推理失败: {str(e)}"}
+
+    def batch_inference(
+        self,
+        model_id: str,
+        image_paths: List[str],
+        conf_threshold: float = 0.25,
+        iou_threshold: float = 0.45,
+        img_size: int = 640,
+        device: str = "auto",
+        half: bool = False
+    ) -> Dict[str, Any]:
+        """
+        批量推理
+
+        Args:
+            model_id: 模型ID
+            image_paths: 图片路径列表
+            conf_threshold: 置信度阈值
+            iou_threshold: IOU阈值
+            img_size: 输入图片尺寸
+            device: 计算设备
+            half: 半精度推理
+
+        Returns:
+            批量推理结果
         """
         if not TORCH_AVAILABLE:
             return {"success": False, "message": "PyTorch 未安装"}
@@ -638,51 +878,51 @@ class ModelManagementService:
         try:
             model = YOLO(model_path)
 
-            # 准备输入源
-            source = image_path
-            if image_data:
-                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                    tmp.write(image_data)
-                    source = tmp.name
-
-            # 执行推理
+            # 批量推理
             results = model.predict(
-                source=source,
+                source=image_paths,
                 conf=conf_threshold,
                 iou=iou_threshold,
+                imgsz=img_size,
+                device=device,
+                half=half,
+                batch=8,  # 优化批次大小
                 verbose=False
             )
 
             # 解析结果
-            detections = []
-            if len(results) > 0:
-                result = results[0]
-                boxes = result.boxes
-                for i in range(len(boxes)):
-                    box = boxes[i]
-                    detections.append({
-                        "class_id": int(box.cls[0]),
-                        "class_name": model.names[int(box.cls[0])] if hasattr(model, 'names') else f"class_{int(box.cls[0])}",
-                        "confidence": round(float(box.conf[0]), 4),
-                        "bbox": box.xyxy[0].tolist()
-                    })
+            batch_results = []
+            total_detections = 0
 
-            # 清理临时文件
-            if image_data and 'tmp' in dir():
-                Path(tmp.name).unlink()
+            for idx, result in enumerate(results):
+                detections = []
+
+                if result.boxes is not None and len(result.boxes) > 0:
+                    for i in range(len(result.boxes)):
+                        box = result.boxes[i]
+                        detections.append({
+                            "class_id": int(box.cls[0]),
+                            "class_name": model.names[int(box.cls[0])] if hasattr(model, 'names') else f"class_{int(box.cls[0])}",
+                            "confidence": round(float(box.conf[0]), 4),
+                            "bbox": box.xyxy[0].tolist()
+                        })
+
+                batch_results.append({
+                    "image_path": image_paths[idx] if idx < len(image_paths) else f"batch_{idx}",
+                    "detections": detections,
+                    "count": len(detections)
+                })
+                total_detections += len(detections)
 
             return {
                 "success": True,
-                "detections": detections,
-                "total_detections": len(detections),
-                "model_info": {
-                    "task_type": model_result["model"]["task_type"],
-                    "num_classes": model_result["model"]["num_classes"]
-                }
+                "results": batch_results,
+                "total_images": len(batch_results),
+                "total_detections": total_detections
             }
 
         except Exception as e:
-            return {"success": False, "message": f"推理失败: {str(e)}"}
+            return {"success": False, "message": f"批量推理失败: {str(e)}"}
 
     # ==================== 辅助方法 ====================
 

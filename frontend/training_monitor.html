@@ -406,6 +406,63 @@
             gap: 0.5rem;
         }
 
+        /* TensorBoard 样式 */
+        .tensorboard-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #2a2a4a;
+        }
+
+        .tensorboard-stat {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .tensorboard-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .tensorboard-value {
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+
+        .tensorboard-logs {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .tensorboard-log-item {
+            display: grid;
+            grid-template-columns: 120px 80px 1fr;
+            gap: 1rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #2a2a4a;
+            font-size: 0.8rem;
+        }
+
+        .tensorboard-log-item:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+        }
+
+        .log-epoch {
+            color: var(--primary-color);
+            font-weight: 500;
+        }
+
+        .log-message {
+            font-family: 'Consolas', monospace;
+            color: var(--text-primary);
+        }
+
         .btn {
             padding: 0.4rem 0.8rem;
             border: none;
@@ -683,9 +740,27 @@
             <div class="checkpoint-section">
                 <div class="checkpoint-header">
                     <span class="chart-title">检查点</span>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-ghost" onclick="exportTrainingLogs()">📥 导出日志</button>
+                        <button class="btn btn-ghost" onclick="exportTrainingConfig()">⚙️ 导出配置</button>
+                    </div>
                 </div>
                 <div class="checkpoint-list" id="checkpointList">
                     <p style="color: var(--text-secondary); text-align: center;">暂无检查点</p>
+                </div>
+            </div>
+
+            <!-- TensorBoard 面板 -->
+            <div class="tensorboard-section" style="margin-top: 1.5rem;">
+                <div class="checkpoint-header">
+                    <span class="chart-title">📊 TensorBoard 日志</span>
+                </div>
+                <div class="tensorboard-content" id="tensorboard-content" style="
+                    background: var(--card-bg);
+                    border-radius: 12px;
+                    padding: 1.25rem;
+                ">
+                    <p style="color: var(--text-secondary); text-align: center;">加载中...</p>
                 </div>
             </div>
         </div>
@@ -873,6 +948,101 @@
             });
         }
 
+        // ==================== TensorBoard 功能 ====================
+
+        // 加载 TensorBoard 数据
+        async function loadTensorBoardData() {
+            if (!currentTaskId) return;
+
+            try {
+                const response = await fetch(`/api/v1/training/${currentTaskId}/tensorboard`);
+                const data = await response.json();
+
+                if (data.success) {
+                    updateTensorBoardPanel(data);
+                }
+            } catch (error) {
+                console.error('加载 TensorBoard 数据失败:', error);
+            }
+        }
+
+        // 更新 TensorBoard 面板
+        function updateTensorBoardPanel(data) {
+            const panel = document.getElementById('tensorboard-content');
+            if (!panel) return;
+
+            const logs = data.logs || [];
+            const logDir = data.log_dir || '-';
+
+            panel.innerHTML = `
+                <div class="tensorboard-info">
+                    <div class="tensorboard-stat">
+                        <span class="tensorboard-label">日志目录:</span>
+                        <span class="tensorboard-value">${logDir}</span>
+                    </div>
+                    <div class="tensorboard-stat">
+                        <span class="tensorboard-label">日志条数:</span>
+                        <span class="tensorboard-value">${logs.length}</span>
+                    </div>
+                </div>
+                <div class="tensorboard-logs">
+                    ${logs.length > 0 ? logs.map(log => `
+                        <div class="tensorboard-log-item">
+                            <span class="log-time">${log.time || '-'}</span>
+                            <span class="log-epoch">Epoch ${log.epoch || '-'}</span>
+                            <span class="log-message">${log.message || ''}</span>
+                        </div>
+                    `).join('') : '<p style="color: var(--text-secondary);">暂无日志</p>'}
+                </div>
+            `;
+        }
+
+        // 导出训练日志
+        async function exportTrainingLogs() {
+            if (!currentTaskId) return;
+
+            try {
+                const response = await fetch(`/api/v1/training/${currentTaskId}/export/logs`);
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `training_logs_${currentTaskId}.json`;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                } else {
+                    showToast('导出失败', 'error');
+                }
+            } catch (error) {
+                console.error('导出日志失败:', error);
+                showToast('导出失败: ' + error.message, 'error');
+            }
+        }
+
+        // 导出训练配置
+        async function exportTrainingConfig() {
+            if (!currentTaskId) return;
+
+            try {
+                const response = await fetch(`/api/v1/training/${currentTaskId}/config`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const blob = new Blob([JSON.stringify(data.config, null, 2)], {type: 'application/json'});
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `training_config_${currentTaskId}.json`;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    showToast('配置已导出', 'success');
+                }
+            } catch (error) {
+                showToast('导出失败: ' + error.message, 'error');
+            }
+        }
+
         // 加载任务数据
         async function loadTaskData() {
             if (!currentTaskId) return;
@@ -888,6 +1058,8 @@
                     // best_metrics 在 chart_data 中
                     updateBestMetrics(data.chart_data?.best_metrics || {});
                     await loadCheckpoints();
+                    // 加载 TensorBoard 数据
+                    await loadTensorBoardData();
                 }
             } catch (error) {
                 console.error('加载任务数据失败:', error);

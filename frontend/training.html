@@ -577,15 +577,19 @@
             }
 
             try {
+                console.log('发送训练请求:', config);
                 const result = await API.startTraining(config);
+                console.log('训练响应:', result);
+
                 if (result.success) {
-                    showAlert('训练任务已启动: ' + result.task_id, 'success');
+                    showAlert('训练任务已启动: ' + (result.task_id || result.message), 'success');
                     loadTasks();
                 } else {
-                    showAlert('启动失败', 'danger');
+                    showAlert('启动失败: ' + (result.message || result.detail || '未知错误'), 'danger');
                 }
             } catch (error) {
-                showAlert('错误: ' + error.message, 'danger');
+                console.error('训练请求错误:', error);
+                showAlert('错误: ' + (error.detail || error.message || '网络错误'), 'danger');
             }
         });
 

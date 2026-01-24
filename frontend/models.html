@@ -6,6 +6,7 @@
     <title>模型库 - OpenCV Platform</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/models.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <nav class="navbar">
@@ -459,9 +460,19 @@
             const metrics = model.metrics || {};
             const formats = model.export_formats || [];
 
+            // 构建完整的性能指标
+            const perfMetrics = [
+                { label: 'mAP50', value: metrics.mAP50, color: '#4ECDC4' },
+                { label: 'mAP50-95', value: metrics.mAP50_95, color: '#45B7D1' },
+                { label: 'Precision', value: metrics.precision, color: '#96CEB4' },
+                { label: 'Recall', value: metrics.recall, color: '#FFEAA7' },
+                { label: 'F1 Score', value: metrics.f1, color: '#FF6B6B' }
+            ];
+
             document.getElementById('detailTitle').textContent = model.name;
             document.getElementById('detailContent').innerHTML = `
                 <div class="detail-grid">
+                    <!-- 基本信息 -->
                     <div class="detail-section">
                         <h3>基本信息</h3>
                         <table class="detail-table">
@@ -472,43 +483,63 @@
                             <tr><td>所属项目</td><td>${model.project_name || '公共模型'}</td></tr>
                         </table>
                     </div>
+
+                    <!-- 性能指标 -->
                     <div class="detail-section">
                         <h3>性能指标</h3>
                         <div class="metrics-grid">
-                            ${metrics.mAP50 ? `
-                                <div class="metric-card">
-                                    <span class="metric-title">mAP50</span>
-                                    <span class="metric-value large">${(metrics.mAP50 * 100).toFixed(2)}%</span>
+                            ${perfMetrics.map(m => m.value ? `
+                                <div class="metric-card" style="--accent-color: ${m.color}">
+                                    <span class="metric-title">${m.label}</span>
+                                    <span class="metric-value large">${(m.value * 100).toFixed(2)}%</span>
+                                    <div class="metric-bar">
+                                        <div class="metric-fill" style="width: ${m.value * 100}%; background: ${m.color}"></div>
+                                    </div>
                                 </div>
-                            ` : ''}
-                            ${metrics.mAP50_95 ? `
+                            ` : `
                                 <div class="metric-card">
-                                    <span class="metric-title">mAP50-95</span>
-                                    <span class="metric-value large">${(metrics.mAP50_95 * 100).toFixed(2)}%</span>
+                                    <span class="metric-title">${m.label}</span>
+                                    <span class="metric-value large">-</span>
                                 </div>
-                            ` : ''}
-                            ${metrics.precision ? `
-                                <div class="metric-card">
-                                    <span class="metric-title">Precision</span>
-                                    <span class="metric-value">${(metrics.precision * 100).toFixed(2)}%</span>
-                                </div>
-                            ` : ''}
-                            ${metrics.recall ? `
-                                <div class="metric-card">
-                                    <span class="metric-title">Recall</span>
-                                    <span class="metric-value">${(metrics.recall * 100).toFixed(2)}%</span>
-                                </div>
-                            ` : ''}
+                            `).join('')}
                         </div>
                     </div>
-                    <div class="detail-section full-width">
+
+                    <!-- 性能对比图表 -->
+                    <div class="detail-section">
+                        <h3>性能对比</h3>
+                        <div style="height: 200px;">
+                            <canvas id="metricsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 类别性能 -->
+                    <div class="detail-section">
+                        <h3>类别性能 (mAP50)</h3>
+                        <div id="classMetrics" class="class-metrics">
+                            ${model.class_metrics ? Object.entries(model.class_metrics).map(([cls, metric]) => `
+                                <div class="class-metric-item">
+                                    <span class="class-name">${cls}</span>
+                                    <div class="class-bar-container">
+                                        <div class="class-bar" style="width: ${(metric * 100).toFixed(1)}%"></div>
+                                    </div>
+                                    <span class="class-value">${(metric * 100).toFixed(1)}%</span>
+                                </div>
+                            `).join('') : '<p style="color: var(--text-secondary);">暂无类别指标</p>'}
+                        </div>
+                    </div>
+
+                    <!-- 导出格式 -->
+                    <div class="detail-section">
                         <h3>支持导出格式</h3>
                         <div class="formats-list">
                             ${formats.map(f => `
-                                <span class="format-badge" title="${f.description}">${f.name}</span>
+                                <span class="format-badge" title="${f.description || ''}">${f.name}</span>
                             `).join('') || '暂无导出格式'}
                         </div>
                     </div>
+
+                    <!-- 类别名称 -->
                     <div class="detail-section full-width">
                         <h3>类别名称</h3>
                         <div class="class-names">
@@ -517,11 +548,76 @@
                             ).join('') : '未定义'}
                         </div>
                     </div>
+
+                    <!-- 训练配置 -->
+                    <div class="detail-section full-width">
+                        <h3>训练配置</h3>
+                        <table class="detail-table">
+                            <tr><td>训练轮数</td><td>${model.training_config?.epochs || '-'}</td></tr>
+                            <tr><td>批大小</td><td>${model.training_config?.batch_size || '-'}</td></tr>
+                            <tr><td>输入尺寸</td><td>${model.training_config?.img_size || '-'}px</td></tr>
+                            <tr><td>优化器</td><td>${model.training_config?.optimizer || '-'}</td></tr>
+                            <tr><td>数据增强</td><td>${model.training_config?.augmentation ? '已启用' : '默认'}</td></tr>
+                        </table>
+                    </div>
                 </div>
                 <div class="detail-actions">
+                    <button class="btn btn-secondary" onclick="compareWithBaseline('${model.id}')">对比基准</button>
                     <a href="/model?id=${model.id}" class="btn btn-primary">完整详情 →</a>
                 </div>
             `;
+
+            // 渲染性能对比图表
+            setTimeout(() => renderMetricsChart(perfMetrics), 100);
+        }
+
+        // 渲染性能对比图表
+        function renderMetricsChart(perfMetrics) {
+            const ctx = document.getElementById('metricsChart');
+            if (!ctx) return;
+
+            const labels = perfMetrics.filter(m => m.value).map(m => m.label);
+            const data = perfMetrics.filter(m => m.value).map(m => m.value * 100);
+            const colors = perfMetrics.filter(m => m.value).map(m => m.color);
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '性能指标 (%)',
+                        data: data,
+                        backgroundColor: colors.map(c => c + '80'),
+                        borderColor: colors,
+                        borderWidth: 2,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: { color: '#2a2a4a' },
+                            ticks: { color: '#a0a0a0' }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#a0a0a0' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 与基准模型对比
+        async function compareWithBaseline(modelId) {
+            showToast('模型对比功能开发中', 'info');
         }
 
         // 切换视图

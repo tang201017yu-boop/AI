@@ -108,12 +108,33 @@ class TrainingService:
 
         try:
             from backend.core.yolo_engine import yolo_engine, TrainingConfig
+            from backend.core.config import settings
+            from pathlib import Path
+
+            # 解析数据集路径 - 支持数据集名称或完整路径
+            dataset_path_resolved = dataset_path
+            dataset_path_obj = Path(dataset_path)
+            if not dataset_path_obj.exists():
+                # 尝试作为数据集名称解析
+                dataset_dir = settings.DATASETS_DIR / dataset_path
+                if dataset_dir.exists():
+                    # 查找 data.yaml 文件
+                    yaml_files = list(dataset_dir.glob("data.yaml"))
+                    if yaml_files:
+                        dataset_path_resolved = str(yaml_files[0])
+                    else:
+                        # 尝试查找其他可能的 yaml 文件
+                        yaml_files = list(dataset_dir.glob("*.yaml")) + list(dataset_dir.glob("*.yml"))
+                        if yaml_files:
+                            dataset_path_resolved = str(yaml_files[0])
+                        else:
+                            return {"success": False, "message": f"数据集 {dataset_path} 中未找到 data.yaml 文件"}
 
             # 合并所有参数
             all_params = {
                 # 基础配置
                 "project_name": project_name,
-                "dataset_path": dataset_path,
+                "dataset_path": dataset_path_resolved,
                 "model_type": model_type,
                 "epochs": epochs,
                 "batch_size": batch_size,

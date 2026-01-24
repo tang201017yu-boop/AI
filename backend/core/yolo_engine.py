@@ -16,9 +16,11 @@ from PIL import Image
 try:
     import torch
     from ultralytics import YOLO
+    from torch.utils.tensorboard import SummaryWriter
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
+    SummaryWriter = None
     print("Warning: torch/ultralytics not installed")
 
 from .config import settings
@@ -315,8 +317,22 @@ class YOLOEngine:
             project_dir = settings.MODELS_DIR / config.project_name
             project_dir.mkdir(parents=True, exist_ok=True)
 
+            # 创建 TensorBoard 日志目录
+            log_dir = project_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            # 初始化 TensorBoard writer
+            writer = None
+            if SummaryWriter is not None:
+                try:
+                    writer = SummaryWriter(str(log_dir))
+                    print(f"[{task_id}] TensorBoard 日志: {log_dir}")
+                except Exception as e:
+                    print(f"[{task_id}] 初始化 TensorBoard 失败: {e}")
+
             # 训练回调 - 收集指标
             def epoch_callback(trainer):
+                nonlocal writer
                 epoch_index = getattr(trainer, "epoch", 0) + 1
 
                 # 获取损失
@@ -332,6 +348,35 @@ class YOLOEngine:
 
                 # 获取指标
                 metrics = getattr(trainer, "metrics", {})
+
+                # TensorBoard 日志记录
+                if writer is not None:
+                    try:
+                        # 记录损失
+                        if losses:
+                            writer.add_scalars('Loss/box', {'train': losses.get("box_loss", 0)}, epoch_index)
+                            writer.add_scalars('Loss/cls', {'train': losses.get("cls_loss", 0)}, epoch_index)
+                            writer.add_scalars('Loss/dfl', {'train': losses.get("dfl_loss", 0)}, epoch_index)
+
+                        # 记录性能指标
+                        if metrics:
+                            if 'metrics/mAP50(B)' in metrics:
+                                writer.add_scalars('mAP/mAP50', {'val': metrics['metrics/mAP50(B)']}, epoch_index)
+                            if 'metrics/mAP50-95(B)' in metrics:
+                                writer.add_scalars('mAP/mAP50-95', {'val': metrics['metrics/mAP50-95(B)']}, epoch_index)
+                            if 'metrics/precision(B)' in metrics:
+                                writer.add_scalars('Precision', {'val': metrics['metrics/precision(B)']}, epoch_index)
+                            if 'metrics/recall(B)' in metrics:
+                                writer.add_scalars('Recall', {'val': metrics['metrics/recall(B)']}, epoch_index)
+
+                        # 记录学习率
+                        if hasattr(trainer, 'optimizer'):
+                            lr = trainer.optimizer.param_groups[0].get('lr', 0)
+                            writer.add_scalars('Learning_Rate', {'lr': lr}, epoch_index)
+
+                        writer.flush()
+                    except Exception as e:
+                        print(f"[{task_id}] TensorBoard 写入失败: {e}")
 
                 # 获取系统统计
                 gpu_mem = None
@@ -379,6 +424,15 @@ class YOLOEngine:
 
             # 完成回调
             def finish_callback(trainer):
+                nonlocal writer
+                # 关闭 TensorBoard writer
+                if writer is not None:
+                    try:
+                        writer.close()
+                        print(f"[{task_id}] TensorBoard 日志已保存")
+                    except Exception as e:
+                        print(f"[{task_id}] 关闭 TensorBoard 失败: {e}")
+
                 with self.training_lock:
                     status = self.training_tasks.get(task_id)
                     if status:

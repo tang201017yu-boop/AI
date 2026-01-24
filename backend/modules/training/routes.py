@@ -1,9 +1,11 @@
 """
 训练模块路由 - Training Routes
 """
-from fastapi import APIRouter, HTTPException, UploadFile
+from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, UploadFile, Request
 from typing import Optional, Dict, Any
 import json
+from datetime import datetime
 
 from backend.core.config import settings
 from backend.modules.training.training_service import training_service, export_service
@@ -15,27 +17,52 @@ router = APIRouter()
 
 # ==================== 训练管理 ====================
 
-@router.post("/training/start")
-async def start_training(
-    project_name: str,
-    dataset_path: str,
-    model_type: str = "yolo11n",
-    epochs: int = 100,
-    batch_size: int = 32,
-    img_size: int = 640,
-    device: str = "auto",
-    optimizer: str = "auto",
-    amp: bool = True,
-    workers: int = 8,
+class TrainingRequest(BaseModel):
+    """训练请求模型"""
+    project_name: str
+    dataset_path: str
+    model_type: str = "yolo11n"
+    epochs: int = 100
+    batch_size: int = 32
+    img_size: int = 640
+    device: str = "auto"
+    optimizer: str = "auto"
+    amp: bool = True
+    workers: int = 8
     # 微调参数
-    lr0: float = 0.01,
-    lrf: float = 0.01,
-    warmup_epochs: float = 3.0,
-    warmup_bias_lr: float = 0.1,
-    mosaic: float = 1.0,
-    close_mosaic_epochs: int = 10,
-    **kwargs
-):
+    lr0: float = 0.01
+    lrf: float = 0.01
+    warmup_epochs: float = 3.0
+    warmup_bias_lr: float = 0.1
+    mosaic: float = 1.0
+    close_mosaic_epochs: int = 10
+    # 增强参数
+    hsv_h: float = 0.015
+    hsv_s: float = 0.7
+    hsv_v: float = 0.4
+    degrees: float = 0.0
+    translate: float = 0.1
+    scale: float = 0.5
+    shear: float = 0.0
+    perspective: float = 0.0
+    flipud: float = 0.0
+    fliplr: float = 0.5
+    mixup: float = 0.0
+    copy_paste: float = 0.0
+    # 损失函数权重
+    box: float = 7.5
+    cls: float = 0.5
+    dfl: float = 1.5
+    # 训练控制
+    patience: int = 100
+    save_period: int = -1
+    resume: bool = False
+    # 模型路径（可选）
+    model_path: Optional[str] = None
+
+
+@router.post("/training/start")
+async def start_training(request: TrainingRequest):
     """
     开始训练
 
@@ -51,28 +78,29 @@ async def start_training(
     - mosaic: 马赛克增强概率 (0-1)，处理小目标时建议保持开启
     - close_mosaic_epochs: 训练后期关闭马赛克增强的轮数
     """
-    result = training_service.start_training(
-        project_name=project_name,
-        dataset_path=dataset_path,
-        model_type=model_type,
-        epochs=epochs,
-        batch_size=batch_size,
-        img_size=img_size,
-        device=device,
-        optimizer=optimizer,
-        amp=amp,
-        workers=workers,
-        lr0=lr0,
-        lrf=lrf,
-        warmup_epochs=warmup_epochs,
-        warmup_bias_lr=warmup_bias_lr,
-        mosaic=mosaic,
-        close_mosaic_epochs=close_mosaic_epochs,
-        **kwargs
-    )
-    if result["success"]:
-        return result
-    raise HTTPException(status_code=500, detail=result["message"])
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"收到训练请求: 项目={request.project_name}, 数据集={request.dataset_path}, 模型={request.model_type}")
+
+    try:
+        # 转换为字典，排除 None 值
+        config = {k: v for k, v in request.model_dump().items() if v is not None}
+
+        result = training_service.start_training(**config)
+
+        if result["success"]:
+            logger.info(f"训练任务已启动: {result.get('task_id')}")
+            return result
+        else:
+            logger.error(f"启动训练失败: {result.get('message')}")
+            raise HTTPException(status_code=400, detail=result.get("message", "启动训练失败"))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"训练请求异常: {e}")
+        raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
 
 
 @router.post("/training/resume")
@@ -434,6 +462,148 @@ async def get_system_stats(task_id: str):
     }
 
 
+# ==================== TensorBoard 和日志 ====================
+
+@router.get("/training/{task_id}/tensorboard")
+async def get_tensorboard_data(task_id: str):
+    """
+    获取 TensorBoard 日志数据
+
+    返回:
+    - log_dir: 日志目录
+    - logs: 日志条目列表
+    """
+    from backend.core.yolo_engine import yolo_engine
+    from pathlib import Path
+    import json
+
+    status = yolo_engine.get_training_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    logs = []
+    log_dir = None
+
+    # 从项目目录查找日志
+    if status.task_id.startswith("train_"):
+        timestamp = status.task_id.replace("train_", "")
+        project_name = f"train_{timestamp}"
+
+        # 查找各种日志目录
+        possible_dirs = [
+            settings.MODELS_DIR / project_name / "train" / "logs",
+            settings.MODELS_DIR / project_name / "logs",
+            settings.MODELS_DIR / project_name / "train",
+        ]
+
+        for dir_path in possible_dirs:
+            if dir_path.exists():
+                log_dir = str(dir_path)
+                # 读取日志文件
+                for log_file in dir_path.glob("*.log"):
+                    try:
+                        with open(log_file, 'r', encoding='utf-8') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line:
+                                    try:
+                                        log_entry = json.loads(line)
+                                        logs.append(log_entry)
+                                    except json.JSONDecodeError:
+                                        # 非 JSON 格式，尝试解析
+                                        if 'Epoch' in line or 'loss' in line.lower():
+                                            logs.append({
+                                                "time": str(datetime.now().isoformat()),
+                                                "message": line
+                                            })
+                                    except:
+                                        pass
+                    except Exception as e:
+                        print(f"Error reading log file {log_file}: {e}")
+                break
+
+    # 如果没有找到日志，返回模拟数据
+    if not logs and status.status == "running":
+        logs = [
+            {"time": status.started_at.isoformat() if status.started_at else None, "epoch": 0, "message": "训练开始"},
+            {"time": str(datetime.now().isoformat()), "epoch": status.current_epoch, "message": f"正在训练 Epoch {status.current_epoch}/{status.total_epochs}"}
+        ]
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "log_dir": log_dir,
+        "logs": logs[-100:]  # 只返回最近的100条日志
+    }
+
+
+@router.get("/training/{task_id}/export/logs")
+async def export_training_logs(task_id: str):
+    """
+    导出训练日志
+    """
+    from backend.core.yolo_engine import yolo_engine
+    from fastapi.responses import StreamingResponse
+    import json
+    from datetime import datetime
+
+    status = yolo_engine.get_training_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 构建日志数据
+    log_data = {
+        "task_id": task_id,
+        "exported_at": datetime.now().isoformat(),
+        "status": status.status,
+        "progress": status.progress,
+        "epochs": {
+            "current": status.current_epoch,
+            "total": status.total_epochs
+        },
+        "metrics": status.metrics,
+        "chart_data": status.get_chart_data() if hasattr(status, 'get_chart_data') else {}
+    }
+
+    def generate():
+        yield json.dumps(log_data, ensure_ascii=False, indent=2)
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=training_logs_{task_id}.json"}
+    )
+
+
+@router.get("/training/{task_id}/config")
+async def get_training_config(task_id: str):
+    """
+    获取训练配置
+    """
+    from backend.core.yolo_engine import yolo_engine
+
+    status = yolo_engine.get_training_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 返回训练配置信息
+    config = {
+        "task_id": task_id,
+        "status": status.status,
+        "project_name": getattr(status, 'project_name', task_id),
+        "epochs": status.total_epochs,
+        "current_epoch": status.current_epoch,
+        "metrics": status.metrics,
+        "started_at": status.started_at.isoformat() if status.started_at else None,
+        "best_metrics": status.best_metrics if hasattr(status, 'best_metrics') else {}
+    }
+
+    return {
+        "success": True,
+        "config": config
+    }
+
+
 # ==================== 项目管理 ====================
 
 @router.post("/projects")
@@ -683,6 +853,9 @@ async def test_model_inference(
     model_id: str,
     conf_threshold: float = 0.25,
     iou_threshold: float = 0.45,
+    img_size: int = 640,
+    device: str = "auto",
+    half: bool = False,
     file: UploadFile = None
 ):
     """测试模型推理"""
@@ -690,11 +863,66 @@ async def test_model_inference(
 
     result = model_service.test_inference(
         model_id=model_id,
-        image_data=image_data,
+        source=image_data,
         conf_threshold=conf_threshold,
-        iou_threshold=iou_threshold
+        iou_threshold=iou_threshold,
+        img_size=img_size,
+        device=device,
+        half=half
     )
 
     if result["success"]:
         return result
     raise HTTPException(status_code=400, detail=result.get("message"))
+
+
+@router.post("/models/{model_id}/batch-infer")
+async def batch_inference(
+    model_id: str,
+    conf_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+    img_size: int = 640,
+    device: str = "auto",
+    half: bool = False,
+    files: List[UploadFile] = []
+):
+    """
+    批量推理
+
+    支持同时上传多张图片进行批量推理，返回每张图片的检测结果
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="请上传至少一张图片")
+
+    # 保存临时文件
+    temp_paths = []
+    for f in files:
+        temp_path = f"/tmp/infer_{int(time.time())}_{f.filename}"
+        with open(temp_path, 'wb') as tmp:
+            tmp.write(await f.read())
+        temp_paths.append(temp_path)
+
+    try:
+        result = model_service.batch_inference(
+            model_id=model_id,
+            image_paths=temp_paths,
+            conf_threshold=conf_threshold,
+            iou_threshold=iou_threshold,
+            img_size=img_size,
+            device=device,
+            half=half
+        )
+        return result
+    finally:
+        # 清理临时文件
+        for path in temp_paths:
+            try:
+                os.unlink(path)
+            except:
+                pass
+
+
+@router.get("/models/{model_id}/export/history")
+async def get_export_history(model_id: str):
+    """获取模型导出历史"""
+    return model_service.get_export_status(model_id)
