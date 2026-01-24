@@ -141,7 +141,7 @@ class TrainingService:
 
                     print(f"[训练] 使用数据集配置文件: {dataset_path_resolved}")
 
-                    # 检查并修复 data.yaml 中的 path
+                    # 检查并修复 data.yaml 中的路径
                     yaml_path = Path(dataset_path_resolved)
                     if yaml_path.exists():
                         import yaml as pyyaml
@@ -149,29 +149,37 @@ class TrainingService:
                             with open(yaml_path, 'r', encoding='utf-8') as f:
                                 yaml_content = pyyaml.safe_load(f)
 
-                            # 如果 path 是相对的，修复为绝对路径
-                            if yaml_content and 'path' in yaml_content:
-                                old_path = yaml_content['path']
-                                if old_path and not Path(old_path).is_absolute():
-                                    # path 是相对于 yaml 文件位置的，需要修正
-                                    yaml_dir = yaml_path.parent
-                                    if old_path == '.':
-                                        # path: . -> 使用 yaml 文件所在目录
-                                        new_path = str(yaml_dir)
-                                    else:
-                                        # path 是相对路径，计算相对于数据集根目录
-                                        new_path = str(yaml_dir / old_path)
+                            if yaml_content:
+                                yaml_dir = yaml_path.parent
+                                needs_fix = False
+                                fixed_paths = {}
 
-                                    # 检查 train/val 路径是否存在，如果不存在，尝试相对于数据集根目录
-                                    dataset_root = settings.DATASETS_DIR / dataset_path
-                                    if not (yaml_dir / yaml_content.get('train', '')).exists():
-                                        if (dataset_root / yaml_content.get('train', '')).exists():
-                                            # 需要更新 path 为数据集根目录
-                                            yaml_content['path'] = str(dataset_root)
-                                            # 写回修改后的文件
-                                            with open(yaml_path, 'w', encoding='utf-8') as f:
-                                                pyyaml.dump(yaml_content, f, allow_unicode=True, sort_keys=False)
-                                            print(f"[训练] 已修复 data.yaml 的 path: {old_path} -> {dataset_root}")
+                                # 修复 train/val 路径中的 ../
+                                for key in ['train', 'val']:
+                                    if key in yaml_content:
+                                        path_val = yaml_content[key]
+                                        if path_val and '..' in path_val:
+                                            # 移除 .. 并重新计算路径
+                                            fixed_path = path_val.replace('../', '')
+                                            full_path = yaml_dir / fixed_path
+                                            if full_path.exists():
+                                                yaml_content[key] = fixed_path
+                                                needs_fix = True
+                                                fixed_paths[key] = fixed_path
+
+                                # 如果 path 是相对的，也需要修复
+                                if 'path' in yaml_content:
+                                    path_val = yaml_content['path']
+                                    if path_val and '..' in path_val:
+                                        fixed_path = path_val.replace('../', '')
+                                        yaml_content['path'] = fixed_path
+                                        needs_fix = True
+
+                                # 写回修复后的文件
+                                if needs_fix:
+                                    with open(yaml_path, 'w', encoding='utf-8') as f:
+                                        pyyaml.dump(yaml_content, f, allow_unicode=True, sort_keys=False)
+                                    print(f"[训练] 已修复 data.yaml 路径: {fixed_paths}")
                         except Exception as e:
                             print(f"[训练] 警告: 无法修复 data.yaml path: {e}")
 
