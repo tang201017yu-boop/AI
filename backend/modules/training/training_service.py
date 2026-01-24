@@ -122,17 +122,58 @@ class TrainingService:
                 # 尝试作为数据集名称解析
                 dataset_dir = settings.DATASETS_DIR / dataset_path
                 if dataset_dir.exists():
-                    # 查找 data.yaml 文件
-                    yaml_files = list(dataset_dir.glob("data.yaml"))
-                    if yaml_files:
-                        dataset_path_resolved = str(yaml_files[0])
-                    else:
-                        # 尝试查找其他可能的 yaml 文件
-                        yaml_files = list(dataset_dir.glob("*.yaml")) + list(dataset_dir.glob("*.yml"))
+                    # 优先在根目录查找 data.yaml 或 data.yml
+                    yaml_found = False
+                    for name in ["data.yaml", "data.yml"]:
+                        yaml_file = dataset_dir / name
+                        if yaml_file.exists():
+                            dataset_path_resolved = str(yaml_file)
+                            yaml_found = True
+                            break
+
+                    # 如果根目录没找到，递归查找子目录
+                    if not yaml_found:
+                        yaml_files = sorted(dataset_dir.rglob("data.yaml")) + sorted(dataset_dir.rglob("data.yml"))
                         if yaml_files:
                             dataset_path_resolved = str(yaml_files[0])
                         else:
                             return {"success": False, "message": f"数据集 {dataset_path} 中未找到 data.yaml 文件"}
+
+                    print(f"[训练] 使用数据集配置文件: {dataset_path_resolved}")
+
+                    # 检查并修复 data.yaml 中的 path
+                    yaml_path = Path(dataset_path_resolved)
+                    if yaml_path.exists():
+                        import yaml as pyyaml
+                        try:
+                            with open(yaml_path, 'r', encoding='utf-8') as f:
+                                yaml_content = pyyaml.safe_load(f)
+
+                            # 如果 path 是相对的，修复为绝对路径
+                            if yaml_content and 'path' in yaml_content:
+                                old_path = yaml_content['path']
+                                if old_path and not Path(old_path).is_absolute():
+                                    # path 是相对于 yaml 文件位置的，需要修正
+                                    yaml_dir = yaml_path.parent
+                                    if old_path == '.':
+                                        # path: . -> 使用 yaml 文件所在目录
+                                        new_path = str(yaml_dir)
+                                    else:
+                                        # path 是相对路径，计算相对于数据集根目录
+                                        new_path = str(yaml_dir / old_path)
+
+                                    # 检查 train/val 路径是否存在，如果不存在，尝试相对于数据集根目录
+                                    dataset_root = settings.DATASETS_DIR / dataset_path
+                                    if not (yaml_dir / yaml_content.get('train', '')).exists():
+                                        if (dataset_root / yaml_content.get('train', '')).exists():
+                                            # 需要更新 path 为数据集根目录
+                                            yaml_content['path'] = str(dataset_root)
+                                            # 写回修改后的文件
+                                            with open(yaml_path, 'w', encoding='utf-8') as f:
+                                                pyyaml.dump(yaml_content, f, allow_unicode=True, sort_keys=False)
+                                            print(f"[训练] 已修复 data.yaml 的 path: {old_path} -> {dataset_root}")
+                        except Exception as e:
+                            print(f"[训练] 警告: 无法修复 data.yaml path: {e}")
 
             # 合并所有参数
             all_params = {
