@@ -212,6 +212,7 @@ class YOLOEngine:
         config_copy = copy.deepcopy(config)
         future = self.executor.submit(self._train_worker, task_id, config_copy)
         self.training_futures[task_id] = future
+        print(f"[{task_id}] 训练任务已提交到线程池，等待执行...")
 
         return task_id
 
@@ -290,6 +291,7 @@ class YOLOEngine:
 
     def _train_worker(self, task_id: str, config: 'TrainingConfig'):
         """训练工作函数"""
+        print(f"[{task_id}] _train_worker 开始执行")
         try:
             model_type = config.model_type or "yolo11n"
             total_epochs = config.epochs
