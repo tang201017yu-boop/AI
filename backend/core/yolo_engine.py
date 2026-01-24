@@ -659,12 +659,17 @@ class TrainingStatus:
         }
 
 
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
 class TrainingConfig:
     """训练配置"""
     project_name: str
     dataset_path: str
     model_type: str = "yolo11n"
-    model_path: str = None
+    model_path: Optional[str] = None
     epochs: int = 100
     batch_size: int = 32
     img_size: int = 640
@@ -675,7 +680,7 @@ class TrainingConfig:
     optimizer: str = "auto"
     amp: bool = True
     workers: int = 8
-    resume: str = None  # 恢复训练的检查点路径
+    resume: Optional[str] = None  # 恢复训练的检查点路径
     multi_scale: bool = False
     seed: int = 0
     deterministic: bool = False
@@ -729,7 +734,7 @@ class TrainingConfig:
     def copy(self, deep: bool = False):
         """创建副本"""
         import copy
-        return copy.deepcopy(self) if deep else TrainingConfig()
+        return copy.deepcopy(self) if deep else copy.copy(self)
 
 
 class ModelInfo:
