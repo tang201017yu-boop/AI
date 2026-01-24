@@ -3,7 +3,7 @@
 """
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, UploadFile, Request
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import json
 from datetime import datetime
 
