@@ -111,6 +111,10 @@ class TrainingService:
             from backend.core.config import settings
             from pathlib import Path
 
+            # 检查训练引擎是否可用
+            if yolo_engine is None:
+                return {"success": False, "message": "训练引擎初始化失败，请检查 PyTorch 和 Ultralytics 安装"}
+
             # 解析数据集路径 - 支持数据集名称或完整路径
             dataset_path_resolved = dataset_path
             dataset_path_obj = Path(dataset_path)
@@ -206,29 +210,44 @@ class TrainingService:
         """获取训练状态"""
         from backend.core.yolo_engine import yolo_engine
 
-        status = yolo_engine.get_training_status(task_id)
-        if status:
-            return {
-                "success": True,
-                "status": {
-                    "task_id": status.task_id,
-                    "status": status.status,
-                    "progress": status.progress,
-                    "current_epoch": status.current_epoch,
-                    "total_epochs": status.total_epochs,
-                    "metrics": status.metrics,
-                    "gpu_memory": status.gpu_memory,
-                    "error_message": status.error_message,
-                    "updatedAt": status.updated_at.isoformat() if hasattr(status, 'updated_at') and status.updated_at else None
+        if yolo_engine is None:
+            return {"success": False, "message": "训练引擎未初始化"}
+
+        try:
+            status = yolo_engine.get_training_status(task_id)
+            if status:
+                return {
+                    "success": True,
+                    "status": {
+                        "task_id": status.task_id,
+                        "status": status.status,
+                        "progress": status.progress,
+                        "current_epoch": status.current_epoch,
+                        "total_epochs": status.total_epochs,
+                        "metrics": status.metrics,
+                        "gpu_memory": status.gpu_memory,
+                        "error_message": status.error_message,
+                        "updatedAt": status.updated_at.isoformat() if hasattr(status, 'updated_at') and status.updated_at else None
+                    }
                 }
-            }
+        except Exception as e:
+            print(f"获取训练状态失败: {e}")
 
         return {"success": False, "message": "任务不存在"}
 
     def list_training_tasks(self) -> List[Dict[str, Any]]:
         """列出所有训练任务"""
         from backend.core.yolo_engine import yolo_engine
-        return yolo_engine.list_training_statuses()
+
+        if yolo_engine is None:
+            # 返回空列表而不是崩溃
+            return []
+
+        try:
+            return yolo_engine.list_training_statuses()
+        except Exception as e:
+            print(f"获取训练任务列表失败: {e}")
+            return []
 
     def cancel_training(self, task_id: str) -> Dict[str, Any]:
         """取消训练"""

@@ -18,10 +18,14 @@ try:
     from ultralytics import YOLO
     from torch.utils.tensorboard import SummaryWriter
     TORCH_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     TORCH_AVAILABLE = False
     SummaryWriter = None
-    print("Warning: torch/ultralytics not installed")
+    print(f"Warning: torch/ultralytics not installed - {e}")
+except Exception as e:
+    TORCH_AVAILABLE = False
+    SummaryWriter = None
+    print(f"Warning: torch/ultralytics initialization failed - {e}")
 
 from .config import settings
 
