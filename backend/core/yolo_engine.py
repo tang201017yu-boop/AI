@@ -559,6 +559,7 @@ class YOLOEngine:
 
 
 # 数据类型定义 (避免循环导入)
+@dataclass
 class TrainingStatus:
     """训练状态"""
     task_id: str
@@ -566,56 +567,37 @@ class TrainingStatus:
     progress: float
     current_epoch: int
     total_epochs: int
-    metrics: Dict[str, Any] = None
-    metrics_history: List[Dict[str, Any]] = None  # 完整的指标历史
-    losses_history: Dict[str, List[float]] = None  # 损失曲线历史
     created_at: Any
     updated_at: Any
-    error_message: str = None
-    gpu_memory: str = None
-    gpu_utilization: float = None
-    system_memory: float = None
+    metrics: Optional[Dict[str, Any]] = None
+    metrics_history: List[Dict[str, Any]] = None  # 完整的指标历史
+    losses_history: Dict[str, List[float]] = None  # 损失曲线历史
+    error_message: Optional[str] = None
+    gpu_memory: Optional[str] = None
+    gpu_utilization: Optional[float] = None
+    system_memory: Optional[float] = None
     best_metrics: Dict[str, float] = None  # 最佳指标
-    checkpoint_path: str = None
+    checkpoint_path: Optional[str] = None
 
-    def __init__(self):
-        self.metrics_history = []
-        self.losses_history = {
-            "box_loss": [],
-            "cls_loss": [],
-            "dfl_loss": []
-        }
-        self.best_metrics = {
-            "mAP50": 0.0,
-            "mAP50-95": 0.0,
-            "precision": 0.0,
-            "recall": 0.0
-        }
+    def __post_init__(self):
+        if self.metrics_history is None:
+            self.metrics_history = []
+        if self.losses_history is None:
+            self.losses_history = {"box_loss": [], "cls_loss": [], "dfl_loss": []}
+        if self.best_metrics is None:
+            self.best_metrics = {"mAP50": 0.0, "mAP50-95": 0.0, "precision": 0.0, "recall": 0.0}
 
     def copy(self, deep: bool = False):
         """创建副本"""
         import copy
         if deep:
-            new_status = copy.deepcopy(self)
+            return copy.deepcopy(self)
         else:
-            new_status = TrainingStatus()
-            new_status.task_id = self.task_id
-            new_status.status = self.status
-            new_status.progress = self.progress
-            new_status.current_epoch = self.current_epoch
-            new_status.total_epochs = self.total_epochs
-            new_status.metrics = self.metrics
+            new_status = copy.copy(self)
             new_status.metrics_history = list(self.metrics_history)
             new_status.losses_history = {k: list(v) for k, v in self.losses_history.items()}
-            new_status.created_at = self.created_at
-            new_status.updated_at = self.updated_at
-            new_status.error_message = self.error_message
-            new_status.gpu_memory = self.gpu_memory
-            new_status.gpu_utilization = self.gpu_utilization
-            new_status.system_memory = self.system_memory
             new_status.best_metrics = dict(self.best_metrics)
-            new_status.checkpoint_path = self.checkpoint_path
-        return new_status
+            return new_status
 
     def add_metrics(self, epoch: int, metrics: Dict[str, Any], losses: Dict[str, float]):
         """添加指标记录"""
@@ -660,7 +642,6 @@ class TrainingStatus:
 
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
