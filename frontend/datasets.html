@@ -259,6 +259,68 @@
         </div>
     </div>
 
+    <!-- 数据处理结果模态框 -->
+    <div class="modal-overlay" id="processResultModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>⚙️ 数据处理完成</h3>
+                <button class="modal-close" onclick="closeProcessResultModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #eee; margin-bottom: 1rem;">
+                    <div style="font-size: 3rem; margin-bottom: 0.5rem;">✅</div>
+                    <h4 id="process-dataset-name" style="margin: 0; color: var(--primary-color);"></h4>
+                </div>
+
+                <!-- 处理效果总结 -->
+                <div style="background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                    <h5 style="margin: 0 0 0.75rem; color: #1565c0;">处理效果</h5>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem;">
+                        <div>
+                            <div style="font-size: 0.8rem; color: #666;">图像归一化</div>
+                            <div id="process-normalized" style="font-size: 1.1rem; font-weight: 600; color: #2e7d32;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.8rem; color: #666;">缩略图生成</div>
+                            <div id="process-thumbnails" style="font-size: 1.1rem; font-weight: 600; color: #2e7d32;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.8rem; color: #666;">标签解析</div>
+                            <div id="process-labels" style="font-size: 1.1rem; font-weight: 600; color: #2e7d32;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.8rem; color: #666;">发现类别</div>
+                            <div id="process-classes" style="font-size: 1.1rem; font-weight: 600; color: #1565c0;">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 详细处理信息 -->
+                <div style="font-size: 0.9rem;">
+                    <h5 style="margin: 0 0 0.75rem;">详细处理信息</h5>
+                    <div id="process-details" style="background: #f9f9f9; border-radius: 8px; padding: 1rem;">
+                        <!-- 动态内容 -->
+                    </div>
+                </div>
+
+                <!-- 训练准备状态 -->
+                <div id="process-training-ready" style="margin-top: 1rem; padding: 1rem; border-radius: 8px; display: none;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="font-size: 1.5rem;">🎯</span>
+                        <div>
+                            <div style="font-weight: 600; color: #2e7d32;">数据集已准备好用于训练</div>
+                            <div style="font-size: 0.85rem; color: #666;">可以直接开始模型训练</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeProcessResultModal()">关闭</button>
+                <button class="btn btn-primary" id="process-train-btn" onclick="goToTraining()">开始训练</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/api.js"></script>
     <script>
         // 全局状态
@@ -861,9 +923,13 @@
         }
 
         // 处理数据集
+        // 当前处理的数据集名称
+        let currentProcessDataset = null;
+
         async function processDataset(name) {
             if (!confirm(`确定要重新处理数据集 "${name}" 吗？\n\n处理步骤:\n1. 图像归一化（最大 4096 像素）\n2. 生成缩略图（256 像素）\n3. 解析标签\n4. 计算统计信息`)) return;
 
+            currentProcessDataset = name;
             showToast('开始处理数据集...', 'info');
 
             try {
@@ -871,17 +937,135 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    const normalized = data.normalized || {};
-                    const thumbnails = data.thumbnails || {};
-                    const labels = data.labels || {};
-
-                    showToast('处理完成！', 'success');
+                    showProcessResult(name, data);
                     loadDatasets();
                 } else {
                     showToast('处理失败: ' + data.message, 'error');
                 }
             } catch (error) {
                 showToast('处理失败: ' + error.message, 'error');
+            }
+        }
+
+        // 显示处理结果
+        function showProcessResult(name, data) {
+            const normalized = data.normalized || {};
+            const thumbnails = data.thumbnails || {};
+            const labels = data.labels || {};
+
+            // 设置数据集名称
+            document.getElementById('process-dataset-name').textContent = name;
+
+            // 设置处理效果摘要
+            document.getElementById('process-normalized').textContent =
+                `${normalized.total || 0} 张${normalized.skipped ? ` (${normalized.skipped}张跳过)` : ''}`;
+            document.getElementById('process-thumbnails').textContent =
+                `${thumbnails.total || 0} 张${thumbnails.skipped ? ` (${thumbnails.skipped}张跳过)` : ''}`;
+            document.getElementById('process-labels').textContent =
+                `${labels.total || 0} 个标注`;
+            document.getElementById('process-classes').textContent =
+                `${labels.classes_found?.length || 0} 类`;
+
+            // 设置详细处理信息
+            let detailsHtml = '';
+
+            // 归一化详情
+            if (normalized.total > 0) {
+                detailsHtml += `<div style="margin-bottom: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #2e7d32; font-weight: 600;">
+                        <span>✓</span> 图像归一化完成
+                    </div>
+                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
+                        调整了 ${normalized.total} 张图像尺寸，最大限制 4096 像素
+                    </div>
+                </div>`;
+            } else if (normalized.skipped > 0) {
+                detailsHtml += `<div style="margin-bottom: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #ff9800; font-weight: 600;">
+                        <span>⏭</span> 图像归一化跳过
+                    </div>
+                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
+                        所有图像尺寸均在限制内，无需调整
+                    </div>
+                </div>`;
+            }
+
+            // 缩略图详情
+            if (thumbnails.total > 0) {
+                detailsHtml += `<div style="margin-bottom: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #2e7d32; font-weight: 600;">
+                        <span>✓</span> 缩略图生成完成
+                    </div>
+                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
+                        生成了 ${thumbnails.total} 张 256 像素缩略图用于快速预览
+                    </div>
+                </div>`;
+            }
+
+            // 标签解析详情
+            if (labels.total > 0) {
+                const classNames = labels.classes_found?.map(c => c.name).join('、') || '未知';
+                detailsHtml += `<div style="margin-bottom: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #2e7d32; font-weight: 600;">
+                        <span>✓</span> 标签解析完成
+                    </div>
+                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
+                        解析了 ${labels.total} 个标注，分布在 ${labels.classes_found?.length || 0} 个类别<br>
+                        <span style="color: #1565c0;">类别: ${classNames}</span>
+                    </div>
+                </div>`;
+            }
+
+            // 统计信息
+            if (data.statistics && data.statistics.total_annotations > 0) {
+                detailsHtml += `<div style="margin-bottom: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #1565c0; font-weight: 600;">
+                        <span>📊</span> 统计信息已计算
+                    </div>
+                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
+                        总标注数: ${data.statistics.total_annotations} | 类别分布已生成图表
+                    </div>
+                </div>`;
+            }
+
+            // 训练准备状态
+            const trainingReady = document.getElementById('process-training-ready');
+            if (labels.total > 0 && labels.classes_found?.length > 0) {
+                trainingReady.style.display = 'block';
+                trainingReady.style.background = '#e8f5e9';
+            } else {
+                trainingReady.style.display = 'block';
+                trainingReady.style.background = '#fff3e0';
+                trainingReady.innerHTML = `<div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.5rem;">⚠️</span>
+                    <div>
+                        <div style="font-weight: 600; color: #e65100;">数据集可能不完整</div>
+                        <div style="font-size: 0.85rem; color: #666;">请检查是否已正确上传标签文件 (.txt)</div>
+                    </div>
+                </div>`;
+            }
+
+            document.getElementById('process-details').innerHTML = detailsHtml || '<div style="color: #999;">暂无详细信息</div>';
+
+            // 显示模态框
+            document.getElementById('processResultModal').classList.add('active');
+        }
+
+        // 关闭处理结果模态框
+        function closeProcessResultModal() {
+            document.getElementById('processResultModal').classList.remove('active');
+            currentProcessDataset = null;
+        }
+
+        // 跳转到训练页面
+        function goToTraining() {
+            closeProcessResultModal();
+            if (currentProcessDataset) {
+                // 将数据集名称保存到 sessionStorage，供训练页面使用
+                sessionStorage.setItem('selectedDataset', currentProcessDataset);
+                window.location.href = '/training';
+            } else {
+                window.location.href = '/training';
             }
         }
 

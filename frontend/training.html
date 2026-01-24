@@ -35,12 +35,13 @@
                     <div class="grid grid-2">
                         <div class="form-group">
                             <label class="form-label">项目名称</label>
-                            <input type="text" id="project-name" class="form-control" required>
+                            <input type="text" id="project-name" class="form-control" placeholder="my_project" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">数据集路径</label>
-                            <input type="text" id="dataset-path" class="form-control" placeholder="data/datasets/my_dataset/data.yaml" required list="dataset-options">
-                            <datalist id="dataset-options"></datalist>
+                            <label class="form-label">选择数据集</label>
+                            <select id="dataset-select" class="form-control" onchange="handleDatasetSelect()">
+                                <option value="">请选择数据集...</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label class="form-label">模型类型</label>
@@ -222,16 +223,77 @@
 
         async function loadDatasetOptions() {
             try {
-                const { datasets } = await API.listDatasets();
-                const datalist = document.getElementById('dataset-options');
-                datalist.innerHTML = datasets.map(ds => `<option value="${ds.path}">${ds.name} · ${ds.num_images || 0} 张图片</option>`).join('');
+                const response = await fetch('/api/v1/datasets/list');
+                const data = await response.json();
+
+                if (data.success) {
+                    const select = document.getElementById('dataset-select');
+                    // 保留第一个默认选项
+                    select.innerHTML = '<option value="">请选择数据集...</option>';
+
+                    if (data.datasets && data.datasets.length > 0) {
+                        data.datasets.forEach(ds => {
+                            const option = document.createElement('option');
+                            option.value = ds.name;
+                            option.textContent = `${ds.name} (${ds.num_images || 0} 张图片 · ${ds.task_type || '检测'})`;
+                            select.appendChild(option);
+                        });
+                    } else {
+                        select.innerHTML += '<option value="" disabled>暂无可用数据集，请先上传</option>';
+                    }
+                }
+                return data;
             } catch (error) {
                 console.warn('加载数据集列表失败:', error);
+                return null;
             }
         }
 
+        // 处理数据集选择
+        function handleDatasetSelect() {
+            const select = document.getElementById('dataset-select');
+            const selectedDataset = select.value;
+
+            // 可以在这里根据选择的数据集自动填充一些信息
+            if (selectedDataset) {
+                console.log('已选择数据集:', selectedDataset);
+            }
+        }
+
+        // 自动选择数据集（从数据集页面跳转过来时）
+        async function autoSelectDataset() {
+            const selectedDataset = sessionStorage.getItem('selectedDataset');
+            if (!selectedDataset) return null;
+
+            // 等待数据集选项加载完成
+            const maxWait = 3000; // 最多等待3秒
+            const startTime = Date.now();
+
+            while (Date.now() - startTime < maxWait) {
+                const select = document.getElementById('dataset-select');
+                if (select && select.options.length > 1) {
+                    // 查找并选择数据集
+                    for (let i = 0; i < select.options.length; i++) {
+                        if (select.options[i].value === selectedDataset) {
+                            select.selectedIndex = i;
+                            sessionStorage.removeItem('selectedDataset');
+                            showAlert(`已自动选择数据集: ${selectedDataset}`, 'success');
+                            return selectedDataset;
+                        }
+                    }
+                }
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            sessionStorage.removeItem('selectedDataset');
+            return null;
+        }
+
         loadModelOptions();
-        loadDatasetOptions();
+        loadDatasetOptions().then(() => {
+            // 尝试自动选择数据集
+            setTimeout(autoSelectDataset, 200);
+        });
 
         function renderMetrics(metrics) {
             if (!metrics || typeof metrics !== 'object') {
@@ -253,7 +315,7 @@
 
             const config = {
                 project_name: document.getElementById('project-name').value,
-                dataset_path: document.getElementById('dataset-path').value,
+                dataset_path: document.getElementById('dataset-select').value,
                 model_type: document.getElementById('model-type').value,
                 epochs: parseInt(document.getElementById('epochs').value),
                 batch_size: parseInt(document.getElementById('batch-size').value),
@@ -267,6 +329,12 @@
                 mosaic: parseFloat(document.getElementById('mosaic').value),
                 close_mosaic_epochs: parseInt(document.getElementById('close-mosaic-epochs').value)
             };
+
+            // 验证数据集选择
+            if (!config.dataset_path) {
+                showAlert('请选择数据集', 'warning');
+                return;
+            }
 
             const selectedBaseModel = baseModelSelect.value.trim();
             if (selectedBaseModel) {
