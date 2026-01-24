@@ -498,8 +498,8 @@ class YOLOEngine:
                 'warmup_bias_lr': getattr(config, 'warmup_bias_lr', 0.1),
                 # 马赛克增强参数
                 'mosaic': getattr(config, 'mosaic', 1.0),
-                'mosaic_scale': getattr(config, 'mosaic_scale', (0.1, 1.5)),
-                'close_mosaic_epochs': getattr(config, 'close_mosaic_epochs', 10),
+                'multi_scale': getattr(config, 'multi_scale', 0.0),  # 使用 multi_scale 而不是 mosaic_scale
+                'close_mosaic': getattr(config, 'close_mosaic', 10),  # 使用 close_mosaic 而不是 close_mosaic_epochs
             }
 
             results = model.train(**train_kwargs)
@@ -696,8 +696,8 @@ class TrainingConfig:
 
     # 高级增强
     mosaic: float = 1.0  # 马赛克增强 (0-1)
-    mosaic_scale: tuple = (0.1, 1.5)  # 马赛克缩放范围
-    close_mosaic_epochs: int = 10  # 关闭马赛克增强的轮数
+    multi_scale: float = 0.0  # 多尺度训练 (0-1)
+    close_mosaic: int = 10  # 关闭马赛克增强的轮数
     mixup: float = 0.0  # 混合增强
     copy_paste: float = 0.0  # 复制粘贴（分割任务）
     auto_augment: str = "randaugment"

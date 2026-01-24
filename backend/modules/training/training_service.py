@@ -200,8 +200,8 @@ class TrainingService:
                 "workers": workers,
                 # 马赛克参数
                 "mosaic": mosaic,
-                "mosaic_scale": mosaic_scale,
-                "close_mosaic_epochs": close_mosaic_epochs
+                "multi_scale": 0.0,
+                "close_mosaic": close_mosaic_epochs
             }
 
             # 合并 kwargs 中的所有额外参数
@@ -229,7 +229,7 @@ class TrainingService:
                     "lrf": lrf,
                     "warmup_epochs": warmup_epochs,
                     "mosaic": mosaic,
-                    "close_mosaic_epochs": close_mosaic_epochs
+                    "close_mosaic": close_mosaic_epochs
                 }
             }
             self.experiments[task_id] = experiment
