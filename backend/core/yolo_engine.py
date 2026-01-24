@@ -4,6 +4,7 @@ YOLO 引擎 - YOLO Model Engine
 """
 import os
 import time
+import copy
 import threading
 import shutil
 import logging
@@ -208,7 +209,7 @@ class YOLOEngine:
         with self.training_lock:
             self.training_tasks[task_id] = status
 
-        config_copy = config.copy(deep=True)
+        config_copy = copy.deepcopy(config)
         future = self.executor.submit(self._train_worker, task_id, config_copy)
         self.training_futures[task_id] = future
 
@@ -281,7 +282,7 @@ class YOLOEngine:
         if dataset_path:
             config.dataset_path = dataset_path
 
-        config_copy = config.copy(deep=True)
+        config_copy = copy.deepcopy(config)
         future = self.executor.submit(self._train_worker, task_id, config_copy)
         self.training_futures[task_id] = future
 
@@ -517,7 +518,7 @@ class YOLOEngine:
         """获取训练状态"""
         with self.training_lock:
             status = self.training_tasks.get(task_id)
-            return status.copy(deep=True) if status else None
+            return copy.deepcopy(status) if status else None
 
     def list_training_statuses(self) -> List['TrainingStatus']:
         """列出所有训练任务"""
