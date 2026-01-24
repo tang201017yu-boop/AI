@@ -611,28 +611,57 @@ class TrainingConfig:
     batch_size: int = 32
     img_size: int = 640
     device: str = "auto"
-    patience: int = 50
-    save_period: int = 10
+    patience: int = 100
+    save_period: int = -1
     pretrained: bool = True
     optimizer: str = "auto"
     amp: bool = True
     workers: int = 8
     resume: str = None  # 恢复训练的检查点路径
+    multi_scale: bool = False
+    seed: int = 0
+    deterministic: bool = False
+    plots: bool = True
+    val: bool = True
 
-    # ==================== 微调优化参数 ====================
+    # ==================== 优化参数 ====================
     # 学习率配置
     lr0: float = 0.01  # 初始学习率
     lrf: float = 0.01  # 最终学习率（相对于 lr0）
     warmup_epochs: float = 3.0  # 预热轮数，设置为 0 可立即使用较高学习率
     warmup_bias_lr: float = 0.1  # 预热期间 bias 的学习率
+    momentum: float = 0.937
+    weight_decay: float = 0.0005
+    cos_lr: bool = False
 
-    # 图像平铺处理小目标
+    # ==================== 数据增强参数 ====================
+    # 颜色变换
+    hsv_h: float = 0.015  # 色相
+    hsv_s: float = 0.7  # 饱和度
+    hsv_v: float = 0.4  # 亮度
+
+    # 几何变换
+    degrees: float = 0.0  # 旋转角度
+    translate: float = 0.1  # 平移比例
+    scale: float = 0.5  # 缩放比例
+    shear: float = 0.0  # 剪切角度
+    perspective: float = 0.0  # 透视变换
+    flipud: float = 0.0  # 垂直翻转
+    fliplr: float = 0.5  # 水平翻转
+
+    # 高级增强
     mosaic: float = 1.0  # 马赛克增强 (0-1)
     mosaic_scale: tuple = (0.1, 1.5)  # 马赛克缩放范围
     close_mosaic_epochs: int = 10  # 关闭马赛克增强的轮数
+    mixup: float = 0.0  # 混合增强
+    copy_paste: float = 0.0  # 复制粘贴（分割任务）
+    auto_augment: str = "randaugment"
+    dropout: float = 0.0  # 分类任务 dropout
 
-    # 混合精度训练
-    amp: bool = True
+    # ==================== 损失函数权重 ====================
+    box: float = 7.5  # 边界框损失权重
+    cls: float = 0.5  # 分类损失权重
+    dfl: float = 1.5  # 分布焦点损失权重
 
     # 验证参数
     val_conf: float = 0.001  # 验证时的置信度阈值

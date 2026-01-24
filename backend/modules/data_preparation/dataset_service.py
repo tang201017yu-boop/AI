@@ -74,8 +74,19 @@ class DatasetService:
             # 解压 ZIP
             temp_zip = dataset_dir / "temp.zip"
             save_uploaded_file(file, str(temp_zip))
-            extract_zip(str(temp_zip), str(dataset_dir))
+
+            # 使用改进的解压函数
+            extract_result = extract_zip(str(temp_zip), str(dataset_dir))
             temp_zip.unlink()
+
+            if not extract_result["success"]:
+                return {
+                    "success": False,
+                    "message": f"解压失败: {', '.join(extract_result['errors'][:3])}"
+                }
+
+            print(f"ZIP解压完成: {extract_result['extracted_files']} 个文件, "
+                  f"图片: {extract_result['image_files']}, 标签: {extract_result['label_files']}")
 
             # 重新组织结构
             self._reorganize_dataset(dataset_dir)
@@ -512,20 +523,118 @@ class DatasetService:
         return None
 
     def _reorganize_dataset(self, dataset_dir: Path):
-        """重新组织数据集结构"""
+        """重新组织数据集结构 - 支持各种目录结构"""
+        from pathlib import Path
+        import shutil
+
+        images_dir = dataset_dir / "images"
+        labels_dir = dataset_dir / "labels"
+
+        # 确保目标目录存在
+        images_dir.mkdir(parents=True, exist_ok=True)
+        labels_dir.mkdir(parents=True, exist_ok=True)
+
+        # 收集所有图片和标签文件
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+        images_found = []
+        labels_found = []
+
+        # 遍历所有子目录查找文件
+        for item in dataset_dir.rglob('*'):
+            if item.is_file():
+                ext = item.suffix.lower()
+
+                # 跳过临时文件和隐藏文件
+                if item.name.startswith('.') or item.name.startswith('_'):
+                    continue
+
+                if ext in image_extensions:
+                    # 检查是否在目标目录本身（避免重复）
+                    if not str(item).startswith(str(images_dir)) and not str(item).startswith(str(labels_dir)):
+                        images_found.append(item)
+                elif ext == '.txt':
+                    # 跳过data.yaml等配置文件
+                    if item.name != 'data.yaml' and item.name != 'dataset.yaml':
+                        if not str(item).startswith(str(images_dir)) and not str(item).startswith(str(labels_dir)):
+                            labels_found.append(item)
+
+        # 移动图片到 images 目录
+        moved_images = 0
+        for img_path in images_found:
+            try:
+                # 使用相对路径作为新文件名（避免重名）
+                rel_path = img_path.relative_to(dataset_dir)
+                new_name = str(rel_path).replace('/', '_').replace('\\', '_')
+                target_path = images_dir / new_name
+
+                # 如果目标文件已存在，添加序号
+                counter = 1
+                while target_path.exists():
+                    stem = new_name.rsplit('.', 1)[0]
+                    ext = new_name.rsplit('.', 1)[1] if '.' in new_name else ''
+                    new_name = f"{stem}_{counter}.{ext}"
+                    target_path = images_dir / new_name
+                    counter += 1
+
+                shutil.move(str(img_path), str(target_path))
+                moved_images += 1
+
+            except Exception as e:
+                print(f"Error moving image {img_path}: {e}")
+
+        # 移动标签到 labels 目录
+        moved_labels = 0
+        for label_path in labels_found:
+            try:
+                rel_path = label_path.relative_to(dataset_dir)
+                new_name = str(rel_path).replace('/', '_').replace('\\', '_')
+                target_path = labels_dir / new_name
+
+                counter = 1
+                while target_path.exists():
+                    stem = new_name.rsplit('.', 1)[0]
+                    ext = new_name.rsplit('.', 1)[1] if '.' in new_name else ''
+                    new_name = f"{stem}_{counter}.{ext}"
+                    target_path = labels_dir / new_name
+                    counter += 1
+
+                shutil.move(str(label_path), str(target_path))
+                moved_labels += 1
+
+            except Exception as e:
+                print(f"Error moving label {label_path}: {e}")
+
+        # 清理空的子目录
         for item in dataset_dir.iterdir():
             if item.is_dir():
-                if item.name in ["images", "labels"]:
-                    continue
-                elif item.name in ["train", "val", "test"]:
-                    (dataset_dir / "images" / item.name).mkdir(exist_ok=True)
-                    (dataset_dir / "labels" / item.name).mkdir(exist_ok=True)
-                    for sub_item in (item / "images").iterdir() if (item / "images").exists() else []:
-                        if sub_item.is_file():
-                            sub_item.rename(dataset_dir / "images" / item.name / sub_item.name)
-                    for sub_item in (item / "labels").iterdir() if (item / "labels").exists() else []:
-                        if sub_item.is_file():
-                            sub_item.rename(dataset_dir / "labels" / item.name / sub_item.name)
+                try:
+                    # 只删除我们自己创建的空目录（不删除用户原有的结构）
+                    if item.name in ['images', 'labels', '.thumbnails']:
+                        # 如果是空目录，删除
+                        if not any(item.iterdir()):
+                            item.rmdir()
+                    elif item.name not in ['train', 'val', 'test', 'images', 'labels']:
+                        # 删除其他空目录
+                        if not any(item.iterdir()):
+                            item.rmdir()
+                        else:
+                            # 递归删除空子目录
+                            self._cleanup_empty_dirs(item)
+                            if not any(item.iterdir()):
+                                item.rmdir()
+                except Exception:
+                    pass
+
+    def _cleanup_empty_dirs(self, directory: Path):
+        """递归清理空目录"""
+        for item in directory.iterdir():
+            if item.is_dir():
+                self._cleanup_empty_dirs(item)
+                try:
+                    if not any(item.iterdir()):
+                        item.rmdir()
+                except Exception:
+                    pass
 
     def _generate_dataset_info(
         self,

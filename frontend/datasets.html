@@ -321,6 +321,68 @@
         </div>
     </div>
 
+    <!-- 图片浏览模态框 -->
+    <div class="modal-overlay" id="browseImagesModal">
+        <div class="modal modal-xl">
+            <div class="modal-header">
+                <h3 id="browseModalTitle">浏览图片</h3>
+                <button class="modal-close" onclick="closeBrowseImagesModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <!-- 工具栏 -->
+                <div style="padding: 1rem; border-bottom: 1px solid #eee; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-ghost btn-sm" id="view-grid-btn" onclick="setViewMode('grid')">▦ 网格</button>
+                        <button class="btn btn-ghost btn-sm" id="view-compact-btn" onclick="setViewMode('compact')">▤ 紧凑</button>
+                        <button class="btn btn-ghost btn-sm" id="view-table-btn" onclick="setViewMode('table')">☰ 表格</button>
+                    </div>
+                    <div style="border-left: 1px solid #ddd; padding-left: 1rem; display: flex; gap: 0.5rem;">
+                        <select id="split-filter" class="form-control" style="width: auto; padding: 0.4rem;" onchange="filterImages()">
+                            <option value="">全部拆分</option>
+                            <option value="train">训练集</option>
+                            <option value="val">验证集</option>
+                            <option value="test">测试集</option>
+                            <option value="unknown">未分配</option>
+                        </select>
+                    </div>
+                    <div style="margin-left: auto; display: flex; gap: 0.5rem;">
+                        <span id="image-count" style="color: var(--secondary-color); font-size: 0.9rem;">0 张图片</span>
+                        <button class="btn btn-ghost btn-sm" onclick="exportToNDJSON()">📥 导出 NDJSON</button>
+                    </div>
+                </div>
+
+                <!-- 图片容器 -->
+                <div id="images-container" style="padding: 1rem; min-height: 300px; max-height: 60vh; overflow-y: auto;">
+                    <!-- 动态内容 -->
+                </div>
+
+                <!-- 分页 -->
+                <div id="pagination-container" style="padding: 1rem; border-top: 1px solid #eee; display: flex; justify-content: center; gap: 0.5rem;">
+                    <button class="btn btn-ghost btn-sm" id="prev-page" onclick="changePage(-1)">上一页</button>
+                    <span id="page-info" style="padding: 0.5rem; color: var(--secondary-color);">1 / 1</span>
+                    <button class="btn btn-ghost btn-sm" id="next-page" onclick="changePage(1)">下一页</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全屏图片查看器 -->
+    <div class="modal-overlay" id="imageViewerModal" style="background: rgba(0,0,0,0.95); z-index: 2000;">
+        <div style="position: absolute; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; z-index: 10;">
+            <button class="btn btn-ghost" style="color: white;" onclick="toggleLabels()">🏷️ 标签</button>
+            <button class="btn btn-ghost" style="color: white;" onclick="downloadImage()">📥 下载</button>
+            <button class="modal-close" style="color: white; font-size: 2rem;" onclick="closeImageViewer()">&times;</button>
+        </div>
+        <div style="position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%); display: flex; gap: 1rem; z-index: 10;">
+            <button class="btn btn-ghost" style="color: white;" onclick="prevImage()">◀ 上一张</button>
+            <span id="viewer-counter" style="color: white; padding: 0.5rem 1rem; background: rgba(0,0,0,0.5); border-radius: 4px;">1 / 1</span>
+            <button class="btn btn-ghost" style="color: white;" onclick="nextImage()">下一张 ▶</button>
+        </div>
+        <div id="image-viewer-content" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+            <!-- 动态内容 -->
+        </div>
+    </div>
+
     <script src="/static/js/api.js"></script>
     <script>
         // 全局状态
@@ -459,6 +521,9 @@
                                         <button class="btn btn-ghost btn-xs" onclick="deleteDataset('${ds.name}')">
                                             🗑️ 删除
                                         </button>
+                                        <button class="btn btn-ghost btn-xs" onclick="openBrowseImages('${ds.name}')">
+                                            🖼️ 浏览
+                                        </button>
                                     </td>
                                 </tr>
                             `).join('')}
@@ -514,6 +579,329 @@
                 'classify': '📁 分类'
             };
             return names[type] || type;
+        }
+
+        // ==================== 图片浏览功能 ====================
+
+        // 图片浏览状态
+        let browseState = {
+            datasetName: null,
+            images: [],
+            currentPage: 1,
+            pageSize: 50,
+            viewMode: 'grid',
+            splitFilter: '',
+            total: 0
+        };
+
+        let viewerState = {
+            currentIndex: 0,
+            showLabels: true
+        };
+
+        // 打开图片浏览模态框
+        async function openBrowseImages(datasetName) {
+            browseState.datasetName = datasetName;
+            browseState.currentPage = 1;
+            browseState.images = [];
+            browseState.splitFilter = '';
+
+            document.getElementById('browseModalTitle').textContent = `浏览图片: ${datasetName}`;
+            document.getElementById('split-filter').value = '';
+            setViewMode('grid');
+
+            document.getElementById('browseImagesModal').classList.add('active');
+            await loadImages();
+        }
+
+        // 关闭图片浏览模态框
+        function closeBrowseImagesModal() {
+            document.getElementById('browseImagesModal').classList.remove('active');
+        }
+
+        // 加载图片列表
+        async function loadImages() {
+            const container = document.getElementById('images-container');
+            container.innerHTML = '<div class="loading-placeholder"><span class="loading"></span> 加载中...</div>';
+
+            try {
+                const params = new URLSearchParams({
+                    page: browseState.currentPage,
+                    page_size: browseState.pageSize,
+                    view: browseState.viewMode
+                });
+
+                if (browseState.splitFilter) {
+                    params.append('split', browseState.splitFilter);
+                }
+
+                const response = await fetch(`/api/v1/datasets/${browseState.datasetName}/images?${params}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    browseState.images = data.images;
+                    browseState.total = data.total;
+                    renderImages();
+                    updatePagination(data);
+                } else {
+                    container.innerHTML = '<div class="loading-placeholder" style="color: var(--danger-color);">加载失败</div>';
+                }
+            } catch (error) {
+                console.error('加载图片失败:', error);
+                container.innerHTML = '<div class="loading-placeholder" style="color: var(--danger-color);">加载失败: ' + error.message + '</div>';
+            }
+        }
+
+        // 渲染图片
+        function renderImages() {
+            const container = document.getElementById('images-container');
+            document.getElementById('image-count').textContent = `${browseState.total} 张图片`;
+
+            if (browseState.images.length === 0) {
+                container.innerHTML = '<div class="loading-placeholder">暂无图片</div>';
+                return;
+            }
+
+            if (browseState.viewMode === 'table') {
+                renderTableView(container);
+            } else if (browseState.viewMode === 'compact') {
+                renderCompactView(container);
+            } else {
+                renderGridView(container);
+            }
+        }
+
+        // 网格视图
+        function renderGridView(container) {
+            container.innerHTML = '<div class="image-grid">' +
+                browseState.images.map((img, index) => `
+                    <div class="image-grid-item" onclick="openImageViewer(${index})">
+                        <img src="${img.thumbnail}" alt="${img.filename}" loading="lazy">
+                        ${img.label_count > 0 ? `<span class="label-badge">${img.label_count}</span>` : ''}
+                        <div class="image-info">
+                            ${img.filename}<br>
+                            <span class="split-tag split-${img.split}">${getSplitName(img.split)}</span>
+                        </div>
+                    </div>
+                `).join('') + '</div>';
+        }
+
+        // 紧凑视图
+        function renderCompactView(container) {
+            container.innerHTML = '<div class="image-compact">' +
+                browseState.images.map((img, index) => `
+                    <div class="image-compact-item" onclick="openImageViewer(${index})">
+                        <img src="${img.thumbnail}" alt="${img.filename}" loading="lazy">
+                    </div>
+                `).join('') + '</div>';
+        }
+
+        // 表格视图
+        function renderTableView(container) {
+            container.innerHTML = `
+                <table class="image-table">
+                    <thead>
+                        <tr>
+                            <th>预览</th>
+                            <th>文件名</th>
+                            <th>尺寸</th>
+                            <th>拆分</th>
+                            <th>标签数</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${browseState.images.map((img, index) => `
+                            <tr>
+                                <td><img src="${img.thumbnail}" alt="${img.filename}" onclick="openImageViewer(${index})"></td>
+                                <td>${img.filename}</td>
+                                <td>${img.width} × ${img.height}</td>
+                                <td><span class="split-tag split-${img.split}">${getSplitName(img.split)}</span></td>
+                                <td>${img.label_count}</td>
+                                <td><button class="btn btn-ghost btn-xs" onclick="openImageViewer(${index})">查看</button></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        // 获取拆分名称
+        function getSplitName(split) {
+            const names = {
+                'train': '训练',
+                'val': '验证',
+                'test': '测试',
+                'unknown': '未分配'
+            };
+            return names[split] || split;
+        }
+
+        // 设置视图模式
+        function setViewMode(mode) {
+            browseState.viewMode = mode;
+
+            // 更新按钮状态
+            ['grid', 'compact', 'table'].forEach(m => {
+                const btn = document.getElementById(`view-${m}-btn`);
+                if (btn) {
+                    btn.classList.toggle('btn-primary', m === mode);
+                    btn.classList.toggle('btn-ghost', m !== mode);
+                }
+            });
+
+            renderImages();
+        }
+
+        // 筛选图片
+        function filterImages() {
+            browseState.splitFilter = document.getElementById('split-filter').value;
+            browseState.currentPage = 1;
+            loadImages();
+        }
+
+        // 更新分页
+        function updatePagination(data) {
+            const totalPages = Math.ceil(data.total / data.page_size);
+            document.getElementById('page-info').textContent = `${data.page} / ${totalPages}`;
+            document.getElementById('prev-page').disabled = data.page <= 1;
+            document.getElementById('next-page').disabled = data.page >= totalPages;
+        }
+
+        // 翻页
+        function changePage(delta) {
+            browseState.currentPage += delta;
+            loadImages();
+        }
+
+        // ==================== 全屏图片查看器 ====================
+
+        // 打开图片查看器
+        function openImageViewer(index) {
+            viewerState.currentIndex = index;
+            viewerState.showLabels = true;
+            renderImageViewer();
+            document.getElementById('imageViewerModal').classList.add('active');
+
+            // 绑定键盘事件
+            document.addEventListener('keydown', handleViewerKeydown);
+        }
+
+        // 关闭图片查看器
+        function closeImageViewer() {
+            document.getElementById('imageViewerModal').classList.remove('active');
+            document.removeEventListener('keydown', handleViewerKeydown);
+        }
+
+        // 渲染查看器内容
+        function renderImageViewer() {
+            const img = browseState.images[viewerState.currentIndex];
+            if (!img) return;
+
+            const container = document.getElementById('image-viewer-content');
+            document.getElementById('viewer-counter').textContent =
+                `${viewerState.currentIndex + 1} / ${browseState.images.length}`;
+
+            let html = `<img src="${img.path}" alt="${img.filename}" id="viewer-image">`;
+
+            if (viewerState.showLabels && img.labels && img.labels.length > 0) {
+                html += `<div class="image-viewer-labels" id="viewer-labels"></div>`;
+            }
+
+            container.innerHTML = html;
+
+            // 渲染标签框
+            if (viewerState.showLabels && img.labels && img.labels.length > 0) {
+                renderLabels(img);
+            }
+        }
+
+        // 渲染标签框
+        function renderLabels(img) {
+            const labelsContainer = document.getElementById('viewer-labels');
+            if (!labelsContainer) return;
+
+            const imgElement = document.getElementById('viewer-image');
+            const imgRect = imgElement.getBoundingClientRect();
+
+            labelsContainer.innerHTML = img.labels.map(label => {
+                const bbox = label.bbox;
+                if (bbox && bbox.length >= 4) {
+                    // YOLO格式: center_x, center_y, width, height (归一化)
+                    const x = bbox[0] * imgRect.width - (bbox[2] * imgRect.width / 2);
+                    const y = bbox[1] * imgRect.height - (bbox[3] * imgRect.height / 2);
+                    const w = bbox[2] * imgRect.width;
+                    const h = bbox[3] * imgRect.height;
+
+                    return `
+                        <div class="label-box" style="left: ${x}px; top: ${y}px; width: ${w}px; height: ${h}px;">
+                            <div class="label-class">${label.class_id}</div>
+                        </div>
+                    `;
+                }
+                return '';
+            }).join('');
+        }
+
+        // 切换标签显示
+        function toggleLabels() {
+            viewerState.showLabels = !viewerState.showLabels;
+            renderImageViewer();
+        }
+
+        // 上一张/下一张
+        function prevImage() {
+            if (viewerState.currentIndex > 0) {
+                viewerState.currentIndex--;
+                renderImageViewer();
+            }
+        }
+
+        function nextImage() {
+            if (viewerState.currentIndex < browseState.images.length - 1) {
+                viewerState.currentIndex++;
+                renderImageViewer();
+            }
+        }
+
+        // 键盘控制
+        function handleViewerKeydown(e) {
+            switch (e.key) {
+                case 'ArrowLeft':
+                    prevImage();
+                    break;
+                case 'ArrowRight':
+                    nextImage();
+                    break;
+                case 'Escape':
+                    closeImageViewer();
+                    break;
+                case 'l':
+                    toggleLabels();
+                    break;
+            }
+        }
+
+        // 下载图片
+        function downloadImage() {
+            const img = browseState.images[viewerState.currentIndex];
+            if (img) {
+                const a = document.createElement('a');
+                a.href = img.path;
+                a.download = img.filename;
+                a.click();
+            }
+        }
+
+        // ==================== 导出功能 ====================
+
+        // 导出为NDJSON
+        function exportToNDJSON() {
+            if (!browseState.datasetName) return;
+
+            const url = `/api/v1/datasets/${browseState.datasetName}/export/ndjson`;
+            window.open(url, '_blank');
+            showToast('正在导出...', 'info');
         }
 
         // 显示上传模态框
@@ -1326,6 +1714,178 @@
 
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        /* 大模态框 */
+        .modal-xl {
+            width: 95%;
+            max-width: 1400px;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 图片网格视图 */
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .image-grid-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            background: #f5f5f5;
+        }
+
+        .image-grid-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .image-grid-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            display: block;
+        }
+
+        .image-grid-item .image-info {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            color: white;
+            padding: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .image-grid-item .label-badge {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: var(--primary-color, #2196F3);
+            color: white;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        /* 紧凑视图 */
+        .image-compact {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 0.5rem;
+        }
+
+        .image-compact-item {
+            position: relative;
+            cursor: pointer;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .image-compact-item img {
+            width: 100%;
+            height: 80px;
+            object-fit: cover;
+        }
+
+        /* 表格视图 */
+        .image-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .image-table th,
+        .image-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .image-table th {
+            background: #f5f5f5;
+            font-weight: 600;
+        }
+
+        .image-table tr:hover {
+            background: #f9f9f9;
+        }
+
+        .image-table img {
+            width: 60px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        /* 拆分标签 */
+        .split-tag {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .split-train { background: #e3f2fd; color: #1565c0; }
+        .split-val { background: #e8f5e9; color: #2e7d32; }
+        .split-test { background: #fff3e0; color: #e65100; }
+        .split-unknown { background: #f5f5f5; color: #666; }
+
+        /* 全屏查看器 */
+        .image-viewer-content img {
+            max-width: 100%;
+            max-height: 90vh;
+            object-fit: contain;
+        }
+
+        .image-viewer-labels {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+
+        .label-box {
+            position: absolute;
+            border: 2px solid #00ff00;
+            background: rgba(0, 255, 0, 0.1);
+        }
+
+        .label-class {
+            position: absolute;
+            top: -20px;
+            left: 0;
+            background: #00ff00;
+            color: black;
+            padding: 0.1rem 0.3rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        /* 按钮样式 */
+        .btn-sm {
+            padding: 0.4rem 0.75rem;
+            font-size: 0.85rem;
+        }
+
+        /* 加载占位符 */
+        .loading-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+            color: var(--secondary-color);
         }
     </style>
 </body>

@@ -107,32 +107,42 @@ class TrainingService:
             return {"success": False, "message": "Ultralytics 未安装"}
 
         try:
-            from backend.core.yolo_engine import yolo_engine
+            from backend.core.yolo_engine import yolo_engine, TrainingConfig
+
+            # 合并所有参数
+            all_params = {
+                # 基础配置
+                "project_name": project_name,
+                "dataset_path": dataset_path,
+                "model_type": model_type,
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "img_size": img_size,
+                "device": device,
+                "pretrained": True,
+                "optimizer": optimizer,
+                # 优化参数
+                "lr0": lr0,
+                "lrf": lrf,
+                "warmup_epochs": warmup_epochs,
+                "warmup_bias_lr": warmup_bias_lr,
+                "momentum": 0.937,
+                "weight_decay": 0.0005,
+                "cos_lr": False,
+                # 设备配置
+                "amp": amp,
+                "workers": workers,
+                # 马赛克参数
+                "mosaic": mosaic,
+                "mosaic_scale": mosaic_scale,
+                "close_mosaic_epochs": close_mosaic_epochs
+            }
+
+            # 合并 kwargs 中的所有额外参数
+            all_params.update(kwargs)
 
             # 创建训练配置
-            from backend.core.yolo_engine import TrainingConfig
-
-            config = TrainingConfig(
-                project_name=project_name,
-                dataset_path=dataset_path,
-                model_type=model_type,
-                epochs=epochs,
-                batch_size=batch_size,
-                img_size=img_size,
-                device=device,
-                pretrained=True,
-                optimizer=optimizer,
-                amp=kwargs.get("amp", True),
-                workers=kwargs.get("workers", 8),
-                # 微调参数
-                lr0=lr0,
-                lrf=lrf,
-                warmup_epochs=warmup_epochs,
-                warmup_bias_lr=warmup_bias_lr,
-                mosaic=mosaic,
-                mosaic_scale=mosaic_scale,
-                close_mosaic_epochs=close_mosaic_epochs
-            )
+            config = TrainingConfig(**all_params)
 
             # 开始训练
             task_id = yolo_engine.train(config)

@@ -579,3 +579,282 @@ async def list_augmented_datasets():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== 图片浏览 ====================
+
+@router.get("/datasets/{name}/images")
+async def list_dataset_images(
+    name: str,
+    split: str = Query(None, description="按拆分筛选: train, val, test"),
+    view: str = Query("grid", description="视图类型: grid, compact, table"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200)
+):
+    """
+    列出数据集中的图片
+
+    支持:
+    - 按拆分筛选 (train/val/test)
+    - 不同视图 (grid/compact/table)
+    - 分页加载
+    """
+    from PIL import Image
+
+    dataset_path = settings.DATASETS_DIR / name
+    if not dataset_path.exists():
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    images_dir = dataset_path / "images"
+    labels_dir = dataset_path / "labels"
+
+    if not images_dir.exists():
+        return {"success": True, "images": [], "total": 0}
+
+    # 获取所有图片
+    image_files = []
+    for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']:
+        image_files.extend(images_dir.rglob(ext))
+
+    # 解析标签获取信息
+    image_labels = {}
+    if labels_dir.exists():
+        for label_file in labels_dir.rglob("*.txt"):
+            # 匹配标签和图片
+            label_stem = label_file.stem
+            for img_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
+                img_path = images_dir / f"{label_stem}{img_ext}"
+                if img_path.exists():
+                    try:
+                        with open(label_file, 'r') as f:
+                            lines = f.readlines()
+                        labels = []
+                        for line in lines:
+                            parts = line.strip().split()
+                            if parts:
+                                labels.append({
+                                    "class_id": int(parts[0]),
+                                    "bbox": [float(x) for x in parts[1:]] if len(parts) > 1 else []
+                                })
+                        image_labels[str(img_path)] = labels
+                    except:
+                        pass
+                    break
+
+    # 构建图片列表
+    images = []
+    for img_path in sorted(image_files):
+        try:
+            with Image.open(img_path) as img:
+                width, height = img.size
+
+            # 确定拆分（从路径推断或默认unknown）
+            path_parts = str(img_path).split('/')
+            if 'train' in path_parts:
+                split_name = 'train'
+            elif 'val' in path_parts:
+                split_name = 'val'
+            elif 'test' in path_parts:
+                split_name = 'test'
+            else:
+                split_name = 'unknown'
+
+            # 筛选
+            if split and split != split_name:
+                continue
+
+            labels = image_labels.get(str(img_path), [])
+
+            images.append({
+                "filename": img_path.name,
+                "path": f"/api/v1/datasets/{name}/images/{img_path.name}",
+                "thumbnail": f"/api/v1/datasets/{name}/thumbnails/{img_path.name}",
+                "width": width,
+                "height": height,
+                "split": split_name,
+                "label_count": len(labels),
+                "labels": labels
+            })
+        except Exception as e:
+            print(f"Error processing image {img_path}: {e}")
+
+    # 分页
+    total = len(images)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated_images = images[start:end]
+
+    return {
+        "success": True,
+        "images": paginated_images,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "view": view
+    }
+
+
+@router.get("/datasets/{name}/images/{filename}")
+async def get_dataset_image(name: str, filename: str):
+    """获取数据集图片"""
+    from fastapi.responses import FileResponse
+
+    dataset_path = settings.DATASETS_DIR / name
+    images_dir = dataset_path / "images"
+    image_path = images_dir / filename
+
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+
+    # 确定图片类型
+    ext = filename.lower().split('.')[-1]
+    media_types = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'bmp': 'image/bmp',
+        'webp': 'image/webp'
+    }
+
+    return FileResponse(image_path, media_type=media_types.get(ext, 'image/jpeg'))
+
+
+@router.get("/datasets/{name}/image-info/{filename}")
+async def get_image_info(name: str, filename: str):
+    """获取图片详细信息"""
+    from PIL import Image
+
+    dataset_path = settings.DATASETS_DIR / name
+    images_dir = dataset_path / "images"
+    labels_dir = dataset_path / "labels"
+
+    image_path = images_dir / filename
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+
+    # 获取图片尺寸
+    width, height = 0, 0
+    try:
+        with Image.open(image_path) as img:
+            width, height = img.size
+    except:
+        pass
+
+    # 获取标签
+    label_file = labels_dir / f"{Path(filename).stem}.txt"
+    labels = []
+    if label_file.exists():
+        try:
+            with open(label_file, 'r') as f:
+                for line in f.readlines():
+                    parts = line.strip().split()
+                    if parts:
+                        labels.append({
+                            "class_id": int(parts[0]),
+                            "bbox": [float(x) for x in parts[1:]] if len(parts) > 1 else []
+                        })
+        except:
+            pass
+
+    # 确定拆分
+    path_parts = str(image_path).split('/')
+    if 'train' in path_parts:
+        split = 'train'
+    elif 'val' in path_parts:
+        split = 'val'
+    elif 'test' in path_parts:
+        split = 'test'
+    else:
+        split = 'unknown'
+
+    return {
+        "success": True,
+        "info": {
+            "filename": filename,
+            "width": width,
+            "height": height,
+            "split": split,
+            "label_count": len(labels),
+            "labels": labels,
+            "image_url": f"/api/v1/datasets/{name}/images/{filename}",
+            "thumbnail_url": f"/api/v1/datasets/{name}/thumbnails/{filename}"
+        }
+    }
+
+
+@router.get("/datasets/{name}/export/ndjson")
+async def export_dataset_ndjson(name: str):
+    """
+    导出数据集为 NDJSON 格式
+
+    格式:
+    {"filename": "img001.jpg", "split": "train", "labels": [...]}
+    {"filename": "img002.jpg", "split": "train", "labels": [...]}
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+
+    dataset_path = settings.DATASETS_DIR / name
+    images_dir = dataset_path / "images"
+    labels_dir = dataset_path / "labels"
+
+    if not images_dir.exists():
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    # 收集标签信息
+    image_labels = {}
+    if labels_dir.exists():
+        for label_file in labels_dir.rglob("*.txt"):
+            label_stem = label_file.stem
+            try:
+                with open(label_file, 'r') as f:
+                    lines = f.readlines()
+                labels = []
+                for line in lines:
+                    parts = line.strip().split()
+                    if parts:
+                        labels.append({
+                            "class_id": int(parts[0]),
+                            "bbox": [float(x) for x in parts[1:]] if len(parts) > 1 else []
+                        })
+                image_labels[label_stem] = labels
+            except:
+                pass
+
+    # 生成 NDJSON
+    def generate():
+        for img_path in sorted(images_dir.rglob('*')):
+            if not img_path.is_file():
+                continue
+
+            ext = img_path.suffix.lower()
+            if ext not in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
+                continue
+
+            # 确定拆分
+            path_parts = str(img_path).split('/')
+            if 'train' in path_parts:
+                split = 'train'
+            elif 'val' in path_parts:
+                split = 'val'
+            elif 'test' in path_parts:
+                split = 'test'
+            else:
+                split = 'unknown'
+
+            # 获取标签
+            labels = image_labels.get(img_path.stem, [])
+
+            # 构建记录
+            record = {
+                "filename": img_path.name,
+                "split": split,
+                "labels": labels
+            }
+
+            yield json.dumps(record, ensure_ascii=False) + '\n'
+
+    filename = f"{name}_export.ndjson"
+    response = StreamingResponse(generate(), media_type="application/octet-stream")
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
+
+

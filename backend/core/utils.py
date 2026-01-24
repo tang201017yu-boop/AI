@@ -4,7 +4,7 @@
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 
@@ -85,13 +85,67 @@ def save_uploaded_file(upload_file, destination: str) -> str:
         raise Exception(f"Error saving file: {e}")
 
 
-def extract_zip(zip_path: str, extract_to: str) -> bool:
-    """解压 ZIP 文件"""
+def extract_zip(zip_path: str, extract_to: str) -> Dict[str, Any]:
+    """
+    解压 ZIP 文件
+    支持大文件（50GB+），保留完整目录结构
+    返回解压统计信息
+    """
+    import zipfile
+    import os
+
+    result = {
+        "success": False,
+        "total_files": 0,
+        "extracted_files": 0,
+        "image_files": 0,
+        "label_files": 0,
+        "skipped_files": 0,
+        "errors": []
+    }
+
     try:
-        import zipfile
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_to)
-        return True
+            # 获取文件列表
+            all_files = zip_ref.namelist()
+            result["total_files"] = len(all_files)
+
+            # 解压每个文件，保留目录结构
+            for file_name in all_files:
+                try:
+                    # 跳过目录和特殊文件
+                    if file_name.endswith('/') or file_name.startswith('__MACOSX'):
+                        result["skipped_files"] += 1
+                        continue
+
+                    # 解压文件，保留相对路径
+                    target_path = os.path.join(extract_to, file_name)
+
+                    # 创建目标目录
+                    target_dir = os.path.dirname(target_path)
+                    if target_dir:
+                        os.makedirs(target_dir, exist_ok=True)
+
+                    # 解压文件
+                    with zip_ref.open(file_name) as source:
+                        with open(target_path, 'wb') as target:
+                            target.write(source.read())
+
+                    result["extracted_files"] += 1
+
+                    # 统计图片和标签文件
+                    ext = os.path.splitext(file_name)[1].lower()
+                    if ext in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
+                        result["image_files"] += 1
+                    elif ext == '.txt':
+                        result["label_files"] += 1
+
+                except Exception as e:
+                    result["errors"].append(f"Error extracting {file_name}: {str(e)}")
+
+        result["success"] = True
+        return result
+
     except Exception as e:
-        print(f"Error extracting zip: {e}")
-        return False
+        result["errors"].append(f"Error opening zip: {str(e)}")
+        return result
