@@ -540,6 +540,7 @@ class DatasetService:
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
         images_found = []
         labels_found = []
+        yaml_file = None  # 存储 data.yaml 路径
 
         # 遍历所有子目录查找文件
         for item in dataset_dir.rglob('*'):
@@ -559,6 +560,10 @@ class DatasetService:
                     if item.name != 'data.yaml' and item.name != 'dataset.yaml':
                         if not str(item).startswith(str(images_dir)) and not str(item).startswith(str(labels_dir)):
                             labels_found.append(item)
+                elif ext in ['.yaml', '.yml']:
+                    # 找到 data.yaml 或 dataset.yaml
+                    if item.name in ['data.yaml', 'dataset.yaml']:
+                        yaml_file = item
 
         # 移动图片到 images 目录
         moved_images = 0
@@ -606,6 +611,19 @@ class DatasetService:
             except Exception as e:
                 print(f"Error moving label {label_path}: {e}")
 
+        # 处理 data.yaml 文件
+        if yaml_file and yaml_file.exists():
+            try:
+                target_yaml = dataset_dir / "data.yaml"
+                # 如果目标文件已存在，先备份
+                if target_yaml.exists():
+                    target_yaml.rename(str(target_yaml) + ".backup")
+                # 移动并更新 YAML 内容
+                self._move_and_update_yaml(yaml_file, target_yaml, dataset_dir)
+                print(f"data.yaml 已移动到: {target_yaml}")
+            except Exception as e:
+                print(f"Error moving data.yaml: {e}")
+
         # 清理空的子目录
         for item in dataset_dir.iterdir():
             if item.is_dir():
@@ -626,6 +644,78 @@ class DatasetService:
                                 item.rmdir()
                 except Exception:
                     pass
+
+    def _move_and_update_yaml(self, source_yaml: Path, target_yaml: Path, dataset_dir: Path):
+        """
+        移动并更新 YAML 文件
+        更新路径引用以确保正确指向 images 和 labels 目录
+        """
+        import shutil
+        import yaml as pyyaml
+
+        # 读取原始 YAML 内容
+        with open(source_yaml, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # 尝试解析 YAML 并更新路径
+        try:
+            data = pyyaml.safe_load(content)
+            if data:
+                updated = False
+                source_parent = source_yaml.parent
+
+                # 更新 train、val、test 路径
+                for key in ['train', 'val', 'test']:
+                    if key in data and data[key]:
+                        old_path = str(data[key])
+
+                        # 处理 ../ 开头的相对路径
+                        if old_path.startswith('../'):
+                            # 相对于 source_yaml.parent 计算正确路径
+                            rel_path = old_path  # 保持 ../train/images 格式
+                            # 检查目标是否存在
+                            potential_path = source_parent / rel_path
+                            if not potential_path.exists():
+                                # 尝试去掉 ../
+                                clean_path = old_path.replace('../', '')
+                                potential_path = dataset_dir / clean_path
+                                if potential_path.exists():
+                                    rel_path = clean_path
+                                    old_path = f"../{clean_path}"
+
+                        # 直接移动文件
+                        shutil.move(str(source_yaml), str(target_yaml))
+
+                        # 修改 YAML 内容
+                        content = content.replace('train: ../train/images', 'train: train/images')
+                        content = content.replace('val: ../valid/images', 'val: valid/images')
+                        content = content.replace('val: ../val/images', 'val: valid/images')
+                        content = content.replace('test: ../test/images', 'test: test/images')
+
+                        with open(target_yaml, 'w', encoding='utf-8') as f:
+                            f.write(content)
+
+                        print(f"  data.yaml 路径已更新")
+                        updated = True
+                else:
+                    # 直接移动文件
+                    shutil.move(str(source_yaml), str(target_yaml))
+            else:
+                # 直接移动文件
+                shutil.move(str(source_yaml), str(target_yaml))
+        except Exception as e:
+            print(f"  解析 YAML 失败，直接移动: {e}")
+            try:
+                shutil.move(str(source_yaml), str(target_yaml))
+            except:
+                pass
+
+        # 删除源文件（如果还在）
+        if source_yaml.exists():
+            try:
+                source_yaml.unlink()
+            except:
+                pass
 
     def _cleanup_empty_dirs(self, directory: Path):
         """递归清理空目录"""
