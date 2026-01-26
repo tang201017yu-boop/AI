@@ -433,10 +433,12 @@ class DatasetService:
         classes_found = []
         for class_id in sorted(class_counts.keys()):
             class_name = class_id_to_name.get(class_id, f"class_{class_id}")
+            # 确保 count 是整数（YAML 解析可能产生浮点数）
+            count = int(class_counts[class_id]) if class_counts[class_id] else 0
             classes_found.append({
                 "id": class_id,
                 "name": class_name,
-                "count": class_counts[class_id]
+                "count": count
             })
 
         return {

@@ -21,7 +21,7 @@ except ImportError:
 from config.config import settings
 
 
-def get_model_path(model: YOLO) -> str:
+def get_model_path(model: 'YOLO') -> str:
     """获取模型的正确路径，用于 Solutions API"""
     # 尝试多种方式获取模型路径
     if hasattr(model, 'ckpt_path') and model.ckpt_path:
@@ -41,7 +41,7 @@ class SolutionsService:
         
         self.models: Dict[str, YOLO] = {}
         
-    def load_model(self, model_name: str = None) -> YOLO:
+    def load_model(self, model_name: str = None) -> 'YOLO':
         """加载 YOLO 模型"""
         model_name = model_name or settings.DEFAULT_MODEL
         

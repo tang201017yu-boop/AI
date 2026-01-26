@@ -13,10 +13,22 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import uuid
-import supervision as sv
+
+try:
+    import supervision as sv
+    SUPERVISION_AVAILABLE = True
+except ImportError:
+    SUPERVISION_AVAILABLE = False
+    sv = None
 
 from config.config import settings
-from backend.services.supervision_service import supervision_service
+
+try:
+    from backend.services.supervision_service import supervision_service
+    SUPERVISION_SERVICE_AVAILABLE = True
+except ImportError:
+    SUPERVISION_SERVICE_AVAILABLE = False
+    supervision_service = None
 
 
 class AnnotationService:

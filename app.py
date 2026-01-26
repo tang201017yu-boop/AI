@@ -263,10 +263,14 @@ logger.info(f"模板引擎: {templates_dir}")
 # ============================================================================
 # 路由注册
 # ============================================================================
+from backend.api.routes import router as api_router
 from backend.modules.data_preparation.routes import router as data_prep_router
 from backend.modules.training.routes import router as training_router
 from backend.modules.inference.routes import router as inference_router
 from backend.modules.solutions.routes import router as solutions_router
+
+# 基础 API 路由
+app.include_router(api_router, prefix="/api/v1", tags=["基础功能"])
 
 # 数据准备模块路由
 app.include_router(data_prep_router, prefix="/api/v1", tags=["数据准备"])

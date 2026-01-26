@@ -55,7 +55,7 @@ def _to_numpy(frame):
     return frame
 
 
-def get_model_path(model: YOLO) -> str:
+def get_model_path(model: 'YOLO') -> str:
     """获取模型路径"""
     if hasattr(model, 'ckpt_path') and model.ckpt_path:
         return str(model.ckpt_path)
@@ -117,7 +117,7 @@ class SolutionsService:
 
         self.models: Dict[str, YOLO] = {}
 
-    def load_model(self, model_name: str = None) -> YOLO:
+    def load_model(self, model_name: str = None) -> 'YOLO':
         """加载模型"""
         from backend.core.yolo_engine import yolo_engine
         return yolo_engine.load_model(model_name)

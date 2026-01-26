@@ -135,7 +135,7 @@ class YOLOService:
                 return path
         return None
 
-    def _extract_model_file(self, model: YOLO) -> Optional[Path]:
+    def _extract_model_file(self, model: 'YOLO') -> Optional[Path]:
         candidates = [
             getattr(model, "ckpt_path", None),
             getattr(model, "weights", None),
@@ -174,7 +174,7 @@ class YOLOService:
         except Exception as exc:  # pragma: no cover - best effort caching
             logger.debug("Failed to cache model %s: %s", source_path, exc)
 
-    def _extract_model_classes(self, model: YOLO) -> List[str]:
+    def _extract_model_classes(self, model: 'YOLO') -> List[str]:
         names = getattr(model, "names", None)
         if isinstance(names, dict):
             try:
@@ -185,7 +185,7 @@ class YOLOService:
             return [str(item) for item in names if item is not None]
         return []
 
-    def _update_model_metadata_cache(self, path: Path, model: Optional[YOLO]) -> Optional[ModelInfo]:
+    def _update_model_metadata_cache(self, path: Path, model: Optional['YOLO']) -> Optional[ModelInfo]:
         try:
             stat = path.stat()
         except FileNotFoundError:
@@ -267,7 +267,7 @@ class YOLOService:
             self._register_model_file(weight_path)
             self._load_model_metadata(weight_path)
     
-    def load_model(self, model_identifier: Optional[str]) -> YOLO:
+    def load_model(self, model_identifier: Optional[str]) -> 'YOLO':
         """加载或获取缓存模型"""
         resolved_path = self._resolve_model_path(model_identifier)
         cache_key = resolved_path
@@ -429,11 +429,32 @@ class YOLOService:
 
             print(f"[{task_id}] 开始训练")
             print(f"[{task_id}] 模型类型: {model_type}")
-            print(f"[{task_id}] 数据集: {config.dataset_path}")
 
-            dataset_path = Path(config.dataset_path)
-            if not dataset_path.exists():
-                raise FileNotFoundError(f"数据集文件不存在: {config.dataset_path}")
+            # 解析数据集路径 - 支持数据集名称或完整路径
+            dataset_path_resolved = Path(config.dataset_path)
+            if not dataset_path_resolved.exists():
+                # 尝试作为数据集名称解析
+                for search_path in settings.dataset_search_paths:
+                    candidate = search_path / config.dataset_path
+                    if candidate.exists():
+                        dataset_path_resolved = candidate
+                        break
+                    # 也检查 data.yaml
+                    yaml_candidate = search_path / config.dataset_path / "data.yaml"
+                    if yaml_candidate.exists():
+                        dataset_path_resolved = yaml_candidate
+                        break
+
+            if not dataset_path_resolved.exists():
+                raise FileNotFoundError(f"数据集不存在: {config.dataset_path}")
+
+            # 如果是 data.yaml 文件，直接使用；否则查找 data.yaml
+            if dataset_path_resolved.is_file() and dataset_path_resolved.name in ['data.yaml', 'data.yml']:
+                config.dataset_path = str(dataset_path_resolved)
+            else:
+                config.dataset_path = str(dataset_path_resolved / "data.yaml")
+
+            print(f"[{task_id}] 数据集路径: {config.dataset_path}")
 
             base_model_identifier = config.model_path or (
                 f"{model_type}.pt" if config.pretrained else f"{model_type}.yaml"

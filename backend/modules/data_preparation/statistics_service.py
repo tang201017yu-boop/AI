@@ -238,8 +238,8 @@ class StatisticsService:
         # 生成热力图数据 (10x10 网格)
         heatmap_grid = np.zeros((10, 10))
         for point in center_points:
-            grid_x = min(9, int(point["x"] / 640 * 10))
-            grid_y = min(9, int(point["y"] / 480 * 10))
+            grid_x = min(9, int(point["x"] / 64))  # point["x"] 范围 0-640
+            grid_y = min(9, int(point["y"] / 48))  # point["y"] 范围 0-480
             heatmap_grid[grid_y][grid_x] += 1
 
         # 转换为列表
@@ -514,7 +514,7 @@ class StatisticsService:
             return round((sorted_vals[mid - 1] + sorted_vals[mid]) / 2, 1)
         return round(sorted_vals[mid], 1)
 
-    def _create_buckets(self, values: List[int], num_buckets: int) -> Dict:
+    def _create_buckets(self, values: List[float], num_buckets: int) -> Dict:
         """创建数值分桶"""
         if not values:
             return {"labels": [], "counts": []}
@@ -522,20 +522,21 @@ class StatisticsService:
         min_val = min(values)
         max_val = max(values)
         range_val = max_val - min_val + 1
-        bucket_size = max(1, range_val // num_buckets)
+        bucket_size = max(1, range_val / num_buckets)
 
         buckets = [0] * num_buckets
         labels = []
 
         for v in values:
-            bucket_idx = min(num_buckets - 1, (v - min_val) // bucket_size)
+            bucket_idx = int((v - min_val) / bucket_size)
+            bucket_idx = max(0, min(num_buckets - 1, bucket_idx))
             buckets[bucket_idx] += 1
 
         # 创建标签
         for i in range(num_buckets):
             start = min_val + i * bucket_size
             end = start + bucket_size - 1
-            labels.append(f"{start}-{end}")
+            labels.append(f"{round(start, 2)}-{round(end, 2)}")
 
         return {"labels": labels, "counts": buckets}
 

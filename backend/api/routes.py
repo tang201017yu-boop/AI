@@ -266,31 +266,66 @@ async def upload_dataset(file: UploadFile = File(...)):
     """上传数据集（zip 格式）"""
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only .zip files are allowed")
-    
+
     try:
         import zipfile
-        
+        import shutil
+
         # 保存上传的 zip 文件
         zip_path = settings.UPLOADS_DIR / file.filename
         save_uploaded_file(file, str(zip_path))
-        
-        # 解压到数据集目录
+
+        # 解压到临时目录
         dataset_name = file.filename.replace('.zip', '')
-        dataset_path = settings.DATASETS_DIR / dataset_name
-        
+        temp_path = settings.UPLOADS_DIR / f"temp_{dataset_name}"
+
+        # 清理旧目录
+        if temp_path.exists():
+            shutil.rmtree(temp_path)
+        temp_path.mkdir(parents=True, exist_ok=True)
+
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(dataset_path)
-        
+            namelist = zip_ref.namelist()
+            print(f"[数据集上传] ZIP 内部文件数量: {len(namelist)}")
+            zip_ref.extractall(temp_path)
+
         # 删除 zip 文件
         zip_path.unlink()
-        
+
+        # 处理嵌套目录：如果解压后只有一个子目录，把内容提上来
+        dataset_path = settings.DATASETS_DIR / dataset_name
+
+        if temp_path.exists():
+            contents = list(temp_path.iterdir())
+            if len(contents) == 1 and contents[0].is_dir():
+                # ZIP 内部有嵌套目录，移动内容上去
+                nested_dir = contents[0]
+                print(f"[数据集上传] 检测到嵌套目录，移动内容: {nested_dir.name}")
+
+                if dataset_path.exists():
+                    shutil.rmtree(dataset_path)
+                shutil.move(str(nested_dir), str(dataset_path))
+                shutil.rmtree(temp_path)
+            else:
+                # 直接移动整个 temp 目录
+                if dataset_path.exists():
+                    shutil.rmtree(dataset_path)
+                shutil.move(str(temp_path), str(dataset_path))
+
+        # 统计文件
+        extracted_files = list(dataset_path.rglob("*")) if dataset_path.exists() else []
+        print(f"[数据集上传] 最终文件数量: {len(extracted_files)}")
+
         return {
             "success": True,
             "message": "Dataset uploaded successfully",
             "dataset_name": dataset_name,
-            "path": str(dataset_path)
+            "path": str(dataset_path),
+            "files_count": len(extracted_files)
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -16,14 +16,16 @@ from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import cv2
+import numpy as np
+from PIL import Image
+
 try:
     import albumentations as A
-    import cv2
-    import numpy as np
-    from PIL import Image
     ALBUMENTATIONS_AVAILABLE = True
 except ImportError:
     ALBUMENTATIONS_AVAILABLE = False
+    A = None
 
 
 @dataclass
@@ -82,7 +84,7 @@ class AugmentationService:
             raise RuntimeError("Albumentations 库未安装，请运行: pip install albumentations")
         return True
 
-    def create_transform(self, config: AugmentationConfig) -> A.Compose:
+    def create_transform(self, config: AugmentationConfig) -> 'A.Compose':
         """创建增强变换管道"""
         transforms_list = []
 

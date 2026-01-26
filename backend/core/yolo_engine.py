@@ -118,7 +118,7 @@ class YOLOEngine:
 
         return identifier
 
-    def load_model(self, model_identifier: Optional[str] = None) -> YOLO:
+    def load_model(self, model_identifier: Optional[str] = None) -> 'YOLO':
         """加载模型"""
         resolved_path = self._resolve_model_path(model_identifier)
         cache_key = resolved_path

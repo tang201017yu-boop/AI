@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>数据集管理 - OpenCV Platform</title>
+    <title>数据集管理 - AI Vision Platform</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <nav class="navbar">
         <div class="navbar-content">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <img src="/static/company-logo.png" alt="鑫恒福科技" style="height: 40px; object-fit: contain;">
-                <a href="/" class="navbar-brand">OpenCV Platform</a>
+            <div class="company-logo-section">
+                <img src="/static/company-logo.png" alt="公司Logo">
+                <a href="/" class="navbar-brand">AI Vision</a>
             </div>
             <ul class="navbar-nav">
                 <li><a href="/" class="nav-link">首页</a></li>
@@ -20,94 +20,159 @@
                 <li><a href="/training" class="nav-link">模型训练</a></li>
                 <li><a href="/models" class="nav-link">模型管理</a></li>
                 <li><a href="/datasets" class="nav-link active">数据集</a></li>
-                <li><a href="/annotation" class="nav-link">数据标注</a></li>
+                <li><a href="/annotation" class="nav-link">智能标注</a></li>
             </ul>
         </div>
     </nav>
 
     <div class="container">
-        <!-- 页面标题和操作栏 -->
-        <div class="page-header">
+        <!-- 页面标题 -->
+        <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
             <div>
-                <h1 style="margin: 0; font-size: 1.5rem;">📁 数据集管理</h1>
-                <p style="color: var(--secondary-color); margin: 0.5rem 0 0;">管理和查看您的训练数据集</p>
+                <h1 style="margin: 0; font-size: 1.5rem; color: var(--dark-color);">数据集管理</h1>
+                <p style="margin: 0.25rem 0 0; color: var(--secondary-color); font-size: 0.9rem;">管理和查看您的训练数据集</p>
             </div>
             <div style="display: flex; gap: 0.5rem;">
                 <button class="btn btn-primary" onclick="showUploadModal()">
-                    ➕ 上传数据集
+                    <span>+</span> 上传数据集
                 </button>
-                <button class="btn btn-ghost" onclick="loadDatasets({ force: true })">
-                    🔄 刷新
+                <button class="btn btn-secondary" onclick="loadDatasets({ force: true })">
+                    <span>↻</span> 刷新
                 </button>
             </div>
         </div>
 
         <!-- 统计摘要 -->
-        <div id="dataset-summary" class="grid grid-4 dataset-summary" style="display: none;">
-            <div class="stat-card stat-card-neutral">
+        <div id="dataset-summary" class="grid grid-4" style="display: none; margin-bottom: 1.5rem;">
+            <div class="stat-card">
                 <div class="stat-value" id="summary-total-datasets">0</div>
                 <div class="stat-label">数据集</div>
             </div>
-            <div class="stat-card stat-card-success">
+            <div class="stat-card" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(5, 150, 105, 0.2));">
                 <div class="stat-value" id="summary-total-images">0</div>
                 <div class="stat-label">图片总数</div>
             </div>
-            <div class="stat-card stat-card-info">
+            <div class="stat-card" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2));">
                 <div class="stat-value" id="summary-total-annotations">0</div>
                 <div class="stat-label">标注总数</div>
             </div>
-            <div class="stat-card stat-card-warning">
+            <div class="stat-card" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.2));">
                 <div class="stat-value" id="summary-total-classes">0</div>
                 <div class="stat-label">类别</div>
             </div>
         </div>
 
-        <!-- 数据集列表 -->
+        <!-- 数据集卡片列表 -->
         <div class="card">
             <div class="card-header">
-                <span>数据集列表</span>
+                <span>我的数据集</span>
             </div>
-            <div id="datasets-list">
-                <p>加载中...</p>
+            <div id="datasets-container">
+                <div class="loading-placeholder">
+                    <span class="loading"></span> 加载中...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上传数据集模态框 -->
+    <div class="modal-overlay" id="uploadModal">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>上传数据集</h3>
+                <button class="modal-close" onclick="closeUploadModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">数据集名称 *</label>
+                    <input type="text" id="datasetName" placeholder="输入数据集名称" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">任务类型</label>
+                    <select id="taskType" class="form-control">
+                        <option value="detect">检测</option>
+                        <option value="segment">分割</option>
+                        <option value="pose">姿态估计</option>
+                        <option value="classify">分类</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">上传文件 (ZIP/图片)</label>
+                    <div class="upload-area" id="upload-drop-area" onclick="document.getElementById('datasetFile').click()">
+                        <input type="file" id="datasetFile" accept=".zip,.jpg,.jpeg,.png,.bmp" style="display: none;" onchange="handleFileSelect(event)">
+                        <div id="upload-placeholder">
+                            <p style="font-size: 2rem; margin-bottom: 0.5rem;">📦</p>
+                            <p>点击或拖拽上传</p>
+                            <p style="color: var(--secondary-color); font-size: 0.85rem;">支持 ZIP 或单张图片</p>
+                        </div>
+                        <div id="upload-file-info" style="display: none;">
+                            <p style="font-size: 1.5rem; margin-bottom: 0.5rem;">📄</p>
+                            <p id="upload-file-name" style="font-weight: 500; word-break: break-all;"></p>
+                            <p id="upload-file-size" style="color: var(--secondary-color); font-size: 0.85rem;"></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="smartStorage" checked style="width: auto;">
+                        <span style="color: var(--secondary-color); font-size: 0.9rem;">启用智能存储</span>
+                    </label>
+                </div>
+                <div id="upload-progress-container" style="display: none; margin-top: 1rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span id="upload-status-text">上传中...</span>
+                        <span id="upload-percent">0%</span>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar" id="upload-progress-bar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeUploadModal()">取消</button>
+                <button class="btn btn-primary" id="upload-submit-btn" onclick="uploadDataset()">开始上传</button>
             </div>
         </div>
     </div>
 
     <!-- 数据集统计模态框 -->
     <div class="modal-overlay" id="statsModal">
-        <div class="modal modal-lg">
+        <div class="modal" style="max-width: 900px; max-height: 90vh;">
             <div class="modal-header">
                 <h3 id="statsModalTitle">数据集统计</h3>
                 <button class="modal-close" onclick="closeStatsModal()">&times;</button>
             </div>
-            <div class="modal-body">
-                <div class="grid grid-4" style="margin-bottom: 1.5rem;">
-                    <div class="stat-card stat-card-info">
-                        <div class="stat-value" id="stat-images">0</div>
-                        <div class="stat-label">图片数</div>
-                    </div>
-                    <div class="stat-card stat-card-success">
-                        <div class="stat-value" id="stat-annotations">0</div>
-                        <div class="stat-label">标注数</div>
-                    </div>
-                    <div class="stat-card stat-card-warning">
-                        <div class="stat-value" id="stat-classes">0</div>
-                        <div class="stat-label">类别数</div>
-                    </div>
-                    <div class="stat-card stat-card-neutral">
-                        <div class="stat-value" id="stat-size">0 MB</div>
-                        <div class="stat-label">存储大小</div>
+            <div class="modal-body" style="padding: 0;">
+                <!-- 统计卡片 -->
+                <div style="padding: 1.25rem; border-bottom: 1px solid var(--border-color);">
+                    <div class="grid grid-4" style="gap: 1rem;">
+                        <div class="stat-card">
+                            <div class="stat-value" id="stat-images">0</div>
+                            <div class="stat-label">图片</div>
+                        </div>
+                        <div class="stat-card" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(5, 150, 105, 0.2));">
+                            <div class="stat-value" id="stat-annotations">0</div>
+                            <div class="stat-label">标注</div>
+                        </div>
+                        <div class="stat-card" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2));">
+                            <div class="stat-value" id="stat-classes">0</div>
+                            <div class="stat-label">类别</div>
+                        </div>
+                        <div class="stat-card" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.2));">
+                            <div class="stat-value" id="stat-size">0 MB</div>
+                            <div class="stat-label">大小</div>
+                        </div>
                     </div>
                 </div>
-
-                <div class="panel-tabs" style="margin-bottom: 1rem;">
-                    <div class="panel-tab active" onclick="switchStatsTab('class')">类别分布</div>
-                    <div class="panel-tab" onclick="switchStatsTab('spatial')">位置热图</div>
-                    <div class="panel-tab" onclick="switchStatsTab('dimension')">维度分析</div>
-                    <div class="panel-tab" onclick="switchStatsTab('split')">拆分比例</div>
+                <!-- 标签页 -->
+                <div class="panel-tabs" style="padding: 1rem 1.25rem; gap: 0.5rem;">
+                    <button class="panel-tab active" onclick="switchStatsTab('class')">类别分布</button>
+                    <button class="panel-tab" onclick="switchStatsTab('spatial')">位置热图</button>
+                    <button class="panel-tab" onclick="switchStatsTab('dimension')">维度分析</button>
+                    <button class="panel-tab" onclick="switchStatsTab('split')">拆分比例</button>
                 </div>
-
-                <div class="stats-chart-container">
+                <!-- 图表区域 -->
+                <div class="stats-chart-container" style="height: 350px; padding: 0 1.25rem 1.25rem;">
                     <div id="classChartTab" class="stats-chart active">
                         <canvas id="classChart"></canvas>
                     </div>
@@ -125,242 +190,43 @@
         </div>
     </div>
 
-    <!-- 上传数据集模态框 -->
-    <div class="modal-overlay" id="uploadModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h3>上传数据集</h3>
-                <button class="modal-close" onclick="closeUploadModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>数据集名称 *</label>
-                    <input type="text" id="datasetName" placeholder="输入数据集名称" class="form-control">
-                </div>
-                <div class="form-group">
-                    <label>任务类型</label>
-                    <select id="taskType" class="form-control">
-                        <option value="detect">🎯 目标检测</option>
-                        <option value="segment">🔺 实例分割</option>
-                        <option value="pose">⭕ 姿态估计</option>
-                        <option value="obb">🔘 旋转框检测</option>
-                        <option value="classify">📁 图像分类</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>上传文件 (ZIP/图片) *</label>
-                    <div class="upload-area" id="upload-drop-area" onclick="document.getElementById('datasetFile').click()">
-                        <input type="file" id="datasetFile" accept=".zip,.jpg,.jpeg,.png,.bmp" style="display: none;" onchange="handleFileSelect(event)">
-                        <div id="upload-placeholder">
-                            <p style="font-size: 2rem; margin-bottom: 0.5rem;">📦</p>
-                            <p>点击或拖拽上传</p>
-                            <p style="color: var(--secondary-color); font-size: 0.85rem;">支持 ZIP 压缩包或单张图片 (JPG/PNG/BMP)</p>
-                        </div>
-                        <div id="upload-file-info" style="display: none;">
-                            <p style="font-size: 2rem; margin-bottom: 0.5rem;">📄</p>
-                            <p id="upload-file-name" style="font-weight: 500;"></p>
-                            <p id="upload-file-size" style="color: var(--secondary-color); font-size: 0.85rem;"></p>
-                        </div>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                        <input type="checkbox" id="smartStorage" checked style="width: auto;">
-                        <span>启用智能存储 (自动去重 + 完整性校验)</span>
-                    </label>
-                </div>
-
-                <!-- 上传进度 (默认隐藏) -->
-                <div id="upload-progress-container" style="display: none; margin-top: 1.5rem;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span id="upload-status-text">上传中...</span>
-                        <span id="upload-percent">0%</span>
-                    </div>
-                    <div class="progress">
-                        <div class="progress-bar" id="upload-progress-bar" style="width: 0%"></div>
-                    </div>
-                </div>
-
-                <!-- 处理进度 (默认隐藏) -->
-                <div id="processing-progress-container" style="display: none; margin-top: 1.5rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                        <span class="loading"></span>
-                        <span id="processing-status-text">正在处理数据集...</span>
-                    </div>
-                    <div id="processing-steps" style="font-size: 0.85rem; color: var(--secondary-color);">
-                        <!-- 处理步骤会动态插入 -->
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" id="upload-cancel-btn" onclick="closeUploadModal()" style="display: none;">取消</button>
-                <button class="btn btn-primary" id="upload-submit-btn" onclick="uploadDataset()">
-                    开始上传
-                </button>
-                <button class="btn btn-ghost" id="upload-close-btn" onclick="closeUploadModal()" style="display: none;">关闭</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 上传完成详情模态框 -->
-    <div class="modal-overlay" id="uploadResultModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h3>✅ 上传完成</h3>
-                <button class="modal-close" onclick="closeUploadResultModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div style="text-align: center; padding: 1rem 0;">
-                    <div style="font-size: 3rem; margin-bottom: 1rem;">🎉</div>
-                    <h4 style="margin: 0 0 0.5rem;">数据集上传成功！</h4>
-                    <p id="result-dataset-name" style="color: var(--primary-color); font-weight: 500;"></p>
-                </div>
-
-                <div style="background: var(--light-color); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
-                        <div>
-                            <div style="color: var(--secondary-color); font-size: 0.85rem;">图片数量</div>
-                            <div id="result-image-count" style="font-size: 1.25rem; font-weight: 600;">-</div>
-                        </div>
-                        <div>
-                            <div style="color: var(--secondary-color); font-size: 0.85rem;">类别数量</div>
-                            <div id="result-class-count" style="font-size: 1.25rem; font-weight: 600;">-</div>
-                        </div>
-                        <div>
-                            <div style="color: var(--secondary-color); font-size: 0.85rem;">存储节省</div>
-                            <div id="result-storage-saved" style="font-size: 1.25rem; font-weight: 600;">-</div>
-                        </div>
-                        <div>
-                            <div style="color: var(--secondary-color); font-size: 0.85rem;">处理状态</div>
-                            <div id="result-processing-status" style="font-size: 1.25rem; font-weight: 600;">-</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="result-processing-details" style="font-size: 0.9rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0;">
-                        <span style="color: var(--success-color);">✓</span>
-                        <span id="result-normalized">归一化: 0 张</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0;">
-                        <span style="color: var(--success-color);">✓</span>
-                        <span id="result-thumbnails">缩略图: 0 张</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0;">
-                        <span style="color: var(--success-color);">✓</span>
-                        <span id="result-labels">标签解析: 0 个</span>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="closeUploadResultModal()">关闭</button>
-                <button class="btn btn-primary" id="result-view-btn" onclick="viewDatasetStats()">查看统计</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 数据处理结果模态框 -->
-    <div class="modal-overlay" id="processResultModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h3>⚙️ 数据处理完成</h3>
-                <button class="modal-close" onclick="closeProcessResultModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #eee; margin-bottom: 1rem;">
-                    <div style="font-size: 3rem; margin-bottom: 0.5rem;">✅</div>
-                    <h4 id="process-dataset-name" style="margin: 0; color: var(--primary-color);"></h4>
-                </div>
-
-                <!-- 处理效果总结 -->
-                <div style="background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-                    <h5 style="margin: 0 0 0.75rem; color: #1565c0;">处理效果</h5>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem;">
-                        <div>
-                            <div style="font-size: 0.8rem; color: #666;">图像归一化</div>
-                            <div id="process-normalized" style="font-size: 1.1rem; font-weight: 600; color: #2e7d32;">-</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 0.8rem; color: #666;">缩略图生成</div>
-                            <div id="process-thumbnails" style="font-size: 1.1rem; font-weight: 600; color: #2e7d32;">-</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 0.8rem; color: #666;">标签解析</div>
-                            <div id="process-labels" style="font-size: 1.1rem; font-weight: 600; color: #2e7d32;">-</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 0.8rem; color: #666;">发现类别</div>
-                            <div id="process-classes" style="font-size: 1.1rem; font-weight: 600; color: #1565c0;">-</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 详细处理信息 -->
-                <div style="font-size: 0.9rem;">
-                    <h5 style="margin: 0 0 0.75rem;">详细处理信息</h5>
-                    <div id="process-details" style="background: #f9f9f9; border-radius: 8px; padding: 1rem;">
-                        <!-- 动态内容 -->
-                    </div>
-                </div>
-
-                <!-- 训练准备状态 -->
-                <div id="process-training-ready" style="margin-top: 1rem; padding: 1rem; border-radius: 8px; display: none;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="font-size: 1.5rem;">🎯</span>
-                        <div>
-                            <div style="font-weight: 600; color: #2e7d32;">数据集已准备好用于训练</div>
-                            <div style="font-size: 0.85rem; color: #666;">可以直接开始模型训练</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="closeProcessResultModal()">关闭</button>
-                <button class="btn btn-primary" id="process-train-btn" onclick="goToTraining()">开始训练</button>
-            </div>
-        </div>
-    </div>
-
     <!-- 图片浏览模态框 -->
     <div class="modal-overlay" id="browseImagesModal">
-        <div class="modal modal-xl">
-            <div class="modal-header">
+        <div class="modal" style="max-width: 95%; width: 1400px; max-height: 90vh;">
+            <div class="modal-header" style="flex-shrink: 0;">
                 <h3 id="browseModalTitle">浏览图片</h3>
                 <button class="modal-close" onclick="closeBrowseImagesModal()">&times;</button>
             </div>
-            <div class="modal-body" style="padding: 0;">
+            <div class="modal-body" style="padding: 0; display: flex; flex-direction: column; overflow: hidden;">
                 <!-- 工具栏 -->
-                <div style="padding: 1rem; border-bottom: 1px solid #eee; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
-                    <div style="display: flex; gap: 0.5rem;">
-                        <button class="btn btn-ghost btn-sm" id="view-grid-btn" onclick="setViewMode('grid')">▦ 网格</button>
-                        <button class="btn btn-ghost btn-sm" id="view-compact-btn" onclick="setViewMode('compact')">▤ 紧凑</button>
-                        <button class="btn btn-ghost btn-sm" id="view-table-btn" onclick="setViewMode('table')">☰ 表格</button>
+                <div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 0.35rem;">
+                        <button class="btn btn-sm" id="view-grid-btn" onclick="setViewMode('grid')">▦</button>
+                        <button class="btn btn-sm" id="view-compact-btn" onclick="setViewMode('compact')">▤</button>
+                        <button class="btn btn-sm" id="view-table-btn" onclick="setViewMode('table')">☰</button>
                     </div>
-                    <div style="border-left: 1px solid #ddd; padding-left: 1rem; display: flex; gap: 0.5rem;">
-                        <select id="split-filter" class="form-control" style="width: auto; padding: 0.4rem;" onchange="filterImages()">
-                            <option value="">全部拆分</option>
-                            <option value="train">训练集</option>
-                            <option value="val">验证集</option>
-                            <option value="test">测试集</option>
+                    <div style="border-left: 1px solid var(--border-color); padding-left: 0.75rem; display: flex; gap: 0.5rem; align-items: center;">
+                        <select id="split-filter" class="form-control" style="width: auto; padding: 0.4rem 0.6rem; font-size: 0.85rem;" onchange="filterImages()">
+                            <option value="">全部</option>
+                            <option value="train">训练</option>
+                            <option value="val">验证</option>
+                            <option value="test">测试</option>
                             <option value="unknown">未分配</option>
                         </select>
                     </div>
-                    <div style="margin-left: auto; display: flex; gap: 0.5rem;">
-                        <span id="image-count" style="color: var(--secondary-color); font-size: 0.9rem;">0 张图片</span>
-                        <button class="btn btn-ghost btn-sm" onclick="exportToNDJSON()">📥 导出 NDJSON</button>
+                    <div style="margin-left: auto; display: flex; gap: 0.75rem; align-items: center;">
+                        <span id="image-count" style="color: var(--secondary-color); font-size: 0.85rem;">0 张</span>
+                        <button class="btn btn-sm btn-secondary" onclick="exportToNDJSON()">导出</button>
                     </div>
                 </div>
-
                 <!-- 图片容器 -->
-                <div id="images-container" style="padding: 1rem; min-height: 300px; max-height: 60vh; overflow-y: auto;">
-                    <!-- 动态内容 -->
+                <div id="images-container" style="flex: 1; overflow-y: auto; padding: 1rem; min-height: 300px;">
                 </div>
-
                 <!-- 分页 -->
-                <div id="pagination-container" style="padding: 1rem; border-top: 1px solid #eee; display: flex; justify-content: center; gap: 0.5rem;">
-                    <button class="btn btn-ghost btn-sm" id="prev-page" onclick="changePage(-1)">上一页</button>
-                    <span id="page-info" style="padding: 0.5rem; color: var(--secondary-color);">1 / 1</span>
-                    <button class="btn btn-ghost btn-sm" id="next-page" onclick="changePage(1)">下一页</button>
+                <div style="padding: 0.75rem 1rem; border-top: 1px solid var(--border-color); display: flex; justify-content: center; align-items: center; gap: 1rem; flex-shrink: 0;">
+                    <button class="btn btn-sm btn-secondary" id="prev-page" onclick="changePage(-1)">上一页</button>
+                    <span id="page-info" style="color: var(--secondary-color); font-size: 0.9rem;">1 / 1</span>
+                    <button class="btn btn-sm btn-secondary" id="next-page" onclick="changePage(1)">下一页</button>
                 </div>
             </div>
         </div>
@@ -369,17 +235,16 @@
     <!-- 全屏图片查看器 -->
     <div class="modal-overlay" id="imageViewerModal" style="background: rgba(0,0,0,0.95); z-index: 2000;">
         <div style="position: absolute; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; z-index: 10;">
-            <button class="btn btn-ghost" style="color: white;" onclick="toggleLabels()">🏷️ 标签</button>
-            <button class="btn btn-ghost" style="color: white;" onclick="downloadImage()">📥 下载</button>
+            <button class="btn btn-ghost" style="color: white;" onclick="toggleLabels()">标签</button>
+            <button class="btn btn-ghost" style="color: white;" onclick="downloadImage()">下载</button>
             <button class="modal-close" style="color: white; font-size: 2rem;" onclick="closeImageViewer()">&times;</button>
         </div>
         <div style="position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%); display: flex; gap: 1rem; z-index: 10;">
-            <button class="btn btn-ghost" style="color: white;" onclick="prevImage()">◀ 上一张</button>
+            <button class="btn btn-ghost" style="color: white;" onclick="prevImage()">◀</button>
             <span id="viewer-counter" style="color: white; padding: 0.5rem 1rem; background: rgba(0,0,0,0.5); border-radius: 4px;">1 / 1</span>
-            <button class="btn btn-ghost" style="color: white;" onclick="nextImage()">下一张 ▶</button>
+            <button class="btn btn-ghost" style="color: white;" onclick="nextImage()">▶</button>
         </div>
         <div id="image-viewer-content" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
-            <!-- 动态内容 -->
         </div>
     </div>
 
@@ -389,206 +254,13 @@
         let currentDataset = null;
         let charts = {};
         let selectedFile = null;
-        let uploadedDatasetName = null;
-
-        // 初始化
-        document.addEventListener('DOMContentLoaded', () => {
-            loadDatasets();
-            setupDragDrop();
-        });
-
-        // 设置拖拽上传
-        function setupDragDrop() {
-            const dropArea = document.getElementById('upload-drop-area');
-
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                dropArea.addEventListener(eventName, preventDefaults, false);
-            });
-
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-
-            ['dragenter', 'dragover'].forEach(eventName => {
-                dropArea.addEventListener(eventName, () => {
-                    dropArea.classList.add('drag-over');
-                }, false);
-            });
-
-            ['dragleave', 'drop'].forEach(eventName => {
-                dropArea.addEventListener(eventName, () => {
-                    dropArea.classList.remove('drag-over');
-                }, false);
-            });
-
-            dropArea.addEventListener('drop', handleDrop, false);
-        }
-
-        function handleDrop(e) {
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleFile(files[0]);
-            }
-        }
-
-        function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (file) {
-                handleFile(file);
-            }
-        }
-
-        function handleFile(file) {
-            // 验证文件类型
-            const allowedTypes = ['.zip', '.jpg', '.jpeg', '.png', '.bmp'];
-            const ext = '.' + file.name.split('.').pop().toLowerCase();
-
-            if (!allowedTypes.includes(ext)) {
-                showToast('不支持的文件格式，请上传 ZIP 或图片文件', 'warning');
-                return;
-            }
-
-            selectedFile = file;
-
-            // 更新 UI
-            document.getElementById('upload-placeholder').style.display = 'none';
-            document.getElementById('upload-file-info').style.display = 'block';
-            document.getElementById('upload-file-name').textContent = file.name;
-            document.getElementById('upload-file-size').textContent = formatBytes(file.size);
-        }
-
-        // 加载数据集列表
-        async function loadDatasets({ force = false } = {}) {
-            try {
-                const response = await fetch('/api/v1/datasets/list');
-                const data = await response.json();
-
-                if (data.success) {
-                    renderDatasets(data.datasets);
-                }
-            } catch (error) {
-                console.error('加载数据集失败:', error);
-                document.getElementById('datasets-list').innerHTML =
-                    '<p style="color: var(--danger-color); text-align: center; padding: 2rem;">加载数据集失败，请稍后重试</p>';
-            }
-        }
-
-        // 渲染数据集列表
-        function renderDatasets(datasets) {
-            const totalDatasets = datasets.length;
-            const totalImages = datasets.reduce((sum, item) => sum + (item.num_images || 0), 0);
-            const totalAnnotations = datasets.reduce((sum, item) => sum + (item.num_annotations || 0), 0);
-            const classSet = new Set();
-            datasets.forEach(item => (item.classes || []).forEach(cls => classSet.add(cls)));
-
-            document.getElementById('summary-total-datasets').textContent = totalDatasets;
-            document.getElementById('summary-total-images').textContent = totalImages;
-            document.getElementById('summary-total-annotations').textContent = totalAnnotations;
-            document.getElementById('summary-total-classes').textContent = classSet.size;
-            document.getElementById('dataset-summary').style.display = 'grid';
-
-            if (datasets.length > 0) {
-                document.getElementById('datasets-list').innerHTML = `
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>名称</th>
-                                <th>任务类型</th>
-                                <th>图片数</th>
-                                <th>类别数</th>
-                                <th>处理状态</th>
-                                <th>创建时间</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${datasets.map(ds => `
-                                <tr>
-                                    <td><strong>${ds.name}</strong></td>
-                                    <td>${getTaskTypeName(ds.task_type)}</td>
-                                    <td>${formatNumber(ds.num_images || 0)}</td>
-                                    <td>${ds.num_classes || 0}</td>
-                                    <td>${getProcessingStatus(ds.processing)}</td>
-                                    <td>${formatDate(ds.created_at)}</td>
-                                    <td>
-                                        <button class="btn btn-ghost btn-xs" onclick="viewStats('${ds.name}')">
-                                            📊 统计
-                                        </button>
-                                        <button class="btn btn-ghost btn-xs" onclick="processDataset('${ds.name}')">
-                                            ⚙️ 处理
-                                        </button>
-                                        <button class="btn btn-ghost btn-xs" onclick="deleteDataset('${ds.name}')">
-                                            🗑️ 删除
-                                        </button>
-                                        <button class="btn btn-ghost btn-xs" onclick="openBrowseImages('${ds.name}')">
-                                            🖼️ 浏览
-                                        </button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-            } else {
-                document.getElementById('datasets-list').innerHTML = `
-                    <div style="text-align: center; padding: 4rem 2rem; color: var(--secondary-color);">
-                        <div style="font-size: 4rem; margin-bottom: 1rem;">📂</div>
-                        <p style="font-size: 1.1rem; margin-bottom: 1.5rem;">暂无数据集</p>
-                        <button class="btn btn-primary" onclick="showUploadModal()">
-                            ➕ 上传第一个数据集
-                        </button>
-                    </div>
-                `;
-            }
-        }
-
-        // 获取处理状态显示
-        function getProcessingStatus(processing) {
-            if (!processing || !processing.auto_processed) {
-                return '<span class="chip chip-warning">待处理</span>';
-            }
-
-            const normalized = processing.normalized || {};
-            const thumbnails = processing.thumbnails || {};
-            const labels = processing.labels || {};
-
-            const parts = [];
-            if ((normalized.total || 0) > 0) {
-                parts.push(`归一化 ${normalized.total}`);
-            }
-            if ((thumbnails.total || 0) > 0) {
-                parts.push(`缩略图 ${thumbnails.total}`);
-            }
-            if ((labels.total || 0) > 0) {
-                parts.push(`标签 ${labels.total}`);
-            }
-
-            if (parts.length > 0) {
-                return `<span class="chip chip-success">${parts.join(' | ')}</span>`;
-            }
-            return '<span class="chip chip-success">✓ 已完成</span>';
-        }
-
-        function getTaskTypeName(type) {
-            const names = {
-                'detect': '🎯 检测',
-                'segment': '🔺 分割',
-                'pose': '⭕ 姿态',
-                'obb': '🔘 OBB',
-                'classify': '📁 分类'
-            };
-            return names[type] || type;
-        }
-
-        // ==================== 图片浏览功能 ====================
 
         // 图片浏览状态
         let browseState = {
             datasetName: null,
             images: [],
             currentPage: 1,
-            pageSize: 50,
+            pageSize: 24,
             viewMode: 'grid',
             splitFilter: '',
             total: 0
@@ -599,14 +271,158 @@
             showLabels: true
         };
 
-        // 打开图片浏览模态框
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDatasets();
+            setupDragDrop();
+        });
+
+        // 拖拽上传
+        function setupDragDrop() {
+            const dropArea = document.getElementById('upload-drop-area');
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, preventDefaults, false);
+            });
+
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropArea.addEventListener(eventName, () => dropArea.classList.add('drag-over'), false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, () => dropArea.classList.remove('drag-over'), false);
+            });
+
+            dropArea.addEventListener('drop', (e) => {
+                const files = e.dataTransfer.files;
+                if (files.length > 0) handleFile(files[0]);
+            }, false);
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) handleFile(file);
+        }
+
+        function handleFile(file) {
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            const allowedTypes = ['.zip', '.jpg', '.jpeg', '.png', '.bmp'];
+            if (!allowedTypes.includes(ext)) {
+                showToast('不支持的文件格式', 'warning');
+                return;
+            }
+            selectedFile = file;
+            document.getElementById('upload-placeholder').style.display = 'none';
+            document.getElementById('upload-file-info').style.display = 'block';
+            document.getElementById('upload-file-name').textContent = file.name;
+            document.getElementById('upload-file-size').textContent = formatBytes(file.size);
+        }
+
+        // 加载数据集列表
+        async function loadDatasets({ force = false } = {}) {
+            const container = document.getElementById('datasets-container');
+            container.innerHTML = '<div class="loading-placeholder"><span class="loading"></span> 加载中...</div>';
+
+            try {
+                const response = await fetch('/api/v1/datasets/list');
+                const data = await response.json();
+                const datasets = data.datasets || [];
+
+                if (datasets.length > 0) {
+                    renderDatasets(datasets);
+                } else {
+                    renderEmptyState();
+                }
+            } catch (error) {
+                console.error('加载数据集失败:', error);
+                container.innerHTML = `<div class="loading-placeholder" style="color: var(--danger-color);">加载失败，请刷新重试</div>`;
+            }
+        }
+
+        // 渲染数据集卡片
+        function renderDatasets(datasets) {
+            // 更新统计
+            const totalDatasets = datasets.length;
+            const totalImages = datasets.reduce((sum, item) => sum + (item.num_images || 0), 0);
+            const totalAnnotations = datasets.reduce((sum, item) => sum + (item.num_annotations || 0), 0);
+            const classSet = new Set();
+            datasets.forEach(item => (item.classes || []).forEach(cls => classSet.add(cls)));
+
+            document.getElementById('summary-total-datasets').textContent = totalDatasets;
+            document.getElementById('summary-total-images').textContent = formatNumber(totalImages);
+            document.getElementById('summary-total-annotations').textContent = formatNumber(totalAnnotations);
+            document.getElementById('summary-total-classes').textContent = classSet.size;
+            document.getElementById('dataset-summary').style.display = 'grid';
+
+            // 渲染卡片
+            const container = document.getElementById('datasets-container');
+            container.innerHTML = `<div class="dataset-card-grid">
+                ${datasets.map(ds => `
+                    <div class="dataset-card">
+                        <div class="dataset-card-header">
+                            <div class="dataset-card-icon">📁</div>
+                            <div class="dataset-card-info">
+                                <h3>${ds.name}</h3>
+                                <span class="chip">${getTaskTypeName(ds.task_type)}</span>
+                            </div>
+                        </div>
+                        <div class="dataset-card-stats">
+                            <div class="dataset-card-stat">
+                                <span class="stat-num">${formatNumber(ds.num_images || 0)}</span>
+                                <span class="stat-text">图片</span>
+                            </div>
+                            <div class="dataset-card-stat">
+                                <span class="stat-num">${ds.num_classes || 0}</span>
+                                <span class="stat-text">类别</span>
+                            </div>
+                            <div class="dataset-card-stat">
+                                <span class="stat-num">${ds.split?.train || 0}/${ds.split?.val || 0}</span>
+                                <span class="stat-text">训练/验证</span>
+                            </div>
+                        </div>
+                        <div class="dataset-card-classes">
+                            ${(ds.classes || []).slice(0, 4).map(c => `<span class="chip">${c}</span>`).join('')}
+                            ${(ds.classes || []).length > 4 ? `<span class="chip">+${(ds.classes || []).length - 4}</span>` : ''}
+                        </div>
+                        <div class="dataset-card-actions">
+                            <button class="btn btn-sm btn-secondary" onclick="viewStats('${ds.name}')">统计</button>
+                            <button class="btn btn-sm btn-secondary" onclick="processDataset('${ds.name}')">处理</button>
+                            <button class="btn btn-sm btn-primary" onclick="openBrowseImages('${ds.name}')">浏览</button>
+                            <button class="btn btn-sm btn-ghost" onclick="deleteDataset('${ds.name}')">删除</button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>`;
+        }
+
+        function renderEmptyState() {
+            document.getElementById('dataset-summary').style.display = 'none';
+            document.getElementById('datasets-container').innerHTML = `
+                <div style="text-align: center; padding: 4rem 2rem; color: var(--secondary-color);">
+                    <div style="font-size: 3.5rem; margin-bottom: 1rem;">📂</div>
+                    <p style="font-size: 1.1rem; margin-bottom: 1.5rem;">暂无数据集</p>
+                    <button class="btn btn-primary" onclick="showUploadModal()">+ 上传数据集</button>
+                </div>
+            `;
+        }
+
+        function getTaskTypeName(type) {
+            const names = { 'detect': '检测', 'segment': '分割', 'pose': '姿态', 'classify': '分类', 'obb': 'OBB' };
+            return names[type] || type;
+        }
+
+        // ==================== 图片浏览 ====================
         async function openBrowseImages(datasetName) {
             browseState.datasetName = datasetName;
             browseState.currentPage = 1;
             browseState.images = [];
             browseState.splitFilter = '';
 
-            document.getElementById('browseModalTitle').textContent = `浏览图片: ${datasetName}`;
+            document.getElementById('browseModalTitle').textContent = `📁 ${datasetName}`;
             document.getElementById('split-filter').value = '';
             setViewMode('grid');
 
@@ -614,12 +430,10 @@
             await loadImages();
         }
 
-        // 关闭图片浏览模态框
         function closeBrowseImagesModal() {
             document.getElementById('browseImagesModal').classList.remove('active');
         }
 
-        // 加载图片列表
         async function loadImages() {
             const container = document.getElementById('images-container');
             container.innerHTML = '<div class="loading-placeholder"><span class="loading"></span> 加载中...</div>';
@@ -630,10 +444,7 @@
                     page_size: browseState.pageSize,
                     view: browseState.viewMode
                 });
-
-                if (browseState.splitFilter) {
-                    params.append('split', browseState.splitFilter);
-                }
+                if (browseState.splitFilter) params.append('split', browseState.splitFilter);
 
                 const response = await fetch(`/api/v1/datasets/${browseState.datasetName}/images?${params}`);
                 const data = await response.json();
@@ -648,14 +459,13 @@
                 }
             } catch (error) {
                 console.error('加载图片失败:', error);
-                container.innerHTML = '<div class="loading-placeholder" style="color: var(--danger-color);">加载失败: ' + error.message + '</div>';
+                container.innerHTML = `<div class="loading-placeholder" style="color: var(--danger-color);">加载失败: ${error.message}</div>`;
             }
         }
 
-        // 渲染图片
         function renderImages() {
             const container = document.getElementById('images-container');
-            document.getElementById('image-count').textContent = `${browseState.total} 张图片`;
+            document.getElementById('image-count').textContent = `${browseState.total} 张`;
 
             if (browseState.images.length === 0) {
                 container.innerHTML = '<div class="loading-placeholder">暂无图片</div>';
@@ -671,54 +481,57 @@
             }
         }
 
-        // 网格视图
         function renderGridView(container) {
-            container.innerHTML = '<div class="image-grid">' +
-                browseState.images.map((img, index) => `
+            container.innerHTML = `<div class="image-grid" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem;">
+                ${browseState.images.map((img, index) => `
                     <div class="image-grid-item" onclick="openImageViewer(${index})">
                         <img src="${img.thumbnail}" alt="${img.filename}" loading="lazy">
                         ${img.label_count > 0 ? `<span class="label-badge">${img.label_count}</span>` : ''}
                         <div class="image-info">
-                            ${img.filename}<br>
+                            <span style="font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">${img.filename}</span>
                             <span class="split-tag split-${img.split}">${getSplitName(img.split)}</span>
                         </div>
                     </div>
-                `).join('') + '</div>';
+                `).join('')}
+            </div>`;
         }
 
-        // 紧凑视图
         function renderCompactView(container) {
-            container.innerHTML = '<div class="image-compact">' +
-                browseState.images.map((img, index) => `
+            container.innerHTML = `<div class="image-compact" style="grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 0.35rem;">
+                ${browseState.images.map((img, index) => `
                     <div class="image-compact-item" onclick="openImageViewer(${index})">
                         <img src="${img.thumbnail}" alt="${img.filename}" loading="lazy">
                     </div>
-                `).join('') + '</div>';
+                `).join('')}
+            </div>`;
         }
 
-        // 表格视图
         function renderTableView(container) {
             container.innerHTML = `
-                <table class="image-table">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
                     <thead>
-                        <tr>
-                            <th>预览</th>
-                            <th>文件名</th>
-                            <th>尺寸</th>
-                            <th>拆分</th>
-                            <th>标签数</th>
-                            <th>操作</th>
+                        <tr style="background: rgba(99, 102, 241, 0.05);">
+                            <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color);">预览</th>
+                            <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color);">文件名</th>
+                            <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color);">尺寸</th>
+                            <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color);">拆分</th>
+                            <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color);">标注</th>
+                            <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color);">操作</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${browseState.images.map((img, index) => `
                             <tr>
-                                <td><img src="${img.thumbnail}" alt="${img.filename}" onclick="openImageViewer(${index})"></td>
-                                <td>${img.filename}</td>
-                                <td>${img.width} × ${img.height}</td>
-                                <td><span class="split-tag split-${img.split}">${getSplitName(img.split)}</span></td>
-                                <td>${img.label_count}</td>
-                                <td><button class="btn btn-ghost btn-xs" onclick="openImageViewer(${index})">查看</button></td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid var(--border-color);">
+                                    <img src="${img.thumbnail}" alt="${img.filename}" style="width: 50px; height: 35px; object-fit: cover; border-radius: 4px; cursor: pointer;" onclick="openImageViewer(${index})">
+                                </td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid var(--border-color);">${img.filename}</td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--secondary-color);">${img.width}×${img.height}</td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid var(--border-color);"><span class="split-tag split-${img.split}">${getSplitName(img.split)}</span></td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid var(--border-color);">${img.label_count}</td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid var(--border-color);">
+                                    <button class="btn btn-sm btn-ghost" onclick="openImageViewer(${index})">查看</button>
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -726,41 +539,28 @@
             `;
         }
 
-        // 获取拆分名称
         function getSplitName(split) {
-            const names = {
-                'train': '训练',
-                'val': '验证',
-                'test': '测试',
-                'unknown': '未分配'
-            };
+            const names = { 'train': '训练', 'val': '验证', 'test': '测试', 'unknown': '未分配' };
             return names[split] || split;
         }
 
-        // 设置视图模式
         function setViewMode(mode) {
             browseState.viewMode = mode;
-
-            // 更新按钮状态
             ['grid', 'compact', 'table'].forEach(m => {
                 const btn = document.getElementById(`view-${m}-btn`);
                 if (btn) {
-                    btn.classList.toggle('btn-primary', m === mode);
-                    btn.classList.toggle('btn-ghost', m !== mode);
+                    btn.className = `btn btn-sm ${m === mode ? 'btn-primary' : 'btn-secondary'}`;
                 }
             });
-
             renderImages();
         }
 
-        // 筛选图片
         function filterImages() {
             browseState.splitFilter = document.getElementById('split-filter').value;
             browseState.currentPage = 1;
             loadImages();
         }
 
-        // 更新分页
         function updatePagination(data) {
             const totalPages = Math.ceil(data.total / data.page_size);
             document.getElementById('page-info').textContent = `${data.page} / ${totalPages}`;
@@ -768,55 +568,43 @@
             document.getElementById('next-page').disabled = data.page >= totalPages;
         }
 
-        // 翻页
         function changePage(delta) {
             browseState.currentPage += delta;
             loadImages();
         }
 
         // ==================== 全屏图片查看器 ====================
-
-        // 打开图片查看器
         function openImageViewer(index) {
             viewerState.currentIndex = index;
             viewerState.showLabels = true;
             renderImageViewer();
             document.getElementById('imageViewerModal').classList.add('active');
-
-            // 绑定键盘事件
             document.addEventListener('keydown', handleViewerKeydown);
         }
 
-        // 关闭图片查看器
         function closeImageViewer() {
             document.getElementById('imageViewerModal').classList.remove('active');
             document.removeEventListener('keydown', handleViewerKeydown);
         }
 
-        // 渲染查看器内容
         function renderImageViewer() {
             const img = browseState.images[viewerState.currentIndex];
             if (!img) return;
 
             const container = document.getElementById('image-viewer-content');
-            document.getElementById('viewer-counter').textContent =
-                `${viewerState.currentIndex + 1} / ${browseState.images.length}`;
+            document.getElementById('viewer-counter').textContent = `${viewerState.currentIndex + 1} / ${browseState.images.length}`;
 
-            let html = `<img src="${img.path}" alt="${img.filename}" id="viewer-image">`;
-
-            if (viewerState.showLabels && img.labels && img.labels.length > 0) {
+            let html = `<img src="${img.path}" alt="${img.filename}" id="viewer-image" style="max-width: 100%; max-height: 100%; object-fit: contain;">`;
+            if (viewerState.showLabels && img.labels?.length > 0) {
                 html += `<div class="image-viewer-labels" id="viewer-labels"></div>`;
             }
-
             container.innerHTML = html;
 
-            // 渲染标签框
-            if (viewerState.showLabels && img.labels && img.labels.length > 0) {
+            if (viewerState.showLabels && img.labels?.length > 0) {
                 renderLabels(img);
             }
         }
 
-        // 渲染标签框
         function renderLabels(img) {
             const labelsContainer = document.getElementById('viewer-labels');
             if (!labelsContainer) return;
@@ -827,29 +615,21 @@
             labelsContainer.innerHTML = img.labels.map(label => {
                 const bbox = label.bbox;
                 if (bbox && bbox.length >= 4) {
-                    // YOLO格式: center_x, center_y, width, height (归一化)
                     const x = bbox[0] * imgRect.width - (bbox[2] * imgRect.width / 2);
                     const y = bbox[1] * imgRect.height - (bbox[3] * imgRect.height / 2);
                     const w = bbox[2] * imgRect.width;
                     const h = bbox[3] * imgRect.height;
-
-                    return `
-                        <div class="label-box" style="left: ${x}px; top: ${y}px; width: ${w}px; height: ${h}px;">
-                            <div class="label-class">${label.class_id}</div>
-                        </div>
-                    `;
+                    return `<div class="label-box" style="left: ${x}px; top: ${y}px; width: ${w}px; height: ${h}px; position: absolute; border: 2px solid #00ff00; background: rgba(0, 255, 0, 0.1);"><div style="position: absolute; top: -20px; left: 0; background: #00ff00; color: black; padding: 0.1rem 0.3rem; font-size: 0.75rem; font-weight: 600;">${label.class_id}</div></div>`;
                 }
                 return '';
             }).join('');
         }
 
-        // 切换标签显示
         function toggleLabels() {
             viewerState.showLabels = !viewerState.showLabels;
             renderImageViewer();
         }
 
-        // 上一张/下一张
         function prevImage() {
             if (viewerState.currentIndex > 0) {
                 viewerState.currentIndex--;
@@ -864,25 +644,15 @@
             }
         }
 
-        // 键盘控制
         function handleViewerKeydown(e) {
             switch (e.key) {
-                case 'ArrowLeft':
-                    prevImage();
-                    break;
-                case 'ArrowRight':
-                    nextImage();
-                    break;
-                case 'Escape':
-                    closeImageViewer();
-                    break;
-                case 'l':
-                    toggleLabels();
-                    break;
+                case 'ArrowLeft': prevImage(); break;
+                case 'ArrowRight': nextImage(); break;
+                case 'Escape': closeImageViewer(); break;
+                case 'l': toggleLabels(); break;
             }
         }
 
-        // 下载图片
         function downloadImage() {
             const img = browseState.images[viewerState.currentIndex];
             if (img) {
@@ -893,74 +663,43 @@
             }
         }
 
-        // ==================== 导出功能 ====================
-
-        // 导出为NDJSON
-        function exportToNDJSON() {
-            if (!browseState.datasetName) return;
-
-            const url = `/api/v1/datasets/${browseState.datasetName}/export/ndjson`;
-            window.open(url, '_blank');
-            showToast('正在导出...', 'info');
-        }
-
-        // 显示上传模态框
+        // ==================== 上传功能 ====================
         function showUploadModal() {
             resetUploadModal();
             document.getElementById('uploadModal').classList.add('active');
         }
 
-        // 重置上传模态框
+        function closeUploadModal() {
+            document.getElementById('uploadModal').classList.remove('active');
+            resetUploadModal();
+        }
+
         function resetUploadModal() {
             selectedFile = null;
             document.getElementById('datasetName').value = '';
             document.getElementById('taskType').value = 'detect';
             document.getElementById('datasetFile').value = '';
             document.getElementById('smartStorage').checked = true;
-
             document.getElementById('upload-placeholder').style.display = 'block';
             document.getElementById('upload-file-info').style.display = 'none';
             document.getElementById('upload-progress-container').style.display = 'none';
-            document.getElementById('processing-progress-container').style.display = 'none';
             document.getElementById('upload-progress-bar').style.width = '0%';
             document.getElementById('upload-percent').textContent = '0%';
-
-            document.getElementById('upload-submit-btn').style.display = 'inline-block';
-            document.getElementById('upload-cancel-btn').style.display = 'inline-block';
-            document.getElementById('upload-close-btn').style.display = 'none';
             document.getElementById('upload-submit-btn').disabled = false;
-            document.getElementById('upload-submit-btn').innerHTML = '开始上传';
+            document.getElementById('upload-submit-btn').textContent = '开始上传';
         }
 
-        // 关闭上传模态框
-        function closeUploadModal() {
-            document.getElementById('uploadModal').classList.remove('active');
-            resetUploadModal();
-        }
-
-        // 上传数据集
         async function uploadDataset() {
             const name = document.getElementById('datasetName').value.trim();
             const taskType = document.getElementById('taskType').value;
             const smartStorage = document.getElementById('smartStorage').checked;
 
-            if (!name) {
-                showToast('请输入数据集名称', 'warning');
-                return;
-            }
-            if (!selectedFile) {
-                showToast('请选择上传文件', 'warning');
-                return;
-            }
+            if (!name) { showToast('请输入数据集名称', 'warning'); return; }
+            if (!selectedFile) { showToast('请选择上传文件', 'warning'); return; }
 
-            // 禁用按钮
             document.getElementById('upload-submit-btn').disabled = true;
             document.getElementById('upload-submit-btn').innerHTML = '<span class="loading"></span> 上传中...';
-            document.getElementById('upload-cancel-btn').style.display = 'none';
-
-            // 显示进度条
             document.getElementById('upload-progress-container').style.display = 'block';
-            document.getElementById('upload-status-text').textContent = '正在上传文件...';
 
             const formData = new FormData();
             formData.append('file', selectedFile);
@@ -970,8 +709,6 @@
 
             try {
                 const xhr = new XMLHttpRequest();
-
-                // 监听上传进度
                 xhr.upload.addEventListener('progress', (e) => {
                     if (e.lengthComputable) {
                         const percent = Math.round((e.loaded / e.total) * 100);
@@ -983,27 +720,15 @@
                 xhr.addEventListener('load', async () => {
                     if (xhr.status === 200) {
                         const data = JSON.parse(xhr.responseText);
-
                         if (data.success) {
-                            // 显示处理进度
-                            document.getElementById('upload-status-text').textContent = '文件上传完成';
+                            document.getElementById('upload-status-text').textContent = '上传完成';
                             document.getElementById('upload-progress-bar').style.width = '100%';
-                            document.getElementById('upload-progress-bar').classList.add('success');
-
-                            // 显示处理中状态
-                            document.getElementById('processing-progress-container').style.display = 'block';
-                            updateProcessingSteps(data.processing || {});
-
-                            // 等待处理完成（模拟，实际由后端处理）
-                            await new Promise(resolve => setTimeout(resolve, 1500));
-
-                            // 显示上传结果
-                            showUploadResult(data);
-
-                            // 刷新列表
+                            await new Promise(r => setTimeout(r, 500));
+                            closeUploadModal();
+                            showToast('上传成功', 'success');
                             loadDatasets();
                         } else {
-                            showToast('上传失败: ' + data.message, 'error');
+                            showToast(data.message || '上传失败', 'error');
                             resetUploadModal();
                         }
                     } else {
@@ -1012,97 +737,39 @@
                 });
 
                 xhr.addEventListener('error', () => {
-                    showToast('上传失败，请检查网络连接', 'error');
+                    showToast('上传失败，请检查网络', 'error');
                     resetUploadModal();
                 });
 
                 xhr.open('POST', '/api/v1/datasets/upload');
                 xhr.send(formData);
-
             } catch (error) {
                 showToast('上传失败: ' + error.message, 'error');
                 resetUploadModal();
             }
         }
 
-        // 更新处理步骤显示
-        function updateProcessingSteps(processing) {
-            const container = document.getElementById('processing-steps');
-            const normalized = processing.normalized || {};
-            const thumbnails = processing.thumbnails || {};
-            const labels = processing.labels || {};
-
-            let html = '';
-            if (normalized.total !== undefined) {
-                html += `<div>✓ 图像归一化: ${normalized.total} 张 ${normalized.skipped ? `(${normalized.skipped}张跳过)` : ''}</div>`;
-            }
-            if (thumbnails.total !== undefined) {
-                html += `<div>✓ 缩略图生成: ${thumbnails.total} 张 ${thumbnails.skipped ? `(${thumbnails.skipped}张跳过)` : ''}</div>`;
-            }
-            if (labels.total !== undefined) {
-                html += `<div>✓ 标签解析: ${labels.total} 个标注 ${labels.classes_found ? `(${labels.classes_found.length} 类)` : ''}</div>`;
-            }
-
-            container.innerHTML = html || '<div>正在处理...</div>';
-        }
-
-        // 显示上传结果
-        function showUploadResult(data) {
-            uploadedDatasetName = data.dataset?.name;
-
-            document.getElementById('result-dataset-name').textContent = data.dataset?.name || '未知';
-            document.getElementById('result-image-count').textContent = formatNumber(data.dataset?.num_images || 0);
-            document.getElementById('result-class-count').textContent = data.dataset?.num_classes || 0;
-
-            const saved = data.storage_info?.saved_mb || 0;
-            document.getElementById('result-storage-saved').textContent = saved > 0 ? `${saved.toFixed(2)} MB` : '未使用';
-
-            const processing = data.processing || {};
-            document.getElementById('result-normalized').textContent = `归一化: ${processing.normalized?.total || 0} 张`;
-            document.getElementById('result-thumbnails').textContent = `缩略图: ${processing.thumbnails?.total || 0} 张`;
-            document.getElementById('result-labels').textContent = `标签: ${processing.labels?.total || 0} 个`;
-
-            const status = processing.auto_processed ? '✓ 已完成' : '⏳ 处理中';
-            document.getElementById('result-processing-status').innerHTML = status;
-
-            document.getElementById('uploadModal').classList.remove('active');
-            document.getElementById('uploadResultModal').classList.add('active');
-        }
-
-        // 关闭上传结果模态框
-        function closeUploadResultModal() {
-            document.getElementById('uploadResultModal').classList.remove('active');
-            uploadedDatasetName = null;
-        }
-
-        // 查看数据集统计
-        function viewDatasetStats() {
-            closeUploadResultModal();
-            if (uploadedDatasetName) {
-                viewStats(uploadedDatasetName);
-            }
-        }
-
-        // 查看数据集统计
+        // ==================== 统计功能 ====================
         async function viewStats(datasetName) {
             currentDataset = datasetName;
-            document.getElementById('statsModalTitle').textContent = `数据集统计: ${datasetName}`;
+            document.getElementById('statsModalTitle').textContent = `📊 ${datasetName}`;
             document.getElementById('statsModal').classList.add('active');
 
             try {
                 const response = await fetch(`/api/v1/datasets/${datasetName}/statistics`);
                 const data = await response.json();
-
-                if (data.success) {
-                    updateStatsDisplay(data);
-                }
+                if (data.success) updateStatsDisplay(data);
             } catch (error) {
                 console.error('获取统计失败:', error);
                 showToast('获取统计信息失败', 'error');
             }
         }
 
-        // 更新统计显示
+        function closeStatsModal() {
+            document.getElementById('statsModal').classList.remove('active');
+            currentDataset = null;
+        }
+
         function updateStatsDisplay(data) {
             const summary = data.summary || {};
             document.getElementById('stat-images').textContent = formatNumber(summary.total_images || 0);
@@ -1116,365 +783,102 @@
             renderSplitChart(data.split_details);
         }
 
-        // 渲染各类图表
+        function switchStatsTab(tab) {
+            document.querySelectorAll('.panel-tabs .panel-tab').forEach(el => {
+                el.classList.toggle('active', el.textContent.includes(tab === 'class' ? '类别' : tab === 'spatial' ? '位置' : tab === 'dimension' ? '维度' : '拆分'));
+            });
+            document.querySelectorAll('.stats-chart').forEach(el => el.classList.remove('active'));
+            document.getElementById(tab + 'ChartTab').classList.add('active');
+        }
+
         function renderClassChart(data) {
             const ctx = document.getElementById('classChart').getContext('2d');
             if (charts.class) charts.class.destroy();
-
-            if (!data || !data.chart_data) {
-                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-                ctx.font = '14px sans-serif';
-                ctx.fillStyle = '#666';
-                ctx.textAlign = 'center';
-                ctx.fillText('暂无类别数据', ctx.canvas.width/2, ctx.canvas.height/2);
-                return;
-            }
-
+            if (!data?.chart_data) { ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); return; }
             charts.class = new Chart(ctx, {
                 type: 'bar',
                 data: data.chart_data,
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        title: {
-                            display: true,
-                            text: `类别分布 (总计 ${data.total_annotations || 0} 个标注)`
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            title: { display: true, text: '标注数量' }
-                        }
-                    }
-                }
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: `类别分布 (${data.total_annotations || 0})` } }, scales: { y: { beginAtZero: true } } }
             });
         }
 
         function renderSpatialChart(data) {
             const ctx = document.getElementById('spatialChart').getContext('2d');
             if (charts.spatial) charts.spatial.destroy();
-
-            if (!data || !data.heatmap_data || data.heatmap_data.length === 0) {
-                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-                ctx.font = '14px sans-serif';
-                ctx.fillStyle = '#666';
-                ctx.textAlign = 'center';
-                ctx.fillText('暂无位置数据', ctx.canvas.width/2, ctx.canvas.height/2);
-                return;
-            }
-
-            const heatmapData = {
-                labels: Array.from({length: 10}, (_, i) => `${(i+1)*10}%`),
-                datasets: [{
-                    label: '标注密度',
-                    data: data.heatmap_data,
-                    backgroundColor: [
-                        'rgba(0,0,255,0.1)', 'rgba(0,0,255,0.2)', 'rgba(0,0,255,0.3)',
-                        'rgba(0,128,255,0.4)', 'rgba(0,255,128,0.5)', 'rgba(128,255,0,0.6)',
-                        'rgba(255,255,0,0.7)', 'rgba(255,128,0,0.8)', 'rgba(255,0,0,0.9)', 'rgba(255,0,0,1)'
-                    ]
-                }]
-            };
-
-            charts.spatial = new Chart(ctx, {
-                type: 'bar',
-                data: heatmapData,
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        title: {
-                            display: true,
-                            text: `位置热图 (共 ${data.total_points || 0} 个标注中心点)`
-                        }
-                    },
-                    scales: {
-                        x: { title: { display: true, text: '水平位置' } },
-                        y: { title: { display: true, text: '垂直位置' } }
-                    }
-                }
-            });
+            if (!data?.heatmap_data?.length) { ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); return; }
+            const heatmapData = { labels: Array.from({length: 10}, (_, i) => `${(i+1)*10}%`), datasets: [{ label: '密度', data: data.heatmap_data, backgroundColor: 'rgba(99, 102, 241, 0.7)' }] };
+            charts.spatial = new Chart(ctx, { type: 'bar', data: heatmapData, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: `位置热图 (${data.total_points || 0})` } }, scales: { x: { title: { display: true, text: '水平' } }, y: { title: { display: true, text: '垂直' } } } } });
         }
 
         function renderDimensionChart(data) {
             const ctx = document.getElementById('dimensionChart').getContext('2d');
             if (charts.dimension) charts.dimension.destroy();
-
-            if (!data || !data.scatter_data || data.scatter_data.length === 0) {
-                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-                ctx.font = '14px sans-serif';
-                ctx.fillStyle = '#666';
-                ctx.textAlign = 'center';
-                ctx.fillText('暂无维度数据', ctx.canvas.width/2, ctx.canvas.height/2);
-                return;
-            }
-
+            if (!data?.scatter_data?.length) { ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); return; }
             charts.dimension = new Chart(ctx, {
                 type: 'scatter',
-                data: {
-                    datasets: [{
-                        label: '图片尺寸分布',
-                        data: data.scatter_data.map(p => ({x: p[0], y: p[1]})),
-                        backgroundColor: 'rgba(54, 162, 235, 0.5)'
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: `图片维度分布 (共 ${data.total_images || 0} 张图片)`
-                        }
-                    },
-                    scales: {
-                        x: { title: { display: true, text: '宽度 (px)' }, min: 0 },
-                        y: { title: { display: true, text: '高度 (px)' }, min: 0 }
-                    }
-                }
+                data: { datasets: [{ label: '尺寸', data: data.scatter_data.map(p => ({x: p[0], y: p[1]})), backgroundColor: 'rgba(99, 102, 241, 0.5)' }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: `维度分布 (${data.total_images || 0})` } }, scales: { x: { title: { display: true, text: '宽度' }, min: 0 }, y: { title: { display: true, text: '高度' }, min: 0 } } }
             });
         }
 
         function renderSplitChart(data) {
             const ctx = document.getElementById('splitChart').getContext('2d');
             if (charts.split) charts.split.destroy();
-
-            if (!data || !data.chart_data) {
-                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-                ctx.font = '14px sans-serif';
-                ctx.fillStyle = '#666';
-                ctx.textAlign = 'center';
-                ctx.fillText('暂无拆分数据', ctx.canvas.width/2, ctx.canvas.height/2);
-                return;
-            }
-
-            charts.split = new Chart(ctx, {
-                type: 'doughnut',
-                data: data.chart_data,
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: `数据拆分 (总计 ${data.total_images || 0} 张图片)`
-                        },
-                        legend: { position: 'bottom' }
-                    }
-                }
-            });
+            if (!data?.chart_data) { ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); return; }
+            charts.split = new Chart(ctx, { type: 'doughnut', data: data.chart_data, options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: `拆分 (${data.total_images || 0})` }, legend: { position: 'bottom' } } } });
         }
 
-        // 切换统计标签页
-        function switchStatsTab(tab) {
-            document.querySelectorAll('.panel-tabs .panel-tab').forEach(tabEl => {
-                tabEl.classList.toggle('active', tabEl.textContent.includes(getTabChinese(tab)));
-            });
-            document.querySelectorAll('.stats-chart').forEach(chartEl => {
-                chartEl.classList.remove('active');
-            });
-            document.getElementById(tab + 'ChartTab').classList.add('active');
-        }
-
-        function getTabChinese(tab) {
-            const names = { 'class': '类别', 'spatial': '位置', 'dimension': '维度', 'split': '拆分' };
-            return names[tab] || tab;
-        }
-
-        // 关闭统计模态框
-        function closeStatsModal() {
-            document.getElementById('statsModal').classList.remove('active');
-            currentDataset = null;
-        }
-
-        // 删除数据集
-        async function deleteDataset(name) {
-            if (!confirm(`确定要删除数据集 "${name}" 吗？此操作不可恢复。`)) return;
-
-            try {
-                const response = await fetch(`/api/v1/datasets/${name}`, { method: 'DELETE' });
-                const data = await response.json();
-
-                if (data.success) {
-                    showToast('数据集已删除', 'success');
-                    loadDatasets();
-                } else {
-                    showToast('删除失败: ' + data.message, 'error');
-                }
-            } catch (error) {
-                showToast('删除失败: ' + error.message, 'error');
-            }
-        }
-
-        // 处理数据集
-        // 当前处理的数据集名称
-        let currentProcessDataset = null;
-
+        // ==================== 数据处理 ====================
         async function processDataset(name) {
-            if (!confirm(`确定要重新处理数据集 "${name}" 吗？\n\n处理步骤:\n1. 图像归一化（最大 4096 像素）\n2. 生成缩略图（256 像素）\n3. 解析标签\n4. 计算统计信息`)) return;
-
-            currentProcessDataset = name;
-            showToast('开始处理数据集...', 'info');
-
+            if (!confirm(`确定要处理数据集 "${name}" 吗？`)) return;
+            showToast('开始处理...', 'info');
             try {
                 const response = await fetch(`/api/v1/datasets/${name}/process`, { method: 'POST' });
                 const data = await response.json();
-
                 if (data.success) {
-                    showProcessResult(name, data);
+                    showToast('处理完成', 'success');
                     loadDatasets();
                 } else {
-                    showToast('处理失败: ' + data.message, 'error');
+                    showToast(data.message || '处理失败', 'error');
                 }
             } catch (error) {
                 showToast('处理失败: ' + error.message, 'error');
             }
         }
 
-        // 显示处理结果
-        function showProcessResult(name, data) {
-            const normalized = data.normalized || {};
-            const thumbnails = data.thumbnails || {};
-            const labels = data.labels || {};
-
-            // 设置数据集名称
-            document.getElementById('process-dataset-name').textContent = name;
-
-            // 设置处理效果摘要
-            document.getElementById('process-normalized').textContent =
-                `${normalized.total || 0} 张${normalized.skipped ? ` (${normalized.skipped}张跳过)` : ''}`;
-            document.getElementById('process-thumbnails').textContent =
-                `${thumbnails.total || 0} 张${thumbnails.skipped ? ` (${thumbnails.skipped}张跳过)` : ''}`;
-            document.getElementById('process-labels').textContent =
-                `${labels.total || 0} 个标注`;
-            document.getElementById('process-classes').textContent =
-                `${labels.classes_found?.length || 0} 类`;
-
-            // 设置详细处理信息
-            let detailsHtml = '';
-
-            // 归一化详情
-            if (normalized.total > 0) {
-                detailsHtml += `<div style="margin-bottom: 0.75rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #2e7d32; font-weight: 600;">
-                        <span>✓</span> 图像归一化完成
-                    </div>
-                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
-                        调整了 ${normalized.total} 张图像尺寸，最大限制 4096 像素
-                    </div>
-                </div>`;
-            } else if (normalized.skipped > 0) {
-                detailsHtml += `<div style="margin-bottom: 0.75rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #ff9800; font-weight: 600;">
-                        <span>⏭</span> 图像归一化跳过
-                    </div>
-                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
-                        所有图像尺寸均在限制内，无需调整
-                    </div>
-                </div>`;
-            }
-
-            // 缩略图详情
-            if (thumbnails.total > 0) {
-                detailsHtml += `<div style="margin-bottom: 0.75rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #2e7d32; font-weight: 600;">
-                        <span>✓</span> 缩略图生成完成
-                    </div>
-                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
-                        生成了 ${thumbnails.total} 张 256 像素缩略图用于快速预览
-                    </div>
-                </div>`;
-            }
-
-            // 标签解析详情
-            if (labels.total > 0) {
-                const classNames = labels.classes_found?.map(c => c.name).join('、') || '未知';
-                detailsHtml += `<div style="margin-bottom: 0.75rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #2e7d32; font-weight: 600;">
-                        <span>✓</span> 标签解析完成
-                    </div>
-                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
-                        解析了 ${labels.total} 个标注，分布在 ${labels.classes_found?.length || 0} 个类别<br>
-                        <span style="color: #1565c0;">类别: ${classNames}</span>
-                    </div>
-                </div>`;
-            }
-
-            // 统计信息
-            if (data.statistics && data.statistics.total_annotations > 0) {
-                detailsHtml += `<div style="margin-bottom: 0.75rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; color: #1565c0; font-weight: 600;">
-                        <span>📊</span> 统计信息已计算
-                    </div>
-                    <div style="margin-left: 1.25rem; font-size: 0.85rem; color: #666;">
-                        总标注数: ${data.statistics.total_annotations} | 类别分布已生成图表
-                    </div>
-                </div>`;
-            }
-
-            // 训练准备状态
-            const trainingReady = document.getElementById('process-training-ready');
-            if (labels.total > 0 && labels.classes_found?.length > 0) {
-                trainingReady.style.display = 'block';
-                trainingReady.style.background = '#e8f5e9';
-            } else {
-                trainingReady.style.display = 'block';
-                trainingReady.style.background = '#fff3e0';
-                trainingReady.innerHTML = `<div style="display: flex; align-items: center; gap: 0.5rem;">
-                    <span style="font-size: 1.5rem;">⚠️</span>
-                    <div>
-                        <div style="font-weight: 600; color: #e65100;">数据集可能不完整</div>
-                        <div style="font-size: 0.85rem; color: #666;">请检查是否已正确上传标签文件 (.txt)</div>
-                    </div>
-                </div>`;
-            }
-
-            document.getElementById('process-details').innerHTML = detailsHtml || '<div style="color: #999;">暂无详细信息</div>';
-
-            // 显示模态框
-            document.getElementById('processResultModal').classList.add('active');
-        }
-
-        // 关闭处理结果模态框
-        function closeProcessResultModal() {
-            document.getElementById('processResultModal').classList.remove('active');
-            currentProcessDataset = null;
-        }
-
-        // 跳转到训练页面
-        function goToTraining() {
-            closeProcessResultModal();
-            if (currentProcessDataset) {
-                // 将数据集名称保存到 sessionStorage，供训练页面使用
-                sessionStorage.setItem('selectedDataset', currentProcessDataset);
-                window.location.href = '/training';
-            } else {
-                window.location.href = '/training';
+        // ==================== 删除数据集 ====================
+        async function deleteDataset(name) {
+            if (!confirm(`确定要删除数据集 "${name}" 吗？此操作不可恢复。`)) return;
+            try {
+                const response = await fetch(`/api/v1/datasets/${name}`, { method: 'DELETE' });
+                const data = await response.json();
+                if (data.success) {
+                    showToast('已删除', 'success');
+                    loadDatasets();
+                } else {
+                    showToast(data.message || '删除失败', 'error');
+                }
+            } catch (error) {
+                showToast('删除失败: ' + error.message, 'error');
             }
         }
 
-        // 工具函数
-        function formatDate(dateStr) {
-            if (!dateStr) return '-';
-            const date = new Date(dateStr);
-            return date.toLocaleDateString('zh-CN');
+        // ==================== 导出 ====================
+        function exportToNDJSON() {
+            if (!browseState.datasetName) return;
+            window.open(`/api/v1/datasets/${browseState.datasetName}/export/ndjson`, '_blank');
+            showToast('正在导出...', 'info');
         }
 
+        // ==================== 工具函数 ====================
         function formatNumber(num) {
-            if (num >= 10000) {
-                return (num / 10000).toFixed(1) + '万';
-            }
+            if (num >= 10000) return (num / 10000).toFixed(1) + '万';
             return num.toString();
         }
 
         function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            if (!bytes) return '0 Bytes';
+            const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
         }
@@ -1489,35 +893,143 @@
     </script>
 
     <style>
-        /* 页面标题样式 */
-        .page-header {
+        /* 数据集卡片网格 */
+        .dataset-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.25rem;
+        }
+
+        .dataset-card {
+            background: rgba(99, 102, 241, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            transition: all 0.3s ease;
+        }
+
+        .dataset-card:hover {
+            border-color: var(--primary-light);
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.1);
+        }
+
+        .dataset-card-header {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            margin-bottom: 1.5rem;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .dataset-card-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--gradient-3);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .dataset-card-info h3 {
+            margin: 0 0 0.35rem;
+            font-size: 1.1rem;
+            color: var(--dark-color);
+        }
+
+        .dataset-card-stats {
+            display: flex;
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 8px;
+        }
+
+        .dataset-card-stat {
+            text-align: center;
+        }
+
+        .stat-num {
+            display: block;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+
+        .stat-text {
+            font-size: 0.75rem;
+            color: var(--secondary-color);
+        }
+
+        .dataset-card-classes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            margin-bottom: 1rem;
+        }
+
+        .dataset-card-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        /* 响应式调整 */
+        @media (max-width: 768px) {
+            .dataset-card-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .dataset-card-stats {
+                gap: 1rem;
+            }
+
+            .stat-num {
+                font-size: 1.1rem;
+            }
         }
 
         /* 模态框样式 */
-        .modal-lg {
-            width: 90%;
-            max-width: 1000px;
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 1rem;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 16px;
             max-height: 90vh;
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            width: 100%;
         }
 
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid #e0e0e0;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border-color);
         }
 
         .modal-header h3 {
             margin: 0;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
         }
 
         .modal-close {
@@ -1525,22 +1037,44 @@
             border: none;
             font-size: 1.5rem;
             cursor: pointer;
-            color: #666;
+            color: var(--secondary-color);
             line-height: 1;
         }
 
         .modal-body {
-            padding: 1.5rem;
+            padding: 1.25rem;
             overflow-y: auto;
-            flex: 1;
         }
 
         .modal-footer {
-            padding: 1rem 1.5rem;
-            border-top: 1px solid #e0e0e0;
+            padding: 1rem 1.25rem;
+            border-top: 1px solid var(--border-color);
             display: flex;
             justify-content: flex-end;
+            gap: 0.75rem;
+        }
+
+        /* 面板标签 */
+        .panel-tabs {
+            display: flex;
             gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .panel-tab {
+            padding: 0.5rem 1rem;
+            border: none;
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary-color);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .panel-tab.active {
+            background: var(--gradient-3);
+            color: white;
         }
 
         /* 统计图表 */
@@ -1551,186 +1085,18 @@
 
         .stats-chart {
             display: none;
+            height: 100%;
         }
 
         .stats-chart.active {
             display: block;
         }
 
-        .panel-tabs {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .panel-tabs .panel-tab {
-            padding: 0.5rem 1rem;
-            border: none;
-            background: #f0f0f0;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .panel-tabs .panel-tab.active {
-            background: var(--primary-color, #2196F3);
-            color: white;
-        }
-
-        /* 标签样式 */
-        .chip {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            background: #e0e0e0;
-            color: #333;
-        }
-
-        .chip-success {
-            background: #e8f5e9;
-            color: #2e7d32;
-        }
-
-        .chip-warning {
-            background: #fff3e0;
-            color: #e65100;
-        }
-
-        /* 表单样式 */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            box-sizing: border-box;
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary-color, #2196F3);
-            box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.1);
-        }
-
-        /* 上传区域拖拽样式 */
-        .upload-area {
-            border: 2px dashed #ddd;
-            border-radius: 8px;
-            padding: 2rem;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .upload-area:hover,
-        .upload-area.drag-over {
-            border-color: var(--primary-color, #2196F3);
-            background: rgba(33, 150, 243, 0.05);
-        }
-
-        /* 进度条 */
-        .progress {
-            height: 8px;
-            background: #e0e0e0;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .progress-bar {
-            height: 100%;
-            background: var(--primary-color, #2196F3);
-            border-radius: 4px;
-            transition: width 0.3s ease;
-        }
-
-        .progress-bar.success {
-            background: var(--success-color, #4CAF50);
-        }
-
-        /* 统计卡片 */
-        .grid-4 {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 1rem;
-        }
-
-        @media (max-width: 768px) {
-            .grid-4 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        .stat-card {
-            padding: 1rem;
-            border-radius: 8px;
-            text-align: center;
-            color: white;
-        }
-
-        .stat-card-neutral { background: #607d8b; }
-        .stat-card-success { background: #4caf50; }
-        .stat-card-info { background: #2196f3; }
-        .stat-card-warning { background: #ff9800; }
-        .stat-card-danger { background: #f44336; }
-
-        .stat-value {
-            font-size: 1.75rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-        }
-
-        .stat-label {
-            font-size: 0.8rem;
-            opacity: 0.9;
-        }
-
-        /* 加载动画 */
-        .loading {
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top-color: white;
-            animation: spin 1s ease-in-out infinite;
-        }
-
-        .loading:not(.loading) {
-            border-color: rgba(0,0,0,0.1);
-            border-top-color: var(--primary-color, #2196F3);
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* 大模态框 */
-        .modal-xl {
-            width: 95%;
-            max-width: 1400px;
-            max-height: 90vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        /* 图片网格视图 */
+        /* 图片网格 */
         .image-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .image-grid-item {
@@ -1738,20 +1104,18 @@
             border-radius: 8px;
             overflow: hidden;
             cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: transform 0.2s;
             background: #f5f5f5;
         }
 
         .image-grid-item:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
 
         .image-grid-item img {
             width: 100%;
-            height: 150px;
+            height: 140px;
             object-fit: cover;
-            display: block;
         }
 
         .image-grid-item .image-info {
@@ -1762,14 +1126,13 @@
             background: linear-gradient(transparent, rgba(0,0,0,0.8));
             color: white;
             padding: 0.5rem;
-            font-size: 0.8rem;
         }
 
-        .image-grid-item .label-badge {
+        .label-badge {
             position: absolute;
             top: 0.5rem;
             right: 0.5rem;
-            background: var(--primary-color, #2196F3);
+            background: var(--primary-color);
             color: white;
             padding: 0.2rem 0.5rem;
             border-radius: 4px;
@@ -1792,92 +1155,23 @@
 
         .image-compact-item img {
             width: 100%;
-            height: 80px;
+            height: 70px;
             object-fit: cover;
-        }
-
-        /* 表格视图 */
-        .image-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .image-table th,
-        .image-table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid #eee;
-        }
-
-        .image-table th {
-            background: #f5f5f5;
-            font-weight: 600;
-        }
-
-        .image-table tr:hover {
-            background: #f9f9f9;
-        }
-
-        .image-table img {
-            width: 60px;
-            height: 40px;
-            object-fit: cover;
-            border-radius: 4px;
-            cursor: pointer;
         }
 
         /* 拆分标签 */
         .split-tag {
             display: inline-block;
-            padding: 0.2rem 0.5rem;
+            padding: 0.15rem 0.5rem;
             border-radius: 4px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 500;
         }
 
-        .split-train { background: #e3f2fd; color: #1565c0; }
-        .split-val { background: #e8f5e9; color: #2e7d32; }
-        .split-test { background: #fff3e0; color: #e65100; }
-        .split-unknown { background: #f5f5f5; color: #666; }
-
-        /* 全屏查看器 */
-        .image-viewer-content img {
-            max-width: 100%;
-            max-height: 90vh;
-            object-fit: contain;
-        }
-
-        .image-viewer-labels {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            pointer-events: none;
-        }
-
-        .label-box {
-            position: absolute;
-            border: 2px solid #00ff00;
-            background: rgba(0, 255, 0, 0.1);
-        }
-
-        .label-class {
-            position: absolute;
-            top: -20px;
-            left: 0;
-            background: #00ff00;
-            color: black;
-            padding: 0.1rem 0.3rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        /* 按钮样式 */
-        .btn-sm {
-            padding: 0.4rem 0.75rem;
-            font-size: 0.85rem;
-        }
+        .split-train { background: rgba(99, 102, 241, 0.15); color: var(--primary-color); }
+        .split-val { background: rgba(16, 185, 129, 0.15); color: #059669; }
+        .split-test { background: rgba(245, 158, 11, 0.15); color: #d97706; }
+        .split-unknown { background: rgba(148, 163, 184, 0.2); color: var(--secondary-color); }
 
         /* 加载占位符 */
         .loading-placeholder {
@@ -1886,6 +1180,101 @@
             justify-content: center;
             height: 200px;
             color: var(--secondary-color);
+        }
+
+        /* Toast 提示 */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 2000;
+            animation: fadeInUp 0.3s ease;
+        }
+
+        .toast-success { background: linear-gradient(135deg, #10b981, #059669); }
+        .toast-error { background: linear-gradient(135deg, #ef4444, #dc2626); }
+        .toast-warning { background: linear-gradient(135deg, #f59e0b, #d97706); }
+        .toast-info { background: linear-gradient(135deg, #6366f1, #4f46e5); }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translate(-50%, 20px); }
+            to { opacity: 1; transform: translate(-50%, 0); }
+        }
+
+        /* 上传区域 */
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .upload-area:hover, .upload-area.drag-over {
+            border-color: var(--primary-color);
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        /* 进度条 */
+        .progress {
+            height: 6px;
+            background: rgba(99, 102, 241, 0.15);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--gradient-3);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        /* 芯片样式 */
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 6px;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            color: var(--primary-color);
+        }
+
+        /* 表格样式 */
+        .form-control {
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--dark-color);
+            font-size: 0.9rem;
         }
     </style>
 </body>

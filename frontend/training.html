@@ -38,7 +38,15 @@
                             <input type="text" id="project-name" class="form-control" placeholder="my_project" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">选择数据集</label>
+                            <label class="form-label">
+                                选择数据集
+                                <button type="button" class="btn btn-ghost btn-sm" onclick="refreshDatasets()" title="刷新数据集列表" style="padding: 2px 8px; margin-left: 8px;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M23 4v6h-6M1 20v-6h6"/>
+                                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                                    </svg>
+                                </button>
+                            </label>
                             <select id="dataset-select" class="form-control" onchange="handleDatasetSelect()">
                                 <option value="">请选择数据集...</option>
                             </select>
@@ -106,9 +114,10 @@
 
                 <!-- 微调参数 -->
                 <div class="config-section">
-                    <div class="config-section-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <div class="config-section-title" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                         <span>微调参数</span>
-                        <button type="button" class="btn btn-ghost btn-xs" onclick="toggleAdvancedSettings()">
+                        <button type="button" class="btn btn-ghost btn-xs" onclick="toggleAdvancedSettings()" style="display: inline-flex; align-items: center; gap: 0.35rem;">
+                            <span class="advanced-toggle-icon" style="font-size: 0.8rem;">▶</span>
                             <span id="advanced-toggle-text">展开</span> 高级选项
                         </button>
                     </div>
@@ -411,26 +420,40 @@
                 const response = await fetch('/api/v1/datasets/list');
                 const data = await response.json();
 
-                if (data.success) {
-                    const select = document.getElementById('dataset-select');
-                    // 保留第一个默认选项
-                    select.innerHTML = '<option value="">请选择数据集...</option>';
+                // API 返回格式: {total, datasets} 或 {success, datasets}
+                const datasets = data.datasets || [];
+                const select = document.getElementById('dataset-select');
+                // 保留第一个默认选项
+                select.innerHTML = '<option value="">请选择数据集...</option>';
 
-                    if (data.datasets && data.datasets.length > 0) {
-                        data.datasets.forEach(ds => {
-                            const option = document.createElement('option');
-                            option.value = ds.name;
-                            option.textContent = `${ds.name} (${ds.num_images || 0} 张图片 · ${ds.task_type || '检测'})`;
-                            select.appendChild(option);
-                        });
-                    } else {
-                        select.innerHTML += '<option value="" disabled>暂无可用数据集，请先上传</option>';
-                    }
+                if (datasets.length > 0) {
+                    datasets.forEach(ds => {
+                        const option = document.createElement('option');
+                        option.value = ds.name;
+                        option.textContent = `${ds.name} (${ds.num_images || 0} 张图片 · ${ds.task_type || '检测'})`;
+                        select.appendChild(option);
+                    });
+                } else {
+                    select.innerHTML += '<option value="" disabled>暂无可用数据集，请先上传</option>';
                 }
                 return data;
             } catch (error) {
                 console.warn('加载数据集列表失败:', error);
                 return null;
+            }
+        }
+
+        // 刷新数据集列表
+        async function refreshDatasets() {
+            try {
+                // 先调用刷新接口清除后端缓存
+                await fetch('/api/v1/datasets/refresh', { method: 'POST' });
+                // 重新加载数据集列表
+                await loadDatasetOptions();
+                showAlert('数据集列表已刷新', 'success');
+            } catch (error) {
+                console.warn('刷新数据集列表失败:', error);
+                showAlert('刷新失败，请稍后重试', 'error');
             }
         }
 
@@ -750,5 +773,25 @@
         loadTasks();
         setInterval(loadTasks, 5000);
     </script>
+    <style>
+        /* 高级设置折叠样式 */
+        .advanced-settings {
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+        .advanced-settings.collapsed {
+            display: none;
+        }
+        .advanced-toggle-icon {
+            transition: transform 0.3s ease;
+            display: inline-block;
+        }
+        .advanced-settings.collapsed .advanced-toggle-icon {
+            transform: rotate(-90deg);
+        }
+        :not(.collapsed) > .advanced-toggle-icon {
+            transform: rotate(90deg);
+        }
+    </style>
 </body>
 </html>
