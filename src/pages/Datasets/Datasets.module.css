@@ -1,0 +1,77 @@
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-6);
+}
+
+.title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.toolbar {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.search {
+  width: 300px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.table th {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--gray-50);
+}
+
+.table tr:hover {
+  background: var(--gray-50);
+}
+
+.tableName {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.tableMeta {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  background: var(--primary-50);
+  color: var(--primary-600);
+}
+
+.empty {
+  text-align: center;
+  padding: var(--space-12);
+  color: var(--text-muted);
+}
+
+.emptyIcon {
+  font-size: 4rem;
+  margin-bottom: var(--space-4);
+}

@@ -1,0 +1,36 @@
+.uploadArea {
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-10);
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  background: var(--gray-50);
+}
+
+.uploadArea:hover,
+.dragOver {
+  border-color: var(--primary-500);
+  background: var(--primary-50);
+}
+
+.icon {
+  font-size: 3rem;
+  margin-bottom: var(--space-4);
+  color: var(--text-muted);
+}
+
+.text {
+  font-size: 1rem;
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.input {
+  display: none;
+}
