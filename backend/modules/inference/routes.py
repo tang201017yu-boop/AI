@@ -1,25 +1,10 @@
+# -*- coding: utf-8 -*-
 """
-================================================================================
- 推理模块路由 - Inference Routes
-================================================================================
- 功能: 提供图片、视频、摄像头的 YOLO 推理服务
-
- API 端点:
-   - POST /api/v1/inference/image        - 图片推理（文件上传）
-   - POST /api/v1/inference/image/base64 - 图片推理（Base64）
-   - POST /api/v1/inference/video        - 视频推理
-   - POST /api/v1/inference/predict      - 自动标注推理
-   - POST /api/v1/inference/batch        - 批量推理
-   - POST /api/v1/inference/monitor/camera - 添加摄像头
-   - GET  /api/v1/inference/monitor/cameras - 列出摄像头
-
- 参数说明:
-   - model_name: 模型名称（如 yolo11n.pt）
-   - confidence: 置信度阈值（0.1-1.0）
-   - iou_threshold: NMS IoU 阈值（0.1-1.0）
-================================================================================
+推理模块路由 - Inference Routes
+提供图片、视频、摄像头的 YOLO 推理服务接口
 """
 import logging
+import base64
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from typing import Optional, List
 
@@ -72,34 +57,47 @@ async def infer_image(
              -F "confidence=0.5"
         ```
     """
-    logger.info(f"[推理] 图片推理请求: model={model_name}, conf={confidence}")
+    # 记录推理请求
+    # 使用 print 确保日志输出
+    print(f"[DEBUG] 收到推理请求: model={model_name}, conf={confidence}, iou={iou_threshold}, draw_results={draw_results}")
+    logger.info(f"[推理] 收到图片推理请求: model={model_name}, conf={confidence}, iou={iou_threshold}, draw_results={draw_results}")
 
     # 1. 验证文件类型
     if not allowed_file(file.filename, ['jpg', 'jpeg', 'png', 'bmp']):
-        logger.warning(f"[推理] 不支持的文件类型: {file.filename}")
-        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file.filename}")
+        error_msg = f"不支持的文件类型: {file.filename}"
+        logger.warning(f"[推理] {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
-    # 2. 保存上传的图片
+    # 2. 生成唯一文件名并保存上传的图片
     filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
     file_path = settings.UPLOADS_DIR / filename
+
+    # 保存文件
     save_uploaded_file(file, str(file_path))
-    logger.debug(f"[推理] 图片保存至: {file_path}")
+    logger.debug(f"[推理] 图片已保存至: {file_path}")
 
     # 3. 执行推理
-    result = inference_service.infer_image(
-        image_path=str(file_path),
-        model_name=model_name,
-        confidence=confidence,
-        iou_threshold=iou_threshold,
-        draw_results=draw_results
-    )
+    try:
+        result = inference_service.infer_image(
+            image_path=str(file_path),
+            model_name=model_name,
+            confidence=confidence,
+            iou_threshold=iou_threshold,
+            draw_results=draw_results
+        )
+    except Exception as e:
+        error_msg = f"推理执行失败: {str(e)}"
+        logger.error(f"[推理] {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
-    # 4. 记录推理结果
+    # 4. 返回结果
     if result.get("success"):
         num_detections = len(result.get("detections", []))
-        logger.info(f"[推理] 图片推理完成: {num_detections} 个检测结果")
+        inference_time = result.get("inference_time", 0)
+        logger.info(f"[推理] 图片推理成功: {num_detections} 个检测结果, 耗时 {inference_time:.2f}s")
     else:
-        logger.error(f"[推理] 图片推理失败: {result.get('message')}")
+        error_msg = result.get("message", "推理失败")
+        logger.error(f"[推理] 图片推理失败: {error_msg}")
 
     return result
 
@@ -125,9 +123,7 @@ async def infer_image_base64(
         detections: 检测结果列表
         num_detections: 检测数量
     """
-    import base64
-
-    logger.info(f"[推理] Base64 图片推理请求: model={model_name}, conf={confidence}")
+    logger.info(f"[推理] 收到 Base64 图片推理请求: model={model_name}, conf={confidence}")
 
     try:
         # 1. 解码 Base64 图片
@@ -137,18 +133,21 @@ async def infer_image_base64(
         # 2. 执行推理
         result = inference_service.stream_infer(image_bytes, model_name, confidence)
 
-        # 3. 记录结果
+        # 3. 返回结果
         if result.get("success"):
             num_detections = result.get("num_detections", 0)
-            logger.info(f"[推理] Base64 图片推理完成: {num_detections} 个检测结果")
+            inference_time = result.get("inference_time", 0)
+            logger.info(f"[推理] Base64 图片推理成功: {num_detections} 个检测, 耗时 {inference_time:.3f}s")
         else:
-            logger.error(f"[推理] Base64 图片推理失败: {result.get('message')}")
+            error_msg = result.get("message", "推理失败")
+            logger.error(f"[推理] Base64 图片推理失败: {error_msg}")
 
         return result
 
     except Exception as e:
-        logger.error(f"[推理] Base64 图片解码失败: {e}")
-        raise HTTPException(status_code=400, detail=f"图片解码失败: {str(e)}")
+        error_msg = f"Base64 图片解码失败: {str(e)}"
+        logger.error(f"[推理] {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
 
 # =============================================================================
@@ -183,14 +182,15 @@ async def infer_video(
     """
     import uuid
 
+    # 生成请求 ID 用于追踪
     request_id = str(uuid.uuid4())[:8]
-    logger.info(f"[推理] 视频推理请求 (ID:{request_id}): model={model_name}, conf={confidence}")
+    logger.info(f"[推理] 收到视频推理请求 (ID:{request_id}): model={model_name}, conf={confidence}")
 
     # 1. 保存上传的视频
     filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
     file_path = settings.UPLOADS_DIR / filename
     save_uploaded_file(file, str(file_path))
-    logger.debug(f"[推理] 视频保存至: {file_path}")
+    logger.debug(f"[推理] 视频已保存至: {file_path}")
 
     # 2. 设置输出路径
     output_path = None
@@ -199,21 +199,27 @@ async def infer_video(
         logger.debug(f"[推理] 输出视频路径: {output_path}")
 
     # 3. 执行视频推理
-    result = inference_service.infer_video(
-        video_path=str(file_path),
-        model_name=model_name,
-        confidence=confidence,
-        output_path=output_path,
-        save_output=save_output
-    )
+    try:
+        result = inference_service.infer_video(
+            video_path=str(file_path),
+            model_name=model_name,
+            confidence=confidence,
+            output_path=output_path,
+            save_output=save_output
+        )
+    except Exception as e:
+        error_msg = f"视频推理执行失败: {str(e)}"
+        logger.error(f"[推理] (ID:{request_id}) {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
-    # 4. 记录结果
+    # 4. 返回结果
     if result.get("success"):
         frames = result.get("total_frames", 0)
         detections = result.get("total_detections", 0)
         logger.info(f"[推理] 视频推理完成 (ID:{request_id}): {frames} 帧, {detections} 个检测")
     else:
-        logger.error(f"[推理] 视频推理失败 (ID:{request_id}): {result.get('message')}")
+        error_msg = result.get("message", "视频推理失败")
+        logger.error(f"[推理] 视频推理失败 (ID:{request_id}): {error_msg}")
 
     return result
 
@@ -249,8 +255,9 @@ async def predict_for_annotation(
     """
     import uuid
 
+    # 生成请求 ID
     request_id = str(uuid.uuid4())[:8]
-    logger.info(f"[自动标注] 请求 (ID:{request_id}): model={model_name}, conf={confidence}")
+    logger.info(f"[自动标注] 收到请求 (ID:{request_id}): model={model_name}, conf={confidence}")
 
     try:
         # 1. 读取图片数据
@@ -260,18 +267,20 @@ async def predict_for_annotation(
         # 2. 执行推理
         result = inference_service.stream_infer(image_data, model_name, confidence)
 
-        # 3. 记录结果
+        # 3. 返回结果
         if result.get("success"):
             num = result.get("num_detections", 0)
-            logger.info(f"[自动标注] 完成 (ID:{request_id}): {num} 个检测")
+            logger.info(f"[自动标注] 推理完成 (ID:{request_id}): {num} 个检测")
         else:
-            logger.error(f"[自动标注] 失败 (ID:{request_id}): {result.get('message')}")
+            error_msg = result.get("message", "自动标注失败")
+            logger.error(f"[自动标注] 推理失败 (ID:{request_id}): {error_msg}")
 
         return result
 
     except Exception as e:
-        logger.error(f"[自动标注] 异常 (ID:{request_id}): {e}")
-        raise HTTPException(status_code=500, detail=f"推理失败: {str(e)}")
+        error_msg = f"自动标注异常: {str(e)}"
+        logger.error(f"[自动标注] (ID:{request_id}) {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 # =============================================================================
@@ -304,9 +313,10 @@ async def batch_infer(
     """
     import uuid
 
+    # 生成请求 ID
     request_id = str(uuid.uuid4())[:8]
     num_files = len(files)
-    logger.info(f"[批量推理] 请求 (ID:{request_id}): {num_files} 张图片, model={model_name}")
+    logger.info(f"[批量推理] 收到请求 (ID:{request_id}): {num_files} 张图片, model={model_name}")
 
     image_paths = []
 
@@ -327,19 +337,21 @@ async def batch_infer(
             confidence=confidence
         )
 
-        # 3. 记录结果
+        # 3. 返回结果
         if result.get("success"):
             total = result.get("total_detections", 0)
             time = result.get("total_time", 0)
-            logger.info(f"[批量推理] 完成 (ID:{request_id}): {num_files} 张, {total} 个检测, {time:.2f}秒")
+            logger.info(f"[批量推理] 完成 (ID:{request_id}): {num_files} 张, {total} 个检测, {time:.2f}s")
         else:
-            logger.error(f"[批量推理] 失败 (ID:{request_id}): {result.get('message')}")
+            error_msg = result.get("message", "批量推理失败")
+            logger.error(f"[批量推理] 失败 (ID:{request_id}): {error_msg}")
 
         return result
 
     except Exception as e:
-        logger.error(f"[批量推理] 异常 (ID:{request_id}): {e}")
-        raise HTTPException(status_code=500, detail=f"批量推理失败: {str(e)}")
+        error_msg = f"批量推理异常: {str(e)}"
+        logger.error(f"[批量推理] (ID:{request_id}) {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 # =============================================================================
@@ -366,14 +378,15 @@ async def add_camera(
         success: 是否成功
         camera: 摄像头信息
     """
-    logger.info(f"[监控] 添加摄像头: {name}")
+    logger.info(f"[监控] 添加摄像头: {name}, URL: {url}")
 
     result = monitor_service.add_camera(name, url, model_name, confidence)
 
     if result.get("success"):
         logger.info(f"[监控] 摄像头添加成功: {name}")
     else:
-        logger.error(f"[监控] 摄像头添加失败: {result.get('message')}")
+        error_msg = result.get("message", "添加失败")
+        logger.error(f"[监控] 摄像头添加失败: {error_msg}")
 
     return result
 
@@ -387,7 +400,7 @@ async def list_cameras():
         success: 是否成功
         cameras: 摄像头列表
     """
-    logger.debug("[监控] 列出所有摄像头")
+    logger.debug("[监控] 查询所有摄像头")
     return {"success": True, "cameras": monitor_service.list_cameras()}
 
 

@@ -243,6 +243,7 @@ class AnnotationService:
         if not project:
             return {"success": False, "message": "项目不存在"}
 
+        project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
         label_path = project_dir / "labels" / Path(image_name).with_suffix('.txt').name
         if not label_path.exists():
             return {"success": True, "annotations": []}

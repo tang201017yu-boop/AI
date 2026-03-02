@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "created_at": "2026-02-27T17:19:22.737377",
+  "detection": {
+    "scenes": [
+      "滑坡"
+    ],
+    "models": [
+      "landslide",
+      "rockfall",
+      "collapse"
+    ],
+    "threshold": 0.5,
+    "iou_threshold": 0.45
+  },
+  "alarm": {
+    "enabled": false,
+    "type": "popup",
+    "conditions": [
+      {
+        "scene": "滑坡",
+        "threshold": 0.5,
+        "action": "none"
+      }
+    ]
+  },
+  "post_processing": {
+    "min_area": null,
+    "max_area": null,
+    "tracking": false
+  }
+}

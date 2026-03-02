@@ -1,0 +1,22 @@
+# 基础依赖（CPU 模式）
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+pyyaml
+pillow
+opencv-python
+ultralytics
+supervision
+torch
+torchvision
+boto3
+psycopg-binary
+jinja2
+numpy
+scipy
+matplotlib
+tqdm
+requests
+psutil
+pydantic

@@ -1,0 +1,146 @@
+.hero {
+  text-align: center;
+  padding: var(--space-12) 0;
+  position: relative;
+}
+
+.heroTitle {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: var(--space-4);
+}
+
+.heroTitleAccent {
+  background: linear-gradient(135deg, var(--primary-500), var(--accent-500));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.heroSubtitle {
+  font-size: 1.25rem;
+  color: var(--text-secondary);
+  max-width: 600px;
+  margin: 0 auto var(--space-8);
+  line-height: 1.7;
+}
+
+.heroButtons {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: center;
+}
+
+.section {
+  margin-bottom: var(--space-8);
+}
+
+.grid4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+}
+
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-6);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-6);
+}
+
+@media (max-width: 1024px) {
+  .grid4 { grid-template-columns: repeat(2, 1fr); }
+  .grid3 { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 768px) {
+  .grid4, .grid3, .grid2 { grid-template-columns: 1fr; }
+  .heroTitle { font-size: 2rem; }
+}
+
+.workflowStep {
+  position: relative;
+  padding-left: var(--space-10);
+  padding-bottom: var(--space-6);
+}
+
+.workflowStep::before {
+  content: attr(data-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: white;
+  font-size: 1rem;
+}
+
+.workflowStep::after {
+  content: '';
+  position: absolute;
+  left: 1.125rem;
+  top: 3rem;
+  width: 2px;
+  height: calc(100% - 1.5rem);
+  background: var(--border-color);
+}
+
+.workflowStep:last-child::after {
+  display: none;
+}
+
+.workflowTitle {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+  color: var(--text-primary);
+}
+
+.workflowDesc {
+  font-size: 0.9375rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.solutionCard {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  text-align: center;
+  transition: all var(--transition-base);
+}
+
+.solutionCard:hover {
+  border-color: var(--primary-200);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.solutionIcon {
+  font-size: 2rem;
+  margin-bottom: var(--space-3);
+}
+
+.solutionTitle {
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+  color: var(--text-primary);
+}
+
+.solutionDesc {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}

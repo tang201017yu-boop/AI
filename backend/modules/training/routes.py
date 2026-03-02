@@ -1,6 +1,11 @@
+# -*- coding: utf-8 -*-
 """
 训练模块路由 - Training Routes
+提供模型训练、实验管理、模型导出、验证等接口
 """
+import logging
+import time
+import os
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, UploadFile, Request
 from typing import Optional, Dict, Any, List
@@ -12,59 +17,63 @@ from backend.modules.training.training_service import training_service, export_s
 from backend.modules.training.project_service import project_service
 from backend.modules.training.model_service import model_service
 
+# 创建日志记录器
+logger = logging.getLogger(__name__)
+
+# 创建路由
 router = APIRouter()
 
 
 # ==================== 训练管理 ====================
 
 class TrainingRequest(BaseModel):
-    """训练请求模型"""
-    project_name: str
-    dataset_path: str
-    model_type: str = "yolo11n"
-    epochs: int = 100
-    batch_size: int = 32
-    img_size: int = 640
-    device: str = "auto"
-    optimizer: str = "auto"
-    amp: bool = True
-    workers: int = 8
+    """训练请求数据模型"""
+    project_name: str  # 项目名称
+    dataset_path: str  # 数据集路径
+    model_type: str = "yolo11n"  # 模型类型
+    epochs: int = 100  # 训练轮数
+    batch_size: int = 32  # 批大小
+    img_size: int = 640  # 输入图片尺寸
+    device: str = "auto"  # 设备
+    optimizer: str = "auto"  # 优化器
+    amp: bool = True  # 混合精度训练
+    workers: int = 8  # 数据加载线程数
     # 微调参数
-    lr0: float = 0.01
-    lrf: float = 0.01
-    warmup_epochs: float = 3.0
-    warmup_bias_lr: float = 0.1
-    mosaic: float = 1.0
-    close_mosaic_epochs: int = 10
+    lr0: float = 0.01  # 初始学习率
+    lrf: float = 0.01  # 最终学习率因子
+    warmup_epochs: float = 3.0  # 预热轮数
+    warmup_bias_lr: float = 0.1  # 预热期间 bias 学习率
+    mosaic: float = 1.0  # 马赛克增强概率
+    close_mosaic_epochs: int = 10  # 关闭马赛克轮数
     # 增强参数
-    hsv_h: float = 0.015
-    hsv_s: float = 0.7
-    hsv_v: float = 0.4
-    degrees: float = 0.0
-    translate: float = 0.1
-    scale: float = 0.5
-    shear: float = 0.0
-    perspective: float = 0.0
-    flipud: float = 0.0
-    fliplr: float = 0.5
-    mixup: float = 0.0
-    copy_paste: float = 0.0
+    hsv_h: float = 0.015  # 色相增强
+    hsv_s: float = 0.7  # 饱和度增强
+    hsv_v: float = 0.4  # 亮度增强
+    degrees: float = 0.0  # 旋转角度
+    translate: float = 0.1  # 平移比例
+    scale: float = 0.5  # 缩放比例
+    shear: float = 0.0  # 剪切角度
+    perspective: float = 0.0  # 透视变换
+    flipud: float = 0.0  # 垂直翻转
+    fliplr: float = 0.5  # 水平翻转
+    mixup: float = 0.0  # 混合增强
+    copy_paste: float = 0.0  # 复制粘贴增强
     # 损失函数权重
-    box: float = 7.5
-    cls: float = 0.5
-    dfl: float = 1.5
+    box: float = 7.5  # 边界框损失权重
+    cls: float = 0.5  # 分类损失权重
+    dfl: float = 1.5  # 分布焦点损失权重
     # 训练控制
-    patience: int = 100
-    save_period: int = -1
-    resume: bool = False
+    patience: int = 100  # 早停耐心值
+    save_period: int = -1  # 保存周期
+    resume: bool = False  # 是否恢复训练
     # 模型路径（可选）
-    model_path: Optional[str] = None
+    model_path: Optional[str] = None  # 自定义模型路径
 
 
 @router.post("/training/start")
 async def start_training(request: TrainingRequest):
     """
-    开始训练
+    开始训练接口
 
     优化器说明:
     - optimizer: 优化器类型，支持 SGD, Adam, AdamW, NAdam, RAdam, RMSProp，设置为 "auto" 自动匹配
@@ -77,29 +86,31 @@ async def start_training(request: TrainingRequest):
     - warmup_bias_lr: 预热期间 bias 的学习率
     - mosaic: 马赛克增强概率 (0-1)，处理小目标时建议保持开启
     - close_mosaic_epochs: 训练后期关闭马赛克增强的轮数
-    """
-    import logging
-    logger = logging.getLogger(__name__)
 
-    logger.info(f"收到训练请求: 项目={request.project_name}, 数据集={request.dataset_path}, 模型={request.model_type}")
+    Returns:
+        训练任务 ID 和实验信息
+    """
+    logger.info(f"[训练] 收到训练请求: 项目={request.project_name}, 数据集={request.dataset_path}, 模型={request.model_type}")
 
     try:
         # 转换为字典，排除 None 值
         config = {k: v for k, v in request.model_dump().items() if v is not None}
 
+        # 调用训练服务启动训练
         result = training_service.start_training(**config)
 
         if result["success"]:
-            logger.info(f"训练任务已启动: {result.get('task_id')}")
+            logger.info(f"[训练] 训练任务已启动: task_id={result.get('task_id')}")
             return result
         else:
-            logger.error(f"启动训练失败: {result.get('message')}")
-            raise HTTPException(status_code=400, detail=result.get("message", "启动训练失败"))
+            error_msg = result.get("message", "启动训练失败")
+            logger.error(f"[训练] 启动训练失败: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"训练请求异常: {e}")
+        logger.exception(f"[训练] 训练请求异常: {e}")
         raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
 
 
@@ -109,50 +120,96 @@ async def resume_training(
     dataset_path: str = None
 ):
     """
-    从检查点恢复训练
+    从检查点恢复训练接口
 
     Args:
         checkpoint_path: 检查点文件路径 (.pt)
         dataset_path: 数据集路径（可选）
+
+    Returns:
+        恢复后的训练任务 ID
     """
+    logger.info(f"[训练] 恢复训练: checkpoint={checkpoint_path}")
+
     from backend.core.yolo_engine import yolo_engine
 
     try:
+        # 调用引擎恢复训练
         task_id = yolo_engine.resume_training(checkpoint_path, dataset_path)
+        logger.info(f"[训练] 恢复训练成功: task_id={task_id}")
         return {
             "success": True,
             "message": "恢复训练已开始",
             "task_id": task_id
         }
     except FileNotFoundError as e:
+        logger.error(f"[训练] 检查点文件不存在: {e}")
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
+        logger.error(f"[训练] 恢复训练参数错误: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception(f"[训练] 恢复训练失败: {e}")
         raise HTTPException(status_code=500, detail=f"恢复训练失败: {str(e)}")
 
 
 @router.get("/training/status/{task_id}")
 async def get_training_status(task_id: str):
-    """获取训练状态"""
+    """
+    获取训练状态接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        训练状态信息
+    """
+    logger.debug(f"[训练] 查询训练状态: task_id={task_id}")
+
     result = training_service.get_training_status(task_id)
     if result["success"]:
         return result
-    raise HTTPException(status_code=404, detail=result.get("message"))
+
+    error_msg = result.get("message", "任务不存在")
+    logger.warning(f"[训练] 任务不存在: task_id={task_id}")
+    raise HTTPException(status_code=404, detail=error_msg)
 
 
 @router.get("/training/tasks")
 async def list_training_tasks():
-    """列出所有训练任务"""
-    return {"success": True, "tasks": training_service.list_training_tasks()}
+    """
+    列出所有训练任务接口
+
+    Returns:
+        训练任务列表
+    """
+    logger.debug("[训练] 查询所有训练任务")
+
+    tasks = training_service.list_training_tasks()
+    logger.debug(f"[训练] 找到 {len(tasks)} 个训练任务")
+
+    return {"success": True, "tasks": tasks}
 
 
 @router.post("/training/cancel/{task_id}")
 async def cancel_training(task_id: str):
-    """取消训练"""
+    """
+    取消训练接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        取消结果
+    """
+    logger.info(f"[训练] 尝试取消训练: task_id={task_id}")
+
     result = training_service.cancel_training(task_id)
     if result["success"]:
+        logger.info(f"[训练] 训练已取消: task_id={task_id}")
         return result
+
+    logger.warning(f"[训练] 取消失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result["message"])
 
 
@@ -169,7 +226,7 @@ async def validate_model(
     split: str = "val"
 ):
     """
-    验证模型性能
+    验证模型性能接口
 
     返回详细的评估指标：
     - mAP@0.5, mAP@0.5:0.95
@@ -177,12 +234,27 @@ async def validate_model(
     - F1 score
     - 各类别 AP
     - 推理速度统计
+
+    Args:
+        model_path: 模型文件路径
+        data: 数据集配置文件
+        imgsz: 输入图片尺寸
+        conf: 置信度阈值
+        iou: IOU 阈值
+        rect: 是否使用矩形推理
+        split: 验证集划分
+
+    Returns:
+        验证指标结果
     """
+    logger.info(f"[训练] 验证模型: {model_path}")
+
     from backend.core.yolo_engine import yolo_engine
 
     try:
         # 加载模型
         model = yolo_engine.load_model(model_path)
+        logger.debug(f"[训练] 模型加载成功")
 
         # 运行验证
         results = model.val(
@@ -214,6 +286,8 @@ async def validate_model(
                 "postprocess_ms": results.speed.get('postprocess', 0)
             }
 
+        logger.info(f"[训练] 验证完成: mAP50={metrics['mAP50']:.4f}, mAP50-95={metrics['mAP50_95']:.4f}")
+
         return {
             "success": True,
             "model_path": model_path,
@@ -222,26 +296,38 @@ async def validate_model(
         }
 
     except Exception as e:
+        logger.exception(f"[训练] 验证失败: {e}")
         raise HTTPException(status_code=500, detail=f"验证失败: {str(e)}")
 
 
 @router.get("/training/metrics/{task_id}")
 async def get_training_metrics(task_id: str):
     """
-    获取训练任务的详细指标
+    获取训练任务的详细指标接口
 
     返回：
     - 损失曲线 (box_loss, cls_loss, dfl_loss)
     - 精度指标 (mAP50, mAP50-95, precision, recall)
     - F1 曲线
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        训练指标数据
     """
+    logger.debug(f"[训练] 获取训练指标: task_id={task_id}")
+
     from backend.core.yolo_engine import yolo_engine
 
     status = yolo_engine.get_training_status(task_id)
     if not status:
+        logger.warning(f"[训练] 任务不存在: task_id={task_id}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
     chart_data = status.get_chart_data()
+
+    logger.debug(f"[训练] 指标获取成功: epoch={status.current_epoch}/{status.total_epochs}")
 
     return {
         "success": True,
@@ -262,23 +348,52 @@ async def get_training_metrics(task_id: str):
 
 @router.get("/experiments")
 async def get_experiments():
-    """获取所有实验"""
+    """
+    获取所有实验接口
+
+    Returns:
+        实验列表
+    """
+    logger.debug("[训练] 查询所有实验")
+
+    experiments = list(training_service.experiments.values())
+    logger.info(f"[训练] 找到 {len(experiments)} 个实验")
+
     return {
         "success": True,
-        "experiments": list(training_service.experiments.values())
+        "experiments": experiments
     }
 
 
 @router.post("/experiments/compare")
-async def compare_experiments(experiment_ids: str):  # JSON string
-    """比较实验"""
+async def compare_experiments(experiment_ids: str):
+    """
+    比较实验接口
+
+    Args:
+        experiment_ids: 实验 ID 列表（JSON 字符串）
+
+    Returns:
+        实验比较结果
+    """
+    logger.info(f"[训练] 比较实验: {experiment_ids}")
+
     ids = json.loads(experiment_ids)
-    return training_service.compare_experiments(ids)
+    result = training_service.compare_experiments(ids)
+
+    return result
 
 
 @router.get("/models/compare")
 async def get_model_comparison():
-    """获取模型对比"""
+    """
+    获取模型对比接口
+
+    Returns:
+        模型列表信息
+    """
+    logger.debug("[训练] 获取模型对比")
+
     return training_service.get_model_comparison()
 
 
@@ -292,7 +407,21 @@ async def export_model(
     half: bool = False,
     simplify: bool = True
 ):
-    """导出模型"""
+    """
+    导出模型接口
+
+    Args:
+        model_path: 模型文件路径
+        format: 导出格式
+        img_size: 输入图片尺寸
+        half: 是否使用 FP16 量化
+        simplify: 是否简化模型
+
+    Returns:
+        导出结果
+    """
+    logger.info(f"[训练] 导出模型: {model_path}, 格式={format}")
+
     result = export_service.export_model(
         model_path=model_path,
         format=format,
@@ -300,21 +429,43 @@ async def export_model(
         half=half,
         simplify=simplify
     )
+
     if result["success"]:
+        logger.info(f"[训练] 导出成功: {result.get('export_path')}")
         return result
+
+    logger.error(f"[训练] 导出失败: {result.get('message')}")
     raise HTTPException(status_code=500, detail=result["message"])
 
 
 @router.get("/export/formats")
 async def get_export_formats():
-    """获取支持的导出格式"""
+    """
+    获取支持的导出格式接口
+
+    Returns:
+        导出格式列表
+    """
+    logger.debug("[训练] 获取导出格式")
+
     return export_service.get_export_formats()
 
 
 @router.get("/export/recommended")
 async def get_recommended_format(target: str):
-    """获取推荐格式"""
+    """
+    获取推荐导出格式接口
+
+    Args:
+        target: 目标平台
+
+    Returns:
+        推荐格式信息
+    """
+    logger.debug(f"[训练] 获取推荐格式: target={target}")
+
     fmt = export_service.get_recommended_format(target)
+
     return {"success": True, "format": fmt, "format_info": export_service.EXPORT_FORMATS.get(fmt)}
 
 
@@ -323,17 +474,26 @@ async def get_recommended_format(target: str):
 @router.get("/training/{task_id}/metrics")
 async def get_training_metrics(task_id: str):
     """
-    获取训练指标历史（用于图表）
+    获取训练指标历史接口（用于图表展示）
 
     返回:
     - losses: 损失曲线历史 (box_loss, cls_loss, dfl_loss)
     - metrics: 性能指标历史 (mAP50, mAP50-95, precision, recall)
     - best_metrics: 最佳指标
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        训练指标和图表数据
     """
+    logger.debug(f"[训练] 获取训练指标: task_id={task_id}")
+
     from backend.core.yolo_engine import yolo_engine
 
     status = yolo_engine.get_training_status(task_id)
     if not status:
+        logger.warning(f"[训练] 任务不存在: task_id={task_id}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 提取图表数据
@@ -358,6 +518,8 @@ async def get_training_metrics(task_id: str):
         metrics_series["mAP50-95"].append(m.get("metrics/mAP50-95(B)", 0))
         metrics_series["precision"].append(m.get("metrics/precision(B)", 0))
         metrics_series["recall"].append(m.get("metrics/recall(B)", 0))
+
+    logger.debug(f"[训练] 指标数据获取成功: {len(chart_data['epochs'])} 个 epoch")
 
     return {
         "success": True,
@@ -387,12 +549,23 @@ async def get_training_metrics(task_id: str):
 
 @router.get("/training/{task_id}/checkpoints")
 async def get_training_checkpoints(task_id: str):
-    """获取训练检查点列表"""
+    """
+    获取训练检查点列表接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        检查点列表
+    """
+    logger.debug(f"[训练] 获取检查点: task_id={task_id}")
+
     from backend.core.yolo_engine import yolo_engine
     from pathlib import Path
 
     status = yolo_engine.get_training_status(task_id)
     if not status:
+        logger.warning(f"[训练] 任务不存在: task_id={task_id}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
     checkpoints = []
@@ -413,6 +586,8 @@ async def get_training_checkpoints(task_id: str):
                     "created_at": stat.st_ctime
                 })
 
+    logger.info(f"[训练] 找到 {len(checkpoints)} 个检查点")
+
     return {
         "success": True,
         "checkpoints": sorted(checkpoints, key=lambda x: x["created_at"], reverse=True)
@@ -421,12 +596,23 @@ async def get_training_checkpoints(task_id: str):
 
 @router.get("/training/{task_id}/system-stats")
 async def get_system_stats(task_id: str):
-    """获取实时系统统计"""
+    """
+    获取实时系统统计接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        系统资源使用情况
+    """
+    logger.debug(f"[训练] 获取系统统计: task_id={task_id}")
+
     from backend.core.yolo_engine import yolo_engine
     import psutil
 
     status = yolo_engine.get_training_status(task_id)
     if not status:
+        logger.warning(f"[训练] 任务不存在: task_id={task_id}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
     stats = {
@@ -467,18 +653,27 @@ async def get_system_stats(task_id: str):
 @router.get("/training/{task_id}/tensorboard")
 async def get_tensorboard_data(task_id: str):
     """
-    获取 TensorBoard 日志数据
+    获取 TensorBoard 日志数据接口
 
     返回:
     - log_dir: 日志目录
     - logs: 日志条目列表
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        日志数据
     """
+    logger.debug(f"[训练] 获取 TensorBoard 数据: task_id={task_id}")
+
     from backend.core.yolo_engine import yolo_engine
     from pathlib import Path
     import json
 
     status = yolo_engine.get_training_status(task_id)
     if not status:
+        logger.warning(f"[训练] 任务不存在: task_id={task_id}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
     logs = []
@@ -519,7 +714,7 @@ async def get_tensorboard_data(task_id: str):
                                     except:
                                         pass
                     except Exception as e:
-                        print(f"Error reading log file {log_file}: {e}")
+                        logger.error(f"[训练] 读取日志文件失败: {log_file}, 错误: {e}")
                 break
 
     # 如果没有找到日志，返回模拟数据
@@ -528,6 +723,8 @@ async def get_tensorboard_data(task_id: str):
             {"time": status.started_at.isoformat() if status.started_at else None, "epoch": 0, "message": "训练开始"},
             {"time": str(datetime.now().isoformat()), "epoch": status.current_epoch, "message": f"正在训练 Epoch {status.current_epoch}/{status.total_epochs}"}
         ]
+
+    logger.debug(f"[训练] 获取 {len(logs)} 条日志")
 
     return {
         "success": True,
@@ -540,15 +737,23 @@ async def get_tensorboard_data(task_id: str):
 @router.get("/training/{task_id}/export/logs")
 async def export_training_logs(task_id: str):
     """
-    导出训练日志
+    导出训练日志接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        训练日志 JSON 文件
     """
+    logger.info(f"[训练] 导出日志: task_id={task_id}")
+
     from backend.core.yolo_engine import yolo_engine
     from fastapi.responses import StreamingResponse
-    import json
     from datetime import datetime
 
     status = yolo_engine.get_training_status(task_id)
     if not status:
+        logger.warning(f"[训练] 任务不存在: task_id={task_id}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 构建日志数据
@@ -568,6 +773,8 @@ async def export_training_logs(task_id: str):
     def generate():
         yield json.dumps(log_data, ensure_ascii=False, indent=2)
 
+    logger.info(f"[训练] 日志导出成功: task_id={task_id}")
+
     return StreamingResponse(
         generate(),
         media_type="application/json",
@@ -578,12 +785,21 @@ async def export_training_logs(task_id: str):
 @router.get("/training/{task_id}/config")
 async def get_training_config(task_id: str):
     """
-    获取训练配置
+    获取训练配置接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        训练配置信息
     """
+    logger.debug(f"[训练] 获取训练配置: task_id={task_id}")
+
     from backend.core.yolo_engine import yolo_engine
 
     status = yolo_engine.get_training_status(task_id)
     if not status:
+        logger.warning(f"[训练] 任务不存在: task_id={task_id}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 返回训练配置信息
@@ -612,25 +828,62 @@ async def create_project(
     description: str = "",
     cover_image: str = None
 ):
-    """创建新项目"""
+    """
+    创建新项目接口
+
+    Args:
+        name: 项目名称
+        description: 项目描述
+        cover_image: 封面图片
+
+    Returns:
+        创建结果
+    """
+    logger.info(f"[训练] 创建项目: {name}")
+
     result = project_service.create_project(name, description, cover_image)
     if result["success"]:
+        logger.info(f"[训练] 项目创建成功: {result.get('project', {}).get('id')}")
         return result
+
+    logger.error(f"[训练] 项目创建失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
 @router.get("/projects")
 async def list_projects(include_deleted: bool = False):
-    """列出所有项目"""
+    """
+    列出所有项目接口
+
+    Args:
+        include_deleted: 是否包含已删除项目
+
+    Returns:
+        项目列表
+    """
+    logger.debug(f"[训练] 列出项目: include_deleted={include_deleted}")
+
     return project_service.list_projects(include_deleted)
 
 
 @router.get("/projects/{project_id}")
 async def get_project(project_id: str):
-    """获取项目详情"""
+    """
+    获取项目详情接口
+
+    Args:
+        project_id: 项目 ID
+
+    Returns:
+        项目详情
+    """
+    logger.debug(f"[训练] 获取项目: {project_id}")
+
     result = project_service.get_project(project_id)
     if result["success"]:
         return result
+
+    logger.warning(f"[训练] 项目不存在: {project_id}")
     raise HTTPException(status_code=404, detail=result.get("message"))
 
 
@@ -642,42 +895,100 @@ async def update_project(
     cover_image: str = None,
     settings: Dict = None
 ):
-    """更新项目"""
+    """
+    更新项目接口
+
+    Args:
+        project_id: 项目 ID
+        name: 新名称
+        description: 新描述
+        cover_image: 新封面
+        settings: 新设置
+
+    Returns:
+        更新结果
+    """
+    logger.info(f"[训练] 更新项目: {project_id}")
+
     result = project_service.update_project(
         project_id, name, description, cover_image, settings
     )
     if result["success"]:
+        logger.info(f"[训练] 项目更新成功: {project_id}")
         return result
+
+    logger.error(f"[训练] 项目更新失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: str, permanent: bool = False):
-    """删除项目"""
+    """
+    删除项目接口
+
+    Args:
+        project_id: 项目 ID
+        permanent: 是否永久删除
+
+    Returns:
+        删除结果
+    """
+    logger.info(f"[训练] 删除项目: {project_id}, permanent={permanent}")
+
     result = project_service.delete_project(project_id, permanent)
     if result["success"]:
+        logger.info(f"[训练] 项目已删除: {project_id}")
         return result
+
+    logger.error(f"[训练] 删除失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
 @router.post("/projects/{project_id}/restore")
 async def restore_project(project_id: str):
-    """从回收站恢复项目"""
+    """
+    从回收站恢复项目接口
+
+    Args:
+        project_id: 项目 ID
+
+    Returns:
+        恢复结果
+    """
+    logger.info(f"[训练] 恢复项目: {project_id}")
+
     result = project_service.restore_project(project_id)
     if result["success"]:
+        logger.info(f"[训练] 项目已恢复: {project_id}")
         return result
+
+    logger.error(f"[训练] 恢复失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
 @router.get("/projects/recycle-bin")
 async def get_recycle_bin():
-    """获取回收站"""
+    """
+    获取回收站接口
+
+    Returns:
+        回收站项目列表
+    """
+    logger.debug("[训练] 获取回收站")
+
     return project_service.get_recycle_bin()
 
 
 @router.post("/projects/recycle-bin/empty")
 async def empty_recycle_bin():
-    """清空回收站"""
+    """
+    清空回收站接口
+
+    Returns:
+        清空结果
+    """
+    logger.info("[训练] 清空回收站")
+
     return project_service.empty_recycle_bin()
 
 
@@ -690,26 +1001,66 @@ async def add_model(
     model_type: str = "yolo",
     metrics: str = None  # JSON string
 ):
-    """添加模型到项目"""
+    """
+    添加模型到项目接口
+
+    Args:
+        project_id: 项目 ID
+        model_path: 模型路径
+        model_type: 模型类型
+        metrics: 模型指标（JSON 字符串）
+
+    Returns:
+        添加结果
+    """
+    logger.info(f"[训练] 添加模型到项目: {project_id}, path={model_path}")
+
     model_metrics = json.loads(metrics) if metrics else None
     result = project_service.add_model(project_id, model_path, model_type, model_metrics)
     if result["success"]:
+        logger.info(f"[训练] 模型添加成功")
         return result
+
+    logger.error(f"[训练] 模型添加失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
 @router.get("/projects/{project_id}/models")
 async def get_project_models(project_id: str):
-    """获取项目模型列表"""
+    """
+    获取项目模型列表接口
+
+    Args:
+        project_id: 项目 ID
+
+    Returns:
+        模型列表
+    """
+    logger.debug(f"[训练] 获取项目模型: {project_id}")
+
     return project_service.get_models(project_id)
 
 
 @router.delete("/projects/{project_id}/models/{model_id}")
 async def delete_project_model(project_id: str, model_id: str):
-    """删除模型"""
+    """
+    删除模型接口
+
+    Args:
+        project_id: 项目 ID
+        model_id: 模型 ID
+
+    Returns:
+        删除结果
+    """
+    logger.info(f"[训练] 删除模型: {project_id}/{model_id}")
+
     result = project_service.delete_model(project_id, model_id)
     if result["success"]:
+        logger.info(f"[训练] 模型已删除")
         return result
+
+    logger.error(f"[训练] 删除失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
@@ -719,10 +1070,25 @@ async def migrate_model(
     model_id: str,
     target_project_id: str
 ):
-    """迁移模型到另一个项目"""
+    """
+    迁移模型到另一个项目接口
+
+    Args:
+        project_id: 源项目 ID
+        model_id: 模型 ID
+        target_project_id: 目标项目 ID
+
+    Returns:
+        迁移结果
+    """
+    logger.info(f"[训练] 迁移模型: {project_id}/{model_id} -> {target_project_id}")
+
     result = project_service.migrate_model(project_id, model_id, target_project_id)
     if result["success"]:
+        logger.info(f"[训练] 模型迁移成功")
         return result
+
+    logger.error(f"[训练] 迁移失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
@@ -730,7 +1096,18 @@ async def migrate_model(
 
 @router.get("/projects/{project_id}/activity")
 async def get_activity_log(project_id: str, limit: int = 50):
-    """获取项目活动日志"""
+    """
+    获取项目活动日志接口
+
+    Args:
+        project_id: 项目 ID
+        limit: 返回条数限制
+
+    Returns:
+        活动日志列表
+    """
+    logger.debug(f"[训练] 获取活动日志: {project_id}, limit={limit}")
+
     return project_service.get_activity_log(project_id, limit)
 
 
@@ -738,7 +1115,18 @@ async def get_activity_log(project_id: str, limit: int = 50):
 
 @router.get("/projects/{project_id}/compare")
 async def compare_models(project_id: str, model_ids: str = None):
-    """比较模型性能"""
+    """
+    比较模型性能接口
+
+    Args:
+        project_id: 项目 ID
+        model_ids: 模型 ID 列表（JSON 字符串）
+
+    Returns:
+        比较结果
+    """
+    logger.debug(f"[训练] 比较模型: {project_id}")
+
     model_id_list = json.loads(model_ids) if model_ids else None
     return project_service.compare_models(project_id, model_id_list)
 
@@ -752,7 +1140,20 @@ async def upload_model(
     name: str = None,
     description: str = ""
 ):
-    """上传模型文件"""
+    """
+    上传模型文件接口
+
+    Args:
+        file: 模型文件
+        project_id: 项目 ID
+        name: 模型名称
+        description: 模型描述
+
+    Returns:
+        上传结果
+    """
+    logger.info(f"[训练] 上传模型: {file.filename}, project={project_id}")
+
     from fastapi import UploadFile
 
     result = model_service.upload_model(
@@ -763,37 +1164,83 @@ async def upload_model(
     )
 
     if result["success"]:
+        logger.info(f"[训练] 模型上传成功: {result.get('model', {}).get('id')}")
         return result
+
+    logger.error(f"[训练] 上传失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
 @router.get("/models")
 async def list_models(project_id: str = None):
-    """列出所有模型"""
+    """
+    列出所有模型接口
+
+    Args:
+        project_id: 项目 ID（可选）
+
+    Returns:
+        模型列表
+    """
+    logger.debug(f"[训练] 列出模型: project_id={project_id}")
+
     return model_service.list_models(project_id)
 
 
 @router.get("/models/list")
 async def list_models_alias(project_id: str = None):
-    """列出所有模型（兼容前端）"""
+    """
+    列出所有模型接口（兼容前端）
+
+    Args:
+        project_id: 项目 ID（可选）
+
+    Returns:
+        模型列表
+    """
     return model_service.list_models(project_id)
 
 
 @router.get("/models/{model_id}")
 async def get_model(model_id: str):
-    """获取模型详情"""
+    """
+    获取模型详情接口
+
+    Args:
+        model_id: 模型 ID
+
+    Returns:
+        模型详情
+    """
+    logger.debug(f"[训练] 获取模型: {model_id}")
+
     result = model_service.get_model(model_id)
     if result["success"]:
         return result
+
+    logger.warning(f"[训练] 模型不存在: {model_id}")
     raise HTTPException(status_code=404, detail=result.get("message"))
 
 
 @router.delete("/models/{model_id}")
 async def delete_model(model_id: str):
-    """删除模型"""
+    """
+    删除模型接口
+
+    Args:
+        model_id: 模型 ID
+
+    Returns:
+        删除结果
+    """
+    logger.info(f"[训练] 删除模型: {model_id}")
+
     result = model_service.delete_model(model_id)
     if result["success"]:
+        logger.info(f"[训练] 模型已删除: {model_id}")
         return result
+
+    logger.error(f"[训练] 删除失败: {result.get('message')}")
     raise HTTPException(status_code=404, detail=result.get("message"))
 
 
@@ -801,13 +1248,33 @@ async def delete_model(model_id: str):
 
 @router.get("/models/{model_id}/metrics")
 async def get_model_metrics(model_id: str):
-    """获取模型训练指标"""
+    """
+    获取模型训练指标接口
+
+    Args:
+        model_id: 模型 ID
+
+    Returns:
+        训练指标数据
+    """
+    logger.debug(f"[训练] 获取模型指标: {model_id}")
+
     return model_service.get_training_metrics(model_id)
 
 
 @router.get("/models/{model_id}/charts")
 async def get_validation_charts(model_id: str):
-    """获取验证图表数据"""
+    """
+    获取验证图表数据接口
+
+    Args:
+        model_id: 模型 ID
+
+    Returns:
+        图表数据
+    """
+    logger.debug(f"[训练] 获取验证图表: {model_id}")
+
     return model_service.get_validation_charts(model_id)
 
 
@@ -821,7 +1288,21 @@ async def export_model(
     half: bool = False,
     simplify: bool = True
 ):
-    """导出模型"""
+    """
+    导出模型接口
+
+    Args:
+        model_id: 模型 ID
+        format: 导出格式
+        img_size: 输入图片尺寸
+        half: 是否使用 FP16 量化
+        simplify: 是否简化模型
+
+    Returns:
+        导出结果
+    """
+    logger.info(f"[训练] 导出模型: {model_id}, format={format}")
+
     result = model_service.export_model(
         model_id=model_id,
         format=format,
@@ -830,19 +1311,39 @@ async def export_model(
         simplify=simplify
     )
     if result["success"]:
+        logger.info(f"[训练] 导出成功")
         return result
+
+    logger.error(f"[训练] 导出失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
 @router.get("/models/export/formats")
 async def get_export_formats():
-    """获取支持的导出格式"""
+    """
+    获取支持的导出格式接口
+
+    Returns:
+        导出格式列表
+    """
+    logger.debug("[训练] 获取导出格式")
+
     return model_service.get_export_formats()
 
 
 @router.get("/models/{model_id}/exports")
 async def get_model_exports(model_id: str):
-    """获取模型的导出历史"""
+    """
+    获取模型的导出历史接口
+
+    Args:
+        model_id: 模型 ID
+
+    Returns:
+        导出历史列表
+    """
+    logger.debug(f"[训练] 获取导出历史: {model_id}")
+
     return model_service.get_export_status(model_id)
 
 
@@ -858,7 +1359,23 @@ async def test_model_inference(
     half: bool = False,
     file: UploadFile = None
 ):
-    """测试模型推理"""
+    """
+    测试模型推理接口
+
+    Args:
+        model_id: 模型 ID
+        conf_threshold: 置信度阈值
+        iou_threshold: IOU 阈值
+        img_size: 输入图片尺寸
+        device: 设备
+        half: 是否使用 FP16
+        file: 测试图片
+
+    Returns:
+        推理结果
+    """
+    logger.info(f"[训练] 测试推理: {model_id}")
+
     image_data = await file.read() if file else None
 
     result = model_service.test_inference(
@@ -872,7 +1389,10 @@ async def test_model_inference(
     )
 
     if result["success"]:
+        logger.info(f"[训练] 推理测试成功: {result.get('num_detections', 0)} 个检测")
         return result
+
+    logger.error(f"[训练] 推理测试失败: {result.get('message')}")
     raise HTTPException(status_code=400, detail=result.get("message"))
 
 
@@ -887,11 +1407,26 @@ async def batch_inference(
     files: List[UploadFile] = []
 ):
     """
-    批量推理
+    批量推理接口
 
     支持同时上传多张图片进行批量推理，返回每张图片的检测结果
+
+    Args:
+        model_id: 模型 ID
+        conf_threshold: 置信度阈值
+        iou_threshold: IOU 阈值
+        img_size: 输入图片尺寸
+        device: 设备
+        half: 是否使用 FP16
+        files: 测试图片列表
+
+    Returns:
+        批量推理结果
     """
+    logger.info(f"[训练] 批量推理: {model_id}, 文件数={len(files)}")
+
     if not files:
+        logger.warning("[训练] 没有上传图片")
         raise HTTPException(status_code=400, detail="请上传至少一张图片")
 
     # 保存临时文件
@@ -912,6 +1447,7 @@ async def batch_inference(
             device=device,
             half=half
         )
+        logger.info(f"[训练] 批量推理完成: {len(temp_paths)} 张图片")
         return result
     finally:
         # 清理临时文件
@@ -924,5 +1460,15 @@ async def batch_inference(
 
 @router.get("/models/{model_id}/export/history")
 async def get_export_history(model_id: str):
-    """获取模型导出历史"""
+    """
+    获取模型导出历史接口
+
+    Args:
+        model_id: 模型 ID
+
+    Returns:
+        导出历史
+    """
+    logger.debug(f"[训练] 获取导出历史: {model_id}")
+
     return model_service.get_export_status(model_id)

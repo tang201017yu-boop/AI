@@ -22,7 +22,7 @@ except ImportError:
     ULTRALYTICS_AVAILABLE = False
     print("Warning: ultralytics not installed. Install with: pip install ultralytics")
 
-from config.config import settings
+from backend.core.config import settings
 from backend.models.schemas import (
     DetectionResult, InferenceResponse, TrainingConfig,
     TrainingStatus, ModelInfo, ExportConfig

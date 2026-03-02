@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from config.config import settings
+from backend.core.config import settings
 from backend.models.schemas import (
     InferenceRequest, InferenceResponse, TrainingConfig,
     TrainingStatus, ModelInfo, DatasetInfo, ExportConfig,
@@ -24,9 +24,7 @@ from backend.models.schemas import (
     QueueManagementRequest, SolutionResponse
 )
 from backend.services.yolo_service import yolo_service
-from backend.services.annotation_service import annotation_service
-from backend.services.dataset_service import dataset_service
-from backend.services.solutions_service import solutions_service
+from backend.services import annotation_service, dataset_service, solutions_service
 from backend.services.supervision_service import supervision_service
 from backend.utils.file_utils import allowed_file, save_uploaded_file, get_unique_filename
 
@@ -80,29 +78,30 @@ async def health_check():
 
 
 # ==================== 推理相关 ====================
-@router.post("/inference/image", response_model=InferenceResponse)
+@router.post("/inference/image")  # 移除 response_model 以支持 annotated_image
 async def infer_image(
     file: UploadFile = File(...),
     model_name: Optional[str] = Form(None),
     model_path: Optional[str] = Form(None),
     confidence: Optional[float] = Form(None),
     iou_threshold: Optional[float] = Form(None),
-    img_size: Optional[int] = Form(None)
+    img_size: Optional[int] = Form(None),
+    draw_results: bool = Form(True)
 ):
     """图像推理"""
     if not yolo_service:
         raise HTTPException(status_code=500, detail="YOLO service not available")
-    
+
     # 验证文件类型
     if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp"]):
         raise HTTPException(status_code=400, detail="Invalid file type")
-    
+
     try:
         # 保存上传文件
         filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
-        
+
         # 执行推理
         result = yolo_service.infer(
             image_path=str(file_path),
@@ -111,10 +110,30 @@ async def infer_image(
             iou_threshold=iou_threshold,
             img_size=img_size
         )
-        
-        return result
-        
+
+        # 转换为字典（因为 yolo_service.infer 返回的是 Pydantic 模型）
+        result_dict = result.model_dump() if hasattr(result, 'model_dump') else dict(result)
+
+        # 如果需要绘制检测结果
+        if draw_results and result_dict.get("success"):
+            try:
+                from backend.modules.inference.inference_service import inference_service
+                detections = result_dict.get("detections", [])
+                if detections:
+                    annotated_image = inference_service._draw_detections(str(file_path), detections)
+                    result_dict["annotated_image"] = annotated_image
+                    print(f"[推理] 绘制标注图片成功，长度: {len(annotated_image)}")
+            except Exception as e:
+                import traceback
+                print(f"[推理] 绘制标注图片失败: {e}")
+                traceback.print_exc()
+
+        return result_dict
+
     except Exception as e:
+        import traceback
+        print(f"[推理] 推理失败: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -245,9 +264,16 @@ async def upload_model(file: UploadFile = File(...)):
 async def list_datasets():
     """列出所有数据集"""
     datasets = dataset_service.list_datasets()
+    # 支持字典或对象格式
+    datasets_list = []
+    for item in datasets:
+        if hasattr(item, 'dict'):
+            datasets_list.append(item.dict())
+        else:
+            datasets_list.append(item)
     return {
-        "total": len(datasets),
-        "datasets": [item.dict() for item in datasets]
+        "total": len(datasets_list),
+        "datasets": datasets_list
     }
 
 
@@ -255,9 +281,15 @@ async def list_datasets():
 async def refresh_datasets():
     """重新扫描数据集目录"""
     datasets = dataset_service.refresh()
+    datasets_list = []
+    for item in datasets:
+        if hasattr(item, 'dict'):
+            datasets_list.append(item.dict())
+        else:
+            datasets_list.append(item)
     return {
-        "total": len(datasets),
-        "datasets": [item.dict() for item in datasets]
+        "total": len(datasets_list),
+        "datasets": datasets_list
     }
 
 

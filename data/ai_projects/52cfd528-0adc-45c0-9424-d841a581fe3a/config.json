@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "created_at": "2026-02-27T17:29:38.315576",
+  "detection": {
+    "scenes": [
+      "人员",
+      "安全帽",
+      "防护服"
+    ],
+    "models": [
+      "helmet",
+      "hardhat",
+      "clothes",
+      "safety",
+      "person",
+      "vest",
+      "worker",
+      "ppe"
+    ],
+    "threshold": 0.5,
+    "iou_threshold": 0.45
+  },
+  "alarm": {
+    "enabled": true,
+    "type": "popup",
+    "conditions": [
+      {
+        "scene": "人员",
+        "threshold": 0.5,
+        "action": "popup"
+      },
+      {
+        "scene": "安全帽",
+        "threshold": 0.5,
+        "action": "popup"
+      },
+      {
+        "scene": "防护服",
+        "threshold": 0.5,
+        "action": "popup"
+      }
+    ]
+  },
+  "post_processing": {
+    "min_area": null,
+    "max_area": null,
+    "tracking": false
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "created_at": "2026-02-27T17:22:00.135774",
+  "detection": {
+    "scenes": [
+      "异物"
+    ],
+    "models": [
+      "intrusion",
+      "foreign",
+      "object"
+    ],
+    "threshold": 0.5,
+    "iou_threshold": 0.45
+  },
+  "alarm": {
+    "enabled": false,
+    "type": "popup",
+    "conditions": [
+      {
+        "scene": "异物",
+        "threshold": 0.5,
+        "action": "none"
+      }
+    ]
+  },
+  "post_processing": {
+    "min_area": null,
+    "max_area": null,
+    "tracking": false
+  }
+}

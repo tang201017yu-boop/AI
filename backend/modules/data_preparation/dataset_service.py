@@ -28,6 +28,7 @@ except ImportError:
 from backend.core.config import settings
 from backend.core.utils import allowed_file, get_unique_filename, save_uploaded_file, extract_zip
 from backend.modules.data_preparation.storage_service import storage_service
+from backend.modules.data_preparation.coco_parser import coco_parser as CocoParser
 
 
 class DatasetService:
@@ -37,6 +38,27 @@ class DatasetService:
         self.dataset_cache: Dict[str, Dict] = {}
         self.cache_ttl = settings.DATASET_CACHE_TTL
         self._processing_lock = threading.Lock()
+
+    def _get_dataset_path(self, name: str) -> Path:
+        """
+        获取数据集路径
+        支持两种结构:
+        - DATASETS_DIR/name/images (标准结构)
+        - DATASETS_DIR/name/name/images (嵌套结构，如从 ZIP 解压)
+        """
+        base_path = settings.DATASETS_DIR / name
+
+        # 标准结构
+        if (base_path / "images").exists():
+            return base_path
+
+        # 嵌套结构
+        nested_path = base_path / name
+        if (nested_path / "images").exists():
+            return nested_path
+
+        # 如果都不存在，返回基础路径
+        return base_path
 
     def upload_dataset(
         self,
@@ -246,16 +268,24 @@ class DatasetService:
         self,
         dataset_dir: Path,
         max_image_size: int = 4096,
-        thumbnail_size: int = 256
+        thumbnail_size: int = 256,
+        validate: bool = True
     ) -> Dict[str, Any]:
         """
         完整的数据处理 pipeline
 
         处理步骤:
-        1. 图像归一化 - 大图像调整大小（最大 4096 像素）
-        2. 缩略图生成 - 生成 256 像素预览图
-        3. 标签解析 - 提取 YOLO 格式标签
-        4. 统计计算 - 计算类别分布
+        1. 图像验证 - 检查尺寸、格式、完整性
+        2. 图像归一化 - 大图像调整大小（最大 4096 像素）
+        3. 缩略图生成 - 生成 256 像素预览图
+        4. 标签解析 - 提取 YOLO 格式标签
+        5. 统计计算 - 计算类别分布
+
+        Args:
+            dataset_dir: 数据集目录
+            max_image_size: 最大图像尺寸
+            thumbnail_size: 缩略图尺寸
+            validate: 是否进行图像验证
 
         Returns:
             处理结果统计信息
@@ -266,20 +296,36 @@ class DatasetService:
                 "message": "Pillow 库未安装，无法处理图像"
             }
 
-        images_dir = dataset_dir / "images"
-        labels_dir = dataset_dir / "labels"
-        thumbs_dir = dataset_dir / ".thumbnails"
+        # 获取正确的数据集路径（支持嵌套结构）
+        actual_dataset_dir = self._get_dataset_path(dataset_dir.name) if dataset_dir.name else dataset_dir
+        if dataset_dir.name and not (actual_dataset_dir / "images").exists():
+            actual_dataset_dir = dataset_dir
+
+        images_dir = actual_dataset_dir / "images"
+        labels_dir = actual_dataset_dir / "labels"
+        thumbs_dir = actual_dataset_dir / ".thumbnails"
 
         # 创建缩略图目录
         thumbs_dir.mkdir(exist_ok=True)
 
         result = {
             "success": True,
+            "validation": {},
             "normalized": {"total": 0, "skipped": 0, "failed": 0},
             "thumbnails": {"total": 0, "skipped": 0, "failed": 0},
             "labels": {"total": 0, "classes_found": [], "class_counts": {}},
             "statistics": {}
         }
+
+        # 0. 验证图像
+        if validate and images_dir.exists():
+            validation_result = self.validate_images(images_dir, min_size=28, max_size=max_image_size)
+            result["validation"] = validation_result
+
+            # 如果有无效图像（过小），记录警告
+            if validation_result.get("invalid", 0) > 0:
+                result["success"] = True
+                result["warning"] = f"发现 {validation_result['invalid']} 个无效图像"
 
         # 1. 归一化图像
         normalize_result = self._normalize_images(images_dir, max_image_size)
@@ -299,6 +345,103 @@ class DatasetService:
             result["statistics"] = statistics
 
         return result
+
+    # ==================== 图像验证 ====================
+
+    def validate_images(
+        self,
+        images_dir: Path,
+        min_size: int = 28,
+        max_size: int = 4096
+    ) -> Dict[str, Any]:
+        """
+        验证图像文件
+
+        检查:
+        - 最小边尺寸 >= min_size (默认28像素)
+        - 最大边尺寸 <= max_size (默认4096像素，会自动调整)
+        - 支持的颜色模式 (RGB, L, P)
+        - 文件完整性
+
+        Args:
+            images_dir: 图像目录
+            min_size: 最小边尺寸
+            max_size: 最大边尺寸
+
+        Returns:
+            验证结果统计
+        """
+        if not PIL_AVAILABLE:
+            return {
+                "success": False,
+                "message": "Pillow 库未安装",
+                "valid": 0,
+                "invalid": 0,
+                "errors": []
+            }
+
+        valid_count = 0
+        invalid_count = 0
+        errors = []
+        needs_resize = []
+
+        for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']:
+            for img_path in images_dir.rglob(ext):
+                try:
+                    with Image.open(img_path) as img:
+                        width, height = img.size
+
+                        # 检查最小尺寸
+                        min_dim = min(width, height)
+                        if min_dim < min_size:
+                            invalid_count += 1
+                            errors.append({
+                                "file": img_path.name,
+                                "error": f"图像过小: {width}x{height} (最小边需>= {min_size}像素)",
+                                "type": "too_small"
+                            })
+                            continue
+
+                        # 检查是否需要调整大小
+                        if width > max_size or height > max_size:
+                            needs_resize.append({
+                                "file": img_path.name,
+                                "original": f"{width}x{height}",
+                                "action": "will_resize"
+                            })
+                            valid_count += 1
+                            continue
+
+                        # 检查颜色模式
+                        mode = img.mode
+                        if mode not in ['RGB', 'L', 'P', 'RGBA', 'LA']:
+                            invalid_count += 1
+                            errors.append({
+                                "file": img_path.name,
+                                "error": f"不支持的颜色模式: {mode}",
+                                "type": "unsupported_mode"
+                            })
+                            continue
+
+                        valid_count += 1
+
+                except Exception as e:
+                    invalid_count += 1
+                    errors.append({
+                        "file": img_path.name,
+                        "error": f"文件损坏或无法读取: {str(e)}",
+                        "type": "corrupted"
+                    })
+
+        return {
+            "success": True,
+            "valid": valid_count,
+            "invalid": invalid_count,
+            "needs_resize": len(needs_resize),
+            "resize_details": needs_resize[:10],  # 只返回前10个
+            "errors": errors[:50],  # 限制错误数量
+            "total_checked": valid_count + invalid_count
+        }
 
     def _normalize_images(self, images_dir: Path, max_size: int = 4096) -> Dict[str, int]:
         """归一化图像 - 大图像调整大小"""
@@ -512,7 +655,8 @@ class DatasetService:
 
     def get_thumbnail_path(self, dataset_name: str, image_name: str) -> Optional[str]:
         """获取图片缩略图路径"""
-        dataset_dir = settings.DATASETS_DIR / dataset_name
+        # 获取正确的数据集路径（支持嵌套结构）
+        dataset_dir = self._get_dataset_path(dataset_name)
         thumbs_dir = dataset_dir / ".thumbnails"
 
         # 尝试不同的扩展名
@@ -831,6 +975,239 @@ class DatasetService:
             del self.dataset_cache[name]
 
         return {"success": True, "message": "数据集已删除"}
+
+    # ==================== 格式检测 ====================
+
+    def detect_dataset_format(self, dataset_dir: Path) -> str:
+        """
+        自动检测数据集格式
+
+        Returns:
+            "yolo" - YOLO 格式
+            "coco" - COCO 格式
+            "raw" - 原始格式（仅有图像，无标注）
+        """
+        # 检查 data.yaml（YOLO 格式特征）
+        data_yaml = dataset_dir / "data.yaml"
+        if data_yaml.exists():
+            try:
+                content = data_yaml.read_text()
+                # YOLO 格式的 data.yaml 包含 names, train, val 等键
+                if 'names:' in content and ('train:' in content or 'val:' in content):
+                    return "yolo"
+            except:
+                pass
+
+        # 检查 COCO JSON 文件
+        for json_file in dataset_dir.rglob("*.json"):
+            try:
+                content = json_file.read_text()
+                data = json.loads(content)
+                # COCO 格式包含 images, annotations, categories 数组
+                if 'images' in data and 'annotations' in data and 'categories' in data:
+                    return "coco"
+            except:
+                continue
+
+        # 检查是否有 YOLO 标签文件
+        labels_dir = dataset_dir / "labels"
+        if labels_dir.exists():
+            label_files = list(labels_dir.rglob("*.txt"))
+            if label_files:
+                return "yolo"
+
+        # 默认为原始格式
+        return "raw"
+
+    # ==================== COCO 导入 ====================
+
+    def import_coco_dataset(
+        self,
+        dataset_dir: Path,
+        dataset_name: str = None,
+        split_images: bool = True,
+        train_ratio: float = 0.8
+    ) -> Dict[str, Any]:
+        """
+        导入 COCO 格式数据集
+
+        Args:
+            dataset_dir: 数据集目录
+            dataset_name: 数据集名称
+            split_images: 是否拆分训练/验证集
+            train_ratio: 训练集比例
+
+        Returns:
+            导入结果
+        """
+        # 查找 COCO JSON 文件
+        coco_json_file = None
+        for json_file in dataset_dir.rglob("instances_*.json"):
+            coco_json_file = json_file
+            break
+
+        if not coco_json_file:
+            # 尝试查找任何包含 images/annotations/categories 的 JSON
+            for json_file in dataset_dir.rglob("*.json"):
+                try:
+                    content = json_file.read_text()
+                    data = json.loads(content)
+                    if 'images' in data and 'annotations' in data and 'categories' in data:
+                        coco_json_file = json_file
+                        break
+                except:
+                    continue
+
+        if not coco_json_file:
+            return {
+                "success": False,
+                "message": "未找到 COCO JSON 文件"
+            }
+
+        # 加载 COCO 数据
+        parser = CocoParser()
+        if not parser.load_coco_json(coco_json_file):
+            return {
+                "success": False,
+                "message": "COCO JSON 解析失败"
+            }
+
+        # 查找图像目录
+        images_dir = None
+        # 可能的图像目录
+        possible_image_dirs = [
+            dataset_dir / "images",
+            dataset_dir / "train2017",
+            dataset_dir / "val2017",
+            dataset_dir / "train",
+            dataset_dir / "val",
+        ]
+
+        for img_dir in possible_image_dirs:
+            if img_dir.exists() and any(img_dir.iterdir()):
+                images_dir = img_dir
+                break
+
+        if not images_dir:
+            # 尝试从 JSON 中获取图像路径
+            images_dir = dataset_dir / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+
+        # 构建 image_id -> filename 映射
+        image_id_to_filename = {}
+        for img_id, img_info in parser.images.items():
+            file_name = img_info.get('file_name', '')
+            image_id_to_filename[img_id] = Path(file_name).name
+
+        # 创建标签目录
+        labels_dir = dataset_dir / "labels"
+        labels_dir.mkdir(parents=True, exist_ok=True)
+
+        # 生成 YOLO 标签
+        result = parser.generate_yolo_labels(
+            images_dir,
+            labels_dir,
+            image_id_to_filename
+        )
+
+        if not result.get('success'):
+            return result
+
+        # 生成 data.yaml
+        parser.generate_data_yaml(dataset_name or dataset_dir.name, dataset_dir)
+
+        # 如果需要拆分 train/val
+        if split_images:
+            self._split_train_val(dataset_dir, train_ratio)
+
+        # 处理数据集（归一化、缩略图等）
+        processing_result = self.process_dataset(dataset_dir)
+
+        return {
+            "success": True,
+            "message": f"COCO 数据集导入成功",
+            "format": "coco",
+            "task_type": result.get('task_type', 'detect'),
+            "total_images": result.get('total_images', 0),
+            "total_annotations": result.get('total_annotations', 0),
+            "classes": result.get('classes', []),
+            "processing": processing_result
+        }
+
+    def _split_train_val(self, dataset_dir: Path, train_ratio: float = 0.8):
+        """拆分训练集和验证集"""
+        images_dir = dataset_dir / "images"
+        labels_dir = dataset_dir / "labels"
+
+        if not images_dir.exists():
+            return
+
+        # 获取所有图像文件
+        image_files = []
+        for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
+            image_files.extend(list(images_dir.glob(f"**/*{ext}")))
+            image_files.extend(list(images_dir.glob(f"**/*{ext.upper()}")))
+
+        if not image_files:
+            return
+
+        # 随机打乱
+        import random
+        random.shuffle(image_files)
+
+        # 计算分割点
+        split_idx = int(len(image_files) * train_ratio)
+        train_files = image_files[:split_idx]
+        val_files = image_files[split_idx:]
+
+        # 创建子目录
+        train_images_dir = images_dir / "train"
+        val_images_dir = images_dir / "val"
+        train_labels_dir = labels_dir / "train"
+        val_labels_dir = labels_dir / "val"
+
+        train_images_dir.mkdir(parents=True, exist_ok=True)
+        val_images_dir.mkdir(parents=True, exist_ok=True)
+        train_labels_dir.mkdir(parents=True, exist_ok=True)
+        val_labels_dir.mkdir(parents=True, exist_ok=True)
+
+        # 移动文件
+        for img_file in train_files:
+            dest = train_images_dir / img_file.name
+            if not dest.exists():
+                img_file.rename(dest)
+
+            # 移动对应标签
+            label_file = labels_dir / f"{img_file.stem}.txt"
+            if label_file.exists():
+                dest_label = train_labels_dir / label_file.name
+                if not dest_label.exists():
+                    label_file.rename(dest_label)
+
+        for img_file in val_files:
+            dest = val_images_dir / img_file.name
+            if not dest.exists():
+                img_file.rename(dest)
+
+            # 移动对应标签
+            label_file = labels_dir / f"{img_file.stem}.txt"
+            if label_file.exists():
+                dest_label = val_labels_dir / label_file.name
+                if not dest_label.exists():
+                    label_file.rename(dest_label)
+
+        # 删除空的原始目录
+        for subdir in [images_dir, labels_dir]:
+            if subdir.exists():
+                # 删除空文件
+                for f in subdir.iterdir():
+                    if f.is_file():
+                        f.unlink()
+                # 尝试删除空目录
+                try:
+                    subdir.rmdir()
+                except:
+                    pass
 
 
 # 全局实例

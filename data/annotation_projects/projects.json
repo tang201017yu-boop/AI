@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "id": "25b1bace-adad-4d7d-9561-d5e374738e5f",
+    "name": "test-project",
+    "description": "Test",
+    "created_at": "2026-02-27T17:01:02.574385",
+    "updated_at": "2026-02-27T17:01:02.574400",
+    "path": "/root/wuyu/YOLO-/data/annotation_projects/25b1bace-adad-4d7d-9561-d5e374738e5f"
+  },
+  {
+    "id": "b366a334-7354-4d25-980f-b4fa8176d24a",
+    "name": "test",
+    "description": "",
+    "created_at": "2026-03-02T17:27:28.423407",
+    "updated_at": "2026-03-02T17:27:28.423419",
+    "path": "/root/wuyu/YOLO-/data/annotation_projects/b366a334-7354-4d25-980f-b4fa8176d24a"
+  }
+]
