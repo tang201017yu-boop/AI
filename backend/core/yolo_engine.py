@@ -271,6 +271,70 @@ class YOLOEngine:
 
         return model
 
+    def get_loaded_models(self) -> List[Dict[str, Any]]:
+        """
+        获取所有已加载的模型列表
+
+        Returns:
+            List: 已加载模型的信息列表
+        """
+        models_info = []
+        with self.model_cache_lock:
+            for cache_key, model in self.models.items():
+                try:
+                    # 提取模型名称
+                    model_name = cache_key.split('_')[0] if '_' in cache_key else cache_key
+
+                    # 获取模型信息
+                    info = {
+                        "cache_key": cache_key,
+                        "model_name": model_name,
+                        "task": getattr(model, 'task', 'detect'),
+                        "device": cache_key.split('_')[-1] if '_' in cache_key else 'cpu',
+                        "loaded": True,
+                    }
+
+                    # 尝试获取类别信息
+                    try:
+                        if hasattr(model, 'model') and hasattr(model.model, 'names'):
+                            info["classes"] = list(model.model.names.values()) if model.model.names else []
+                            info["num_classes"] = len(model.model.names)
+                    except:
+                        pass
+
+                    models_info.append(info)
+                except Exception as e:
+                    logger.warning(f"[YOLO引擎] 获取模型信息失败 {cache_key}: {str(e)}")
+
+        return models_info
+
+    def get_model_status(self, model_identifier: str = None, device: str = None) -> Dict[str, Any]:
+        """
+        获取模型加载状态
+
+        Args:
+            model_identifier: 模型标识符
+            device: 设备
+
+        Returns:
+            Dict: 模型状态信息
+        """
+        if device is None:
+            device = "cpu"
+
+        resolved_path = self._resolve_model_path(model_identifier)
+        cache_key = f"{resolved_path}_{device}"
+
+        with self.model_cache_lock:
+            is_loaded = cache_key in self.models
+
+        return {
+            "model_identifier": model_identifier,
+            "device": device,
+            "loaded": is_loaded,
+            "cache_key": cache_key,
+        }
+
     def infer(
         self,
         image_path: str,
@@ -473,6 +537,41 @@ class YOLOEngine:
         logger.info(f"[YOLO引擎] 恢复训练任务已提交: task_id={task_id}")
 
         return task_id
+
+    def cancel_training(self, task_id: str) -> Dict[str, Any]:
+        """
+        取消训练任务
+
+        Args:
+            task_id: 训练任务 ID
+
+        Returns:
+            Dict: 操作结果
+        """
+        logger.info(f"[YOLO引擎] 尝试取消训练: task_id={task_id}")
+
+        with self.training_lock:
+            # 检查任务是否存在
+            if task_id not in self.training_tasks:
+                return {"success": False, "message": f"任务 {task_id} 不存在"}
+
+            # 更新任务状态
+            status = self.training_tasks.get(task_id)
+            if status:
+                status.status = "cancelled"
+                status.error_message = "用户取消训练"
+
+            # 尝试取消 future
+            future = self.training_futures.get(task_id)
+            if future:
+                cancelled = future.cancel()
+                logger.info(f"[YOLO引擎] 任务取消结果: {cancelled}")
+                if not cancelled:
+                    # 如果无法取消，标记为已请求取消
+                    return {"success": True, "message": "已发送取消请求", "cancelled": False}
+                return {"success": True, "message": "训练已取消", "cancelled": True}
+
+            return {"success": True, "message": "任务已标记为取消"}
 
     def _train_worker(self, task_id: str, config: 'TrainingConfig'):
         """

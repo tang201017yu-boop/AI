@@ -386,8 +386,14 @@ class TrainingService:
         """
         logger.info(f"[训练] 尝试取消训练: task_id={task_id}")
 
-        # TODO: 实现取消训练功能
-        return {"success": False, "message": "取消训练功能开发中"}
+        # 调用 YOLO 引擎取消训练
+        if yolo_engine:
+            result = yolo_engine.cancel_training(task_id)
+            if result.get("success"):
+                logger.info(f"[训练] 训练已取消: task_id={task_id}")
+                return result
+
+        return {"success": False, "message": "取消训练失败"}
 
     def compare_experiments(self, experiment_ids: List[str]) -> Dict[str, Any]:
         """

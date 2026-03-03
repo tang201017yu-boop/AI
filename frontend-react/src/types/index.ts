@@ -69,11 +69,21 @@ export interface TrainingConfig {
 }
 
 export interface TrainingStatus {
-  status: 'idle' | 'running' | 'completed' | 'failed';
+  task_id: string;
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'pending' | 'cancelled';
+  progress: number;
   current_epoch: number;
   total_epochs: number;
-  loss?: number;
-  metrics?: Record<string, number>;
+  created_at?: string;
+  updated_at?: string;
+  metrics?: {
+    latest?: Record<string, number>;
+    losses?: Record<string, number>;
+    final_metrics?: Record<string, number>;
+  };
+  error_message?: string;
+  gpu_memory?: string;
+  checkpoint_path?: string;
 }
 
 // 推理

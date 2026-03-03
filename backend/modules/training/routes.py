@@ -213,6 +213,28 @@ async def cancel_training(task_id: str):
     raise HTTPException(status_code=400, detail=result["message"])
 
 
+@router.post("/training/stop/{task_id}")
+async def stop_training(task_id: str):
+    """
+    停止训练接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        停止结果
+    """
+    logger.info(f"[训练] 尝试停止训练: task_id={task_id}")
+
+    result = training_service.cancel_training(task_id)
+    if result["success"]:
+        logger.info(f"[训练] 训练已停止: task_id={task_id}")
+        return result
+
+    logger.warning(f"[训练] 停止失败: {result.get('message')}")
+    raise HTTPException(status_code=400, detail=result["message"])
+
+
 # ==================== 模型评估 ====================
 
 @router.post("/training/validate")
