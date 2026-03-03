@@ -52,13 +52,20 @@ export interface ModelMetrics {
 
 // 训练
 export interface TrainingConfig {
-  model_type: string;
-  dataset_id: string;
-  epochs: number;
-  batch_size: number;
-  image_size: number;
-  optimizer: string;
-  learning_rate: number;
+  project_name: string;      // 项目名称
+  dataset_path: string;     // 数据集路径
+  model_type?: string;       // 模型类型
+  epochs?: number;           // 训练轮数
+  batch_size?: number;      // 批大小
+  img_size?: number;        // 输入图片尺寸
+  device?: string;          // 设备
+  optimizer?: string;       // 优化器
+  lr0?: number;             // 初始学习率
+  lrf?: number;             // 最终学习率因子
+  warmup_epochs?: number;   // 预热轮数
+  patience?: number;       // 早停耐心值
+  amp?: boolean;           // 混合精度
+  workers?: number;         // 数据加载线程数
 }
 
 export interface TrainingStatus {
@@ -105,6 +112,47 @@ export interface AnnotationProject {
   updated_at?: string;
 }
 
+// SAM 智能标注
+export interface SAMStatus {
+  available: boolean;
+  loaded: boolean;
+  model_type?: string;
+  supported_models: Record<string, SAMModelInfo>;
+}
+
+export interface SAMModelInfo {
+  name: string;
+  speed: string;
+  size: string;
+  description: string;
+}
+
+export interface SAMPrediction {
+  success: boolean;
+  masks: number[][][];
+  mask_image?: string;
+  score: number;
+  all_scores?: number[];
+}
+
+export interface SAMAutoLabelResult {
+  success: boolean;
+  message: string;
+  annotations: SAMAnnotation[];
+  preview_image?: string;
+  total_detections: number;
+  total_annotations: number;
+}
+
+export interface SAMAnnotation {
+  class: string;
+  class_id: number;
+  bbox: number[];
+  segmentation: string;
+  confidence: number;
+  segment_score?: number;
+}
+
 // 通用
 export interface ApiResponse<T> {
   success: boolean;
@@ -118,4 +166,49 @@ export interface PaginatedResponse<T> {
   total: number;
   page: number;
   page_size: number;
+}
+
+// ============ 标注交互类型 ============
+export interface AnnotationPoint {
+  x: number;
+  y: number;
+  label: 1 | 0; // 1=前景, 0=背景
+}
+
+export interface AnnotationBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface AnnotationMask {
+  polygons: number[];
+  color: string;
+}
+
+export type AnnotationTool = 'point' | 'box' | 'select' | 'auto' | 'polygon';
+
+// 标注状态
+export interface AnnotationState {
+  tool: AnnotationTool;
+  points: AnnotationPoint[];
+  boxes: AnnotationBox[];
+  masks: AnnotationMask[];
+  selectedId: string | null;
+  currentClass: string;
+}
+
+// 快捷键配置
+export interface AnnotationShortcut {
+  key: string;
+  description: string;
+  action: string;
+}
+
+// 类别建议
+export interface ClassSuggestion {
+  name: string;
+  count: number;
+  color: string;
 }
