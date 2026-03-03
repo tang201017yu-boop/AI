@@ -1223,6 +1223,65 @@ async def list_models_alias(project_id: str = None):
     return model_service.list_models(project_id)
 
 
+@router.get("/models/pretrained")
+async def list_pretrained_models():
+    """
+    列出可用的预训练基础模型
+
+    Returns:
+        预训练模型列表
+    """
+    from pathlib import Path
+
+    # 获取模型搜索路径
+    from backend.core.config import settings
+
+    pretrained_models = []
+    seen = set()
+
+    for root in settings.model_search_paths:
+        if not root.exists():
+            continue
+        for path in root.glob("*.pt"):
+            if path.name in seen:
+                continue
+            seen.add(path.name)
+
+            # 检查是否为预训练模型（简单判断：文件名是模型名如 yolo11n.pt）
+            if path.stat().st_size > 1000000:  # 大于1MB
+                pretrained_models.append({
+                    "name": path.stem,
+                    "path": str(path),
+                    "size": path.stat().st_size
+                })
+
+    # 添加 Ultralytics 官方预训练模型列表（如果未安装，会在训练时自动下载）
+    official_models = [
+        {"name": "yolo11n", "display": "YOLO11n (nano) - 最快"},
+        {"name": "yolo11s", "display": "YOLO11s (small) - 快速"},
+        {"name": "yolo11m", "display": "YOLO11m (medium) - 平衡"},
+        {"name": "yolo11l", "display": "YOLO11l (large) - 高精度"},
+        {"name": "yolo11x", "display": "YOLO11x (xlarge) - 最高精度"},
+        {"name": "yolo26n", "display": "YOLO26n (nano) - 最新最快"},
+        {"name": "yolo26s", "display": "YOLO26s (small) - 最新快速"},
+        {"name": "yolo26m", "display": "YOLO26m (medium) - 最新平衡"},
+        {"name": "yolo26l", "display": "YOLO26l (large) - 最新高精度"},
+        {"name": "yolo26x", "display": "YOLO26x (xlarge) - 最新最高精度"},
+    ]
+
+    # 标记已安装的模型
+    installed_names = {m["name"] for m in pretrained_models}
+    for model in official_models:
+        model["installed"] = model["name"] in installed_names
+        model["path"] = next((m["path"] for m in pretrained_models if m["name"] == model["name"]), None)
+
+    return {
+        "success": True,
+        "models": official_models,
+        "installed": [m["name"] for m in pretrained_models]
+    }
+
+
 @router.get("/models/{model_id}")
 async def get_model(model_id: str):
     """
