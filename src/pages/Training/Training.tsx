@@ -18,7 +18,7 @@ export const Training: React.FC = () => {
   const [trainedModels, setTrainedModels] = useState<Model[]>([]);
   const [selectedDataset, setSelectedDataset] = useState('');
   const [modelSource, setModelSource] = useState<'pretrained' | 'trained'>('pretrained');
-  const [selectedPretrainedModel, setSelectedPretrainedModel] = useState('yolo11m');
+  const [selectedPretrainedModel, setSelectedPretrainedModel] = useState('');
   const [selectedTrainedModel, setSelectedTrainedModel] = useState('');
   const [epochs, setEpochs] = useState(100);
   const [batchSize, setBatchSize] = useState(16);
@@ -58,27 +58,41 @@ export const Training: React.FC = () => {
   const loadDatasets = async () => {
     try {
       const res = await datasetApi.list();
-      setDatasets(res.data?.datasets || res.data?.data?.datasets || []);
+      // 后端返回 {total, datasets} 格式
+      const datasets = res.data?.datasets || res.data?.data?.datasets || [];
+      setDatasets(datasets);
+      console.log('Loaded datasets:', datasets);
     } catch (error) {
-      console.error(error);
+      console.error('Failed to load datasets:', error);
     }
   };
 
   const loadPretrainedModels = async () => {
     try {
       const res = await modelApi.getPretrainedModels();
-      setPretrainedModels(res.data?.data?.models || res.data?.models || []);
+      // 后端返回 {success, models} 格式
+      const models = res.data?.models || res.data?.data?.models || [];
+      setPretrainedModels(models);
+      // 默认选择第一个已安装的模型
+      const installed = models.find((m: PretrainedModel) => m.installed);
+      if (installed) {
+        setSelectedPretrainedModel(installed.name);
+      }
+      console.log('Loaded pretrained models:', models);
     } catch (error) {
-      console.error(error);
+      console.error('Failed to load pretrained models:', error);
     }
   };
 
   const loadTrainedModels = async () => {
     try {
       const res = await modelApi.list();
-      setTrainedModels(res.data?.models || res.data?.data?.models || []);
+      // 后端直接返回数组
+      const models = res.data || res.data?.models || res.data?.data?.models || [];
+      setTrainedModels(models);
+      console.log('Loaded trained models:', models);
     } catch (error) {
-      console.error(error);
+      console.error('Failed to load trained models:', error);
     }
   };
 
@@ -140,13 +154,16 @@ export const Training: React.FC = () => {
         <CardHeader icon="🚀" title="训练配置" />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--space-4)' }}>
           <div>
-            <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>选择数据集</label>
+            <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500 }}>选择数据集</label>
             <select
               className="input"
               value={selectedDataset}
-              onChange={(e) => setSelectedDataset(e.target.value)}
+              onChange={(e) => {
+                console.log('Selected dataset:', e.target.value);
+                setSelectedDataset(e.target.value);
+              }}
               disabled={training}
-              style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff' }}
             >
               <option value="">请选择数据集</option>
               {datasets.map((ds) => (
@@ -157,13 +174,13 @@ export const Training: React.FC = () => {
 
           {/* 模型来源选择 */}
           <div>
-            <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>模型来源</label>
+            <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500 }}>模型来源</label>
             <select
               className="input"
               value={modelSource}
               onChange={(e) => setModelSource(e.target.value as 'pretrained' | 'trained')}
               disabled={training}
-              style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff' }}
             >
               <option value="pretrained">预训练基础模型</option>
               <option value="trained">用户训练模型</option>
@@ -171,23 +188,32 @@ export const Training: React.FC = () => {
           </div>
 
           {/* 预训练模型选择 */}
-          {modelSource === 'pretrained' && (
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>选择预训练模型</label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 'var(--space-2)' }}>
+          {modelSource === 'pretrained' && pretrainedModels.length > 0 && (
+            <div style={{ gridColumn: '1 / -1', marginTop: 'var(--space-3)' }}>
+              <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500 }}>选择预训练模型</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '8px' }}>
                 {pretrainedModels.map((model) => (
                   <button
                     key={model.name}
-                    onClick={() => setSelectedPretrainedModel(model.name)}
+                    type="button"
+                    onClick={() => {
+                      console.log('Selected model:', model.name);
+                      setSelectedPretrainedModel(model.name);
+                    }}
                     disabled={training}
                     style={{
-                      padding: 'var(--space-2)',
-                      border: selectedPretrainedModel === model.name ? '2px solid var(--color-primary)' : '1px solid var(--border)',
-                      borderRadius: 'var(--radius-md)',
-                      background: selectedPretrainedModel === model.name ? 'var(--color-primary-light)' : 'var(--bg-primary)',
+                      padding: '12px 8px',
+                      border: selectedPretrainedModel === model.name ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      background: selectedPretrainedModel === model.name ? '#eff6ff' : '#ffffff',
                       cursor: training ? 'not-allowed' : 'pointer',
                       opacity: training ? 0.6 : 1,
-                      textAlign: 'left'
+                      textAlign: 'left',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '100%'
                     }}
                   >
                     <div style={{ fontWeight: 500, fontSize: '14px' }}>{model.name}</div>
@@ -202,14 +228,17 @@ export const Training: React.FC = () => {
 
           {/* 用户训练模型选择 */}
           {modelSource === 'trained' && (
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>选择训练好的模型</label>
+            <div style={{ gridColumn: '1 / -1', marginTop: 'var(--space-3)' }}>
+              <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500 }}>选择训练好的模型</label>
               <select
                 className="input"
                 value={selectedTrainedModel}
-                onChange={(e) => setSelectedTrainedModel(e.target.value)}
+                onChange={(e) => {
+                  console.log('Selected trained model:', e.target.value);
+                  setSelectedTrainedModel(e.target.value);
+                }}
                 disabled={training}
-                style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff' }}
               >
                 <option value="">请选择模型</option>
                 {trainedModels.map((model) => (
