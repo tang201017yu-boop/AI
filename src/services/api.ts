@@ -75,6 +75,8 @@ export const modelApi = {
       model_name: modelName,
       device: device,
     }),
+  // 获取预训练基础模型列表
+  getPretrainedModels: () => api.get<ApiResponse<{ models: any[]; installed: string[] }>>('/models/pretrained'),
 };
 
 // ============ 训练 API ============

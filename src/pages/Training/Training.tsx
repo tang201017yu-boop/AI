@@ -1,14 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardHeader, Button, Input, StatCard } from '../../components/common';
-import { datasetApi, trainingApi } from '../../services/api';
-import type { Dataset, TrainingConfig } from '../../types';
+import { datasetApi, trainingApi, modelApi } from '../../services/api';
+import type { Dataset, TrainingConfig, Model } from '../../types';
+
+interface PretrainedModel {
+  name: string;
+  display: string;
+  installed: boolean;
+  path?: string;
+}
 
 export const Training: React.FC = () => {
   const navigate = useNavigate();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [pretrainedModels, setPretrainedModels] = useState<PretrainedModel[]>([]);
+  const [trainedModels, setTrainedModels] = useState<Model[]>([]);
   const [selectedDataset, setSelectedDataset] = useState('');
-  const [modelType, setModelType] = useState('yolo11m');
+  const [modelSource, setModelSource] = useState<'pretrained' | 'trained'>('pretrained');
+  const [selectedPretrainedModel, setSelectedPretrainedModel] = useState('yolo11m');
+  const [selectedTrainedModel, setSelectedTrainedModel] = useState('');
   const [epochs, setEpochs] = useState(100);
   const [batchSize, setBatchSize] = useState(16);
   const [imageSize, setImageSize] = useState(640);
@@ -19,6 +30,8 @@ export const Training: React.FC = () => {
 
   useEffect(() => {
     loadDatasets();
+    loadPretrainedModels();
+    loadTrainedModels();
   }, []);
 
   // 定期检查训练状态
@@ -51,14 +64,35 @@ export const Training: React.FC = () => {
     }
   };
 
+  const loadPretrainedModels = async () => {
+    try {
+      const res = await modelApi.getPretrainedModels();
+      setPretrainedModels(res.data?.data?.models || res.data?.models || []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const loadTrainedModels = async () => {
+    try {
+      const res = await modelApi.list();
+      setTrainedModels(res.data?.models || res.data?.data?.models || []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const handleStartTraining = async () => {
     if (!selectedDataset) return;
+    if (modelSource === 'pretrained' && !selectedPretrainedModel) return;
+    if (modelSource === 'trained' && !selectedTrainedModel) return;
+
     setTraining(true);
     try {
       const config: TrainingConfig = {
         project_name: `train_${Date.now()}`,
         dataset_path: selectedDataset,
-        model_type: modelType,
+        model_type: modelSource === 'pretrained' ? selectedPretrainedModel : selectedTrainedModel,
         epochs,
         batch_size: batchSize,
         img_size: imageSize,
@@ -91,48 +125,20 @@ export const Training: React.FC = () => {
     }
   };
 
-  const modelTypes = [
-    { value: 'yolo26n', label: 'YOLO26n (nano) ⚡', desc: '最新最快，适合CPU' },
-    { value: 'yolo26s', label: 'YOLO26s (small)', desc: '最新快速，适合轻量级' },
-    { value: 'yolo26m', label: 'YOLO26m (medium)', desc: '最新平衡，推荐' },
-    { value: 'yolo26l', label: 'YOLO26l (large)', desc: '最新高精度' },
-    { value: 'yolo26x', label: 'YOLO26x (xlarge)', desc: '最新最高精度' },
-    { value: 'yolo11n', label: 'YOLO11n (nano)', desc: '经典最快，适合CPU' },
-    { value: 'yolo11s', label: 'YOLO11s (small)', desc: '经典快速，适合轻量级' },
-    { value: 'yolo11m', label: 'YOLO11m (medium)', desc: '经典平衡，推荐' },
-    { value: 'yolo11l', label: 'YOLO11l (large)', desc: '经典高精度' },
-    { value: 'yolo11x', label: 'YOLO11x (xlarge)', desc: '经典最高精度' },
-  ];
-
   return (
     <div>
       <h1 style={{ marginBottom: 'var(--space-6)', fontFamily: 'DM Sans', fontWeight: 700 }}>模型训练</h1>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
         <StatCard value={datasets.length} label="可用数据集" />
-        <StatCard value={modelTypes.length} label="模型类型" variant="accent" />
-        <StatCard value={training ? '训练中' : '空闲'} label="训练状态" variant={training ? 'warning' : 'success'} />
-        <StatCard value={taskId ? taskId.slice(0, 12) + '...' : '-'} label="当前任务" />
+        <StatCard value={pretrainedModels.filter(m => m.installed).length} label="已安装基础模型" variant="accent" />
+        <StatCard value={trainedModels.length} label="训练完成模型" variant="success" />
+        <StatCard value={training ? '训练中' : '空闲'} label="训练状态" variant={training ? 'warning' : 'default'} />
       </div>
 
       <Card>
         <CardHeader icon="🚀" title="训练配置" />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--space-4)' }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>模型类型</label>
-            <select
-              className="input"
-              value={modelType}
-              onChange={(e) => setModelType(e.target.value)}
-              disabled={training}
-              style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
-            >
-              {modelTypes.map((m) => (
-                <option key={m.value} value={m.value}>{m.label} - {m.desc}</option>
-              ))}
-            </select>
-          </div>
-
           <div>
             <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>选择数据集</label>
             <select
@@ -148,6 +154,72 @@ export const Training: React.FC = () => {
               ))}
             </select>
           </div>
+
+          {/* 模型来源选择 */}
+          <div>
+            <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>模型来源</label>
+            <select
+              className="input"
+              value={modelSource}
+              onChange={(e) => setModelSource(e.target.value as 'pretrained' | 'trained')}
+              disabled={training}
+              style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
+            >
+              <option value="pretrained">预训练基础模型</option>
+              <option value="trained">用户训练模型</option>
+            </select>
+          </div>
+
+          {/* 预训练模型选择 */}
+          {modelSource === 'pretrained' && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>选择预训练模型</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 'var(--space-2)' }}>
+                {pretrainedModels.map((model) => (
+                  <button
+                    key={model.name}
+                    onClick={() => setSelectedPretrainedModel(model.name)}
+                    disabled={training}
+                    style={{
+                      padding: 'var(--space-2)',
+                      border: selectedPretrainedModel === model.name ? '2px solid var(--color-primary)' : '1px solid var(--border)',
+                      borderRadius: 'var(--radius-md)',
+                      background: selectedPretrainedModel === model.name ? 'var(--color-primary-light)' : 'var(--bg-primary)',
+                      cursor: training ? 'not-allowed' : 'pointer',
+                      opacity: training ? 0.6 : 1,
+                      textAlign: 'left'
+                    }}
+                  >
+                    <div style={{ fontWeight: 500, fontSize: '14px' }}>{model.name}</div>
+                    <div style={{ fontSize: '12px', color: model.installed ? 'var(--color-success)' : 'var(--text-secondary)' }}>
+                      {model.installed ? '✓ 已安装' : '○ 将下载'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 用户训练模型选择 */}
+          {modelSource === 'trained' && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>选择训练好的模型</label>
+              <select
+                className="input"
+                value={selectedTrainedModel}
+                onChange={(e) => setSelectedTrainedModel(e.target.value)}
+                disabled={training}
+                style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
+              >
+                <option value="">请选择模型</option>
+                {trainedModels.map((model) => (
+                  <option key={model.id || model.name} value={model.name}>
+                    {model.name} {model.mAP50 ? `(mAP: ${(model.mAP50 * 100).toFixed(1)}%)` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <Input
             type="number"
@@ -197,7 +269,7 @@ export const Training: React.FC = () => {
             variant="primary"
             size="lg"
             onClick={handleStartTraining}
-            disabled={!selectedDataset || training}
+            disabled={!selectedDataset || training || (modelSource === 'pretrained' && !selectedPretrainedModel) || (modelSource === 'trained' && !selectedTrainedModel)}
             loading={training}
           >
             {training ? '训练中...' : '开始训练'}
