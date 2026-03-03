@@ -106,6 +106,9 @@ class AnnotationService:
         # 更新项目
         project = self._load_project(project_name)
         if project:
+            # 确保 images 键存在
+            if "images" not in project:
+                project["images"] = []
             for img_path in images_dir.iterdir():
                 if img_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
                     if img_path.name not in project["images"]:
@@ -132,6 +135,16 @@ class AnnotationService:
         project = self._load_project(project_name)
         if not project:
             return {"success": False, "message": "项目不存在"}
+
+        # 确保必要的键存在
+        if "task_type" not in project:
+            project["task_type"] = "detect"
+        if "classes" not in project:
+            project["classes"] = []
+        if "annotations" not in project:
+            project["annotations"] = {}
+        if "images" not in project:
+            project["images"] = []
 
         task_type = project["task_type"]
         labels_dir = project_dir / "labels"
@@ -219,6 +232,52 @@ class AnnotationService:
                     lines.append(f"{class_id} " + normalized)
 
         return lines
+
+    def list_projects(self) -> List[Dict[str, Any]]:
+        """列出所有标注项目"""
+        projects_dir = settings.ANNOTATION_PROJECTS_DIR
+        if not projects_dir.exists():
+            return []
+
+        projects = []
+        for project_path in projects_dir.iterdir():
+            if project_path.is_dir():
+                project_file = project_path / "project.json"
+                if project_file.exists():
+                    try:
+                        with open(project_file, 'r') as f:
+                            project = json.load(f)
+                            # 生成唯一ID
+                            project['id'] = project_path.name
+                            # 计算图片数量
+                            images_dir = project_path / "images"
+                            if images_dir.exists():
+                                project['image_count'] = len([f for f in images_dir.iterdir()
+                                    if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']])
+                            else:
+                                project['image_count'] = 0
+                            projects.append(project)
+                    except Exception as e:
+                        print(f"Error loading project {project_path.name}: {e}")
+
+        # 按创建时间排序
+        projects.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        return projects
+
+    def delete_project(self, project_name: str) -> Dict[str, Any]:
+        """删除标注项目"""
+        import shutil
+
+        project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
+        if not project_dir.exists():
+            return {"success": False, "message": "项目不存在"}
+
+        try:
+            # 删除项目目录
+            shutil.rmtree(project_dir)
+            return {"success": True, "message": "项目删除成功"}
+        except Exception as e:
+            return {"success": False, "message": f"删除失败: {str(e)}"}
 
     def get_project_images(self, project_name: str) -> List[Dict[str, str]]:
         """获取项目图片列表"""
