@@ -378,6 +378,7 @@ class YOLOEngine:
             progress=0.0,
             current_epoch=0,
             total_epochs=config.epochs,
+            project_name=config.project_name,
             created_at=__import__('datetime').datetime.now(),
             updated_at=__import__('datetime').datetime.now()
         )
@@ -446,6 +447,7 @@ class YOLOEngine:
             progress=min(100.0, start_epoch / max(total_epochs, 1) * 100.0),
             current_epoch=start_epoch,
             total_epochs=total_epochs,
+            project_name=checkpoint.parent.parent.name,
             created_at=__import__('datetime').datetime.now(),
             updated_at=__import__('datetime').datetime.now()
         )
@@ -532,98 +534,129 @@ class YOLOEngine:
                     logger.warning(f"[YOLO引擎] 初始化 TensorBoard 失败: {e}")
 
             # 训练回调 - 收集指标
+            epoch_counter = [0]  # 使用列表以便在回调中修改
+            trainer_ref = [None]  # 保存 trainer 引用
+
+            def train_start_callback(trainer):
+                """训练开始时的回调，用于获取 trainer 引用"""
+                trainer_ref[0] = trainer
+                logger.info(f"[YOLO引擎] 训练已开始，获取 trainer 引用")
+
             def epoch_callback(trainer):
-                nonlocal writer
-                epoch_index = getattr(trainer, "epoch", 0) + 1
+                try:
+                    nonlocal writer
+                    epoch_counter[0] += 1
+                    epoch_index = epoch_counter[0]
 
-                # 获取损失
-                losses = {}
-                if hasattr(trainer, 'loss_items'):
-                    loss_items = trainer.loss_items
-                    if loss_items is not None:
-                        losses = {
-                            "box_loss": float(loss_items[0]) if len(loss_items) > 0 else 0,
-                            "cls_loss": float(loss_items[1]) if len(loss_items) > 1 else 0,
-                            "dfl_loss": float(loss_items[2]) if len(loss_items) > 2 else 0
-                        }
+                    # 获取训练状态
+                    with self.training_lock:
+                        status = self.training_tasks.get(task_id)
+                        if not status:
+                            logger.warning(f"[YOLO引擎] 任务状态不存在: {task_id}")
+                            return
 
-                # 获取指标
-                metrics = getattr(trainer, "metrics", {})
+                        # 更新进度
+                        status.current_epoch = epoch_index
+                        status.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
+                        status.status = "running"
 
-                # TensorBoard 日志记录
-                if writer is not None:
+                        logger.info(f"[YOLO引擎] 更新训练进度: epoch={epoch_index}/{total_epochs}, progress={status.progress:.1f}%")
+
+                    # 获取损失
+                    losses = {}
+                    if hasattr(trainer, 'loss_items'):
+                        loss_items = trainer.loss_items
+                        if loss_items is not None:
+                            losses = {
+                                "box_loss": float(loss_items[0]) if len(loss_items) > 0 else 0,
+                                "cls_loss": float(loss_items[1]) if len(loss_items) > 1 else 0,
+                                "dfl_loss": float(loss_items[2]) if len(loss_items) > 2 else 0
+                            }
+
+                    # 获取指标
+                    metrics = getattr(trainer, "metrics", {})
+
+                    # TensorBoard 日志记录
+                    if writer is not None:
+                        try:
+                            # 记录损失
+                            if losses:
+                                writer.add_scalars('Loss/box', {'train': losses.get("box_loss", 0)}, epoch_index)
+                                writer.add_scalars('Loss/cls', {'train': losses.get("cls_loss", 0)}, epoch_index)
+                                writer.add_scalars('Loss/dfl', {'train': losses.get("dfl_loss", 0)}, epoch_index)
+
+                            # 记录性能指标
+                            if metrics:
+                                if 'metrics/mAP50(B)' in metrics:
+                                    writer.add_scalars('mAP/mAP50', {'val': metrics['metrics/mAP50(B)']}, epoch_index)
+                                if 'metrics/mAP50-95(B)' in metrics:
+                                    writer.add_scalars('mAP/mAP50-95', {'val': metrics['metrics/mAP50-95(B)']}, epoch_index)
+                                if 'metrics/precision(B)' in metrics:
+                                    writer.add_scalars('Precision', {'val': metrics['metrics/precision(B)']}, epoch_index)
+                                if 'metrics/recall(B)' in metrics:
+                                    writer.add_scalars('Recall', {'val': metrics['metrics/recall(B)']}, epoch_index)
+
+                            # 记录学习率
+                            if hasattr(trainer, 'optimizer'):
+                                lr = trainer.optimizer.param_groups[0].get('lr', 0)
+                                writer.add_scalars('Learning_Rate', {'lr': lr}, epoch_index)
+
+                            writer.flush()
+                        except Exception as e:
+                            logger.warning(f"[YOLO引擎] TensorBoard 写入失败: {e}")
+
+                    # 获取系统统计
+                    gpu_mem = None
+                    gpu_util = None
+                    sys_mem = None
+                    if torch.cuda.is_available():
+                        try:
+                            allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                            reserved = torch.cuda.memory_reserved(0) / (1024**3)
+                            gpu_mem = f"{allocated:.1f}GB / {reserved:.1f}GB"
+
+                            # GPU 利用率 (近似)
+                            if hasattr(torch.cuda, 'utilization'):
+                                gpu_util = torch.cuda.utilization(0)
+                        except:
+                            pass
+
+                    # 获取系统内存
                     try:
-                        # 记录损失
-                        if losses:
-                            writer.add_scalars('Loss/box', {'train': losses.get("box_loss", 0)}, epoch_index)
-                            writer.add_scalars('Loss/cls', {'train': losses.get("cls_loss", 0)}, epoch_index)
-                            writer.add_scalars('Loss/dfl', {'train': losses.get("dfl_loss", 0)}, epoch_index)
-
-                        # 记录性能指标
-                        if metrics:
-                            if 'metrics/mAP50(B)' in metrics:
-                                writer.add_scalars('mAP/mAP50', {'val': metrics['metrics/mAP50(B)']}, epoch_index)
-                            if 'metrics/mAP50-95(B)' in metrics:
-                                writer.add_scalars('mAP/mAP50-95', {'val': metrics['metrics/mAP50-95(B)']}, epoch_index)
-                            if 'metrics/precision(B)' in metrics:
-                                writer.add_scalars('Precision', {'val': metrics['metrics/precision(B)']}, epoch_index)
-                            if 'metrics/recall(B)' in metrics:
-                                writer.add_scalars('Recall', {'val': metrics['metrics/recall(B)']}, epoch_index)
-
-                        # 记录学习率
-                        if hasattr(trainer, 'optimizer'):
-                            lr = trainer.optimizer.param_groups[0].get('lr', 0)
-                            writer.add_scalars('Learning_Rate', {'lr': lr}, epoch_index)
-
-                        writer.flush()
-                    except Exception as e:
-                        logger.warning(f"[YOLO引擎] TensorBoard 写入失败: {e}")
-
-                # 获取系统统计
-                gpu_mem = None
-                gpu_util = None
-                sys_mem = None
-                if torch.cuda.is_available():
-                    try:
-                        allocated = torch.cuda.memory_allocated(0) / (1024**3)
-                        reserved = torch.cuda.memory_reserved(0) / (1024**3)
-                        gpu_mem = f"{allocated:.1f}GB / {reserved:.1f}GB"
-
-                        # GPU 利用率 (近似)
-                        if hasattr(torch.cuda, 'utilization'):
-                            gpu_util = torch.cuda.utilization(0)
+                        import psutil
+                        process = psutil.Process()
+                        sys_mem = process.memory_info().rss / (1024**3)
                     except:
                         pass
 
-                # 获取系统内存
-                try:
-                    import psutil
-                    process = psutil.Process()
-                    sys_mem = process.memory_info().rss / (1024**3)
-                except:
-                    pass
+                    # 更新训练状态
+                    with self.training_lock:
+                        status = self.training_tasks.get(task_id)
+                        if status:
+                            status.current_epoch = epoch_index
+                            status.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
+                            status.gpu_memory = gpu_mem
+                            status.gpu_utilization = gpu_util
+                            status.system_memory = sys_mem
 
-                # 更新训练状态
-                with self.training_lock:
-                    status = self.training_tasks.get(task_id)
-                    if status:
-                        status.current_epoch = epoch_index
-                        status.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
-                        status.gpu_memory = gpu_mem
-                        status.gpu_utilization = gpu_util
-                        status.system_memory = sys_mem
+                            # 添加指标到历史
+                            status.add_metrics(epoch_index, metrics, losses)
 
-                        # 添加指标到历史
-                        status.add_metrics(epoch_index, metrics, losses)
+                            # 更新最新指标
+                            status.metrics = {
+                                "latest": metrics,
+                                "losses": losses
+                            }
 
-                        # 更新最新指标
-                        status.metrics = {
-                            "latest": metrics,
-                            "losses": losses
-                        }
+                except Exception as e:
+                    logger.error(f"[YOLO引擎] Epoch 回调执行失败: {e}")
 
-            # 注册训练回调
+            # 注册训练回调 - 尝试多个回调事件
+            model.add_callback("on_train_start", train_start_callback)
             model.add_callback("on_train_epoch_end", epoch_callback)
+            model.add_callback("on_fit_epoch_end", epoch_callback)
+
+            logger.info(f"[YOLO引擎] 已注册训练回调")
 
             # 完成回调
             def finish_callback(trainer):
@@ -726,7 +759,62 @@ class YOLOEngine:
         """
         with self.training_lock:
             status = self.training_tasks.get(task_id)
-            return copy.deepcopy(status) if status else None
+            if not status:
+                return None
+
+            # 如果训练正在进行中，尝试从训练目录轮询进度
+            if status.status == "running":
+                try:
+                    # 使用 project_name 获取训练目录
+                    project_name = status.project_name or task_id.replace("train_", "")
+                    train_dir = settings.MODELS_DIR / project_name / "train"
+
+                    if train_dir.exists():
+                        # 检查 results.csv 文件
+                        results_file = train_dir / "results.csv"
+                        if results_file.exists():
+                            import csv
+                            with open(results_file, 'r') as f:
+                                reader = csv.reader(f)
+                                rows = list(reader)
+
+                                if len(rows) > 1:  # 有数据行
+                                    last_row = rows[-1]
+                                    # 解析 epoch (通常是第1列或第0列)
+                                    try:
+                                        # Ultralytics results.csv 格式: epoch, train/box_loss, train/cls_loss, ...
+                                        current_epoch = int(float(last_row[0])) + 1
+                                        status.current_epoch = current_epoch
+                                        status.progress = min(100.0, current_epoch / max(status.total_epochs, 1) * 100.0)
+
+                                        # 尝试解析指标
+                                        if len(last_row) > 3:
+                                            metrics = {}
+                                            try:
+                                                metrics['metrics/mAP50(B)'] = float(last_row[5]) if last_row[5] else 0
+                                                metrics['metrics/mAP50-95(B)'] = float(last_row[6]) if last_row[6] else 0
+                                                metrics['metrics/precision(B)'] = float(last_row[7]) if last_row[7] else 0
+                                                metrics['metrics/recall(B)'] = float(last_row[8]) if last_row[8] else 0
+                                                status.metrics = {"latest": metrics}
+                                            except (IndexError, ValueError):
+                                                pass
+
+                                        logger.debug(f"[YOLO引擎] 轮询更新进度: epoch={current_epoch}/{status.total_epochs}")
+                                    except (IndexError, ValueError) as e:
+                                        logger.warning(f"[YOLO引擎] 解析 results.csv 失败: {e}")
+
+                        # 检查是否完成
+                        weights_dir = train_dir / "weights"
+                        if weights_dir.exists():
+                            best_pt = weights_dir / "best.pt"
+                            if best_pt.exists():
+                                status.status = "completed"
+                                status.progress = 100.0
+                                status.checkpoint_path = str(best_pt)
+                except Exception as e:
+                    logger.warning(f"[YOLO引擎] 轮询训练进度失败: {e}")
+
+            return copy.deepcopy(status)
 
     def list_training_statuses(self) -> List['TrainingStatus']:
         """
@@ -810,6 +898,7 @@ class TrainingStatus:
     total_epochs: int  # 总轮数
     created_at: Any  # 创建时间
     updated_at: Any  # 更新时间
+    project_name: Optional[str] = None  # 项目名称，用于轮询进度
     metrics: Optional[Dict[str, Any]] = None  # 最新指标
     metrics_history: List[Dict[str, Any]] = None  # 完整的指标历史
     losses_history: Dict[str, List[float]] = None  # 损失曲线历史
