@@ -32,13 +32,14 @@ export const Training: React.FC = () => {
     setTraining(true);
     try {
       const config: TrainingConfig = {
+        project_name: `train_${Date.now()}`,
+        dataset_path: selectedDataset,
         model_type: modelType,
-        dataset_id: selectedDataset,
         epochs,
         batch_size: batchSize,
-        image_size: imageSize,
-        optimizer: 'SGD',
-        learning_rate: learningRate,
+        img_size: imageSize,
+        optimizer: 'auto',
+        lr0: learningRate,
       };
       const res = await trainingApi.start(config);
       setTaskId(res.data?.data?.task_id || res.data?.task_id || '');
