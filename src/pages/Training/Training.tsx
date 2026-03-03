@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardHeader, Button, Input, StatCard } from '../../components/common';
 import { datasetApi, trainingApi } from '../../services/api';
 import type { Dataset, TrainingConfig } from '../../types';
 
 export const Training: React.FC = () => {
+  const navigate = useNavigate();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedDataset, setSelectedDataset] = useState('');
   const [modelType, setModelType] = useState('yolo11m');
@@ -13,10 +15,32 @@ export const Training: React.FC = () => {
   const [learningRate, setLearningRate] = useState(0.01);
   const [training, setTraining] = useState(false);
   const [taskId, setTaskId] = useState('');
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     loadDatasets();
   }, []);
+
+  // 定期检查训练状态
+  useEffect(() => {
+    if (!currentTaskId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await trainingApi.status(currentTaskId);
+        const status = res.data?.data?.status || res.data?.status;
+        if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+          setTraining(false);
+          setCurrentTaskId(null);
+          clearInterval(interval);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [currentTaskId]);
 
   const loadDatasets = async () => {
     try {
@@ -42,11 +66,28 @@ export const Training: React.FC = () => {
         lr0: learningRate,
       };
       const res = await trainingApi.start(config);
-      setTaskId(res.data?.data?.task_id || res.data?.task_id || '');
+      const newTaskId = res.data?.data?.task_id || res.data?.task_id || '';
+      setTaskId(newTaskId);
+      setCurrentTaskId(newTaskId);
+
+      // 跳转到监控页面
+      setTimeout(() => {
+        navigate('/training-monitor');
+      }, 1000);
     } catch (error) {
       console.error(error);
-    } finally {
       setTraining(false);
+    }
+  };
+
+  const handleStopTraining = async () => {
+    if (!currentTaskId) return;
+    try {
+      await trainingApi.stop(currentTaskId);
+      setTraining(false);
+      setCurrentTaskId(null);
+    } catch (error) {
+      console.error(error);
     }
   };
 
@@ -71,7 +112,7 @@ export const Training: React.FC = () => {
         <StatCard value={datasets.length} label="可用数据集" />
         <StatCard value={modelTypes.length} label="模型类型" variant="accent" />
         <StatCard value={training ? '训练中' : '空闲'} label="训练状态" variant={training ? 'warning' : 'success'} />
-        <StatCard value={taskId || '-'} label="当前任务" />
+        <StatCard value={taskId ? taskId.slice(0, 12) + '...' : '-'} label="当前任务" />
       </div>
 
       <Card>
@@ -83,6 +124,7 @@ export const Training: React.FC = () => {
               className="input"
               value={modelType}
               onChange={(e) => setModelType(e.target.value)}
+              disabled={training}
               style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
             >
               {modelTypes.map((m) => (
@@ -97,6 +139,7 @@ export const Training: React.FC = () => {
               className="input"
               value={selectedDataset}
               onChange={(e) => setSelectedDataset(e.target.value)}
+              disabled={training}
               style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
             >
               <option value="">请选择数据集</option>
@@ -113,6 +156,7 @@ export const Training: React.FC = () => {
             onChange={(e) => setEpochs(parseInt(e.target.value))}
             min={1}
             max={1000}
+            disabled={training}
           />
 
           <Input
@@ -122,6 +166,7 @@ export const Training: React.FC = () => {
             onChange={(e) => setBatchSize(parseInt(e.target.value))}
             min={1}
             max={128}
+            disabled={training}
           />
 
           <Input
@@ -132,6 +177,7 @@ export const Training: React.FC = () => {
             min={320}
             max={1280}
             step={32}
+            disabled={training}
           />
 
           <Input
@@ -142,6 +188,7 @@ export const Training: React.FC = () => {
             min={0.0001}
             max={0.1}
             step={0.001}
+            disabled={training}
           />
         </div>
 
@@ -156,10 +203,17 @@ export const Training: React.FC = () => {
             {training ? '训练中...' : '开始训练'}
           </Button>
           {training && (
-            <Button variant="secondary" size="lg">
+            <Button variant="danger" size="lg" onClick={handleStopTraining}>
               停止训练
             </Button>
           )}
+          <Button
+            variant="secondary"
+            size="lg"
+            onClick={() => navigate('/training-monitor')}
+          >
+            查看监控
+          </Button>
         </div>
       </Card>
     </div>
