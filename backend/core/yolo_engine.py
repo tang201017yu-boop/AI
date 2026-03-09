@@ -165,6 +165,11 @@ class YOLOEngine:
 
             # 递归查找所有 .pt 文件
             for path in root.glob("**/*.pt"):
+                # 过滤掉训练过程中的中间检查点文件
+                filename = path.name.lower()
+                if filename.startswith('epoch') or filename in ['best.pt', 'last.pt', 'best_full.pt']:
+                    continue
+
                 try:
                     resolved = path.resolve()
                 except FileNotFoundError:
@@ -232,9 +237,9 @@ class YOLOEngine:
         Returns:
             YOLO: 加载的模型对象
         """
-        # 默认使用 CPU
+        # 默认使用 GPU（如果可用）
         if device is None:
-            device = "cpu"
+            device = self.default_device
 
         # 解析模型路径
         resolved_path = self._resolve_model_path(model_identifier)
@@ -654,8 +659,8 @@ class YOLOEngine:
                             logger.warning(f"[YOLO引擎] 任务状态不存在: {task_id}")
                             return
 
-                        # 更新进度
-                        status.current_epoch = epoch_index
+                        # 更新进度 - epoch 从 1 开始
+                        status.current_epoch = min(epoch_index, total_epochs)  # 不超过总轮数
                         status.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
                         status.status = "running"
 
@@ -728,11 +733,11 @@ class YOLOEngine:
                     except:
                         pass
 
-                    # 更新训练状态
+                    # 更新训练状态 (epoch从1开始计数)
                     with self.training_lock:
                         status = self.training_tasks.get(task_id)
                         if status:
-                            status.current_epoch = epoch_index
+                            status.current_epoch = min(epoch_index, total_epochs)  # 不超过总轮数
                             status.progress = min(100.0, epoch_index / max(total_epochs, 1) * 100.0)
                             status.gpu_memory = gpu_mem
                             status.gpu_utilization = gpu_util
@@ -750,9 +755,8 @@ class YOLOEngine:
                 except Exception as e:
                     logger.error(f"[YOLO引擎] Epoch 回调执行失败: {e}")
 
-            # 注册训练回调 - 尝试多个回调事件
+            # 注册训练回调 - 只使用 on_fit_epoch_end 回调
             model.add_callback("on_train_start", train_start_callback)
-            model.add_callback("on_train_epoch_end", epoch_callback)
             model.add_callback("on_fit_epoch_end", epoch_callback)
 
             logger.info(f"[YOLO引擎] 已注册训练回调")
@@ -778,6 +782,20 @@ class YOLOEngine:
                         best_pt = Path(settings.MODELS_DIR) / config.project_name / "train" / "weights" / "best.pt"
                         if best_pt.exists():
                             status.checkpoint_path = str(best_pt)
+
+                        # 同步更新 training_service.experiments
+                        try:
+                            from backend.modules.training.training_service import training_service
+                            if task_id in training_service.experiments:
+                                training_service.experiments[task_id]["status"] = "completed"
+                                training_service.experiments[task_id]["checkpoint_path"] = str(best_pt) if best_pt.exists() else None
+                                # 保存最佳指标
+                                if status.best_metrics:
+                                    training_service.experiments[task_id]["best_metrics"] = status.best_metrics
+                                training_service._save_experiments()
+                                logger.info(f"[YOLO引擎] 已同步更新 experiments.json: task_id={task_id}")
+                        except Exception as e:
+                            logger.warning(f"[YOLO引擎] 同步 experiments.json 失败: {e}")
 
             # 注册完成回调
             model.add_callback("on_train_end", finish_callback)

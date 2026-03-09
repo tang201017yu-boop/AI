@@ -7,7 +7,7 @@ import logging
 import time
 import os
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, UploadFile, Request
+from fastapi import APIRouter, HTTPException, UploadFile, Request, Query, Body
 from typing import Optional, Dict, Any, List
 import json
 from datetime import datetime
@@ -29,6 +29,7 @@ router = APIRouter()
 class TrainingRequest(BaseModel):
     """训练请求数据模型"""
     project_name: str  # 项目名称
+    project_id: Optional[str] = None  # 项目ID（关联训练项目）
     dataset_path: str  # 数据集路径
     model_type: str = "yolo11n"  # 模型类型
     epochs: int = 100  # 训练轮数
@@ -213,6 +214,42 @@ async def cancel_training(task_id: str):
     raise HTTPException(status_code=400, detail=result["message"])
 
 
+@router.get("/training/chart-data/{task_id}")
+async def get_training_chart_data(task_id: str):
+    """
+    获取训练图表数据接口
+
+    Args:
+        task_id: 训练任务 ID
+
+    Returns:
+        图表数据（损失曲线、性能指标等）
+    """
+    logger.debug(f"[训练] 获取图表数据: task_id={task_id}")
+
+    result = training_service.get_chart_data(task_id)
+    if result["success"]:
+        return result
+
+    error_msg = result.get("message", "任务不存在")
+    logger.warning(f"[训练] 获取图表数据失败: task_id={task_id}")
+    raise HTTPException(status_code=404, detail=error_msg)
+
+
+@router.get("/training/system-info")
+async def get_system_info():
+    """
+    获取系统信息接口
+
+    Returns:
+        系统信息（GPU、内存等）
+    """
+    logger.debug("[训练] 获取系统信息")
+
+    result = training_service.get_system_info()
+    return result
+
+
 @router.post("/training/stop/{task_id}")
 async def stop_training(task_id: str):
     """
@@ -385,6 +422,242 @@ async def get_experiments():
         "success": True,
         "experiments": experiments
     }
+
+
+@router.get("/experiments/{task_id}")
+async def get_experiment(task_id: str):
+    """
+    获取单个实验详情接口
+
+    Args:
+        task_id: 实验 ID
+
+    Returns:
+        实验详情
+    """
+    logger.debug(f"[训练] 查询实验详情: task_id={task_id}")
+
+    experiment = training_service.experiments.get(task_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="实验不存在")
+
+    # 获取图表数据
+    from backend.core.yolo_engine import yolo_engine
+    chart_data = None
+    status = None
+
+    if yolo_engine:
+        status = yolo_engine.get_training_status(task_id)
+        if status:
+            chart_data = status.get_chart_data()
+
+    # 构建返回数据
+    result = {
+        "success": True,
+        "data": {
+            **experiment,
+            "chart_data": chart_data,
+            "best_metrics": status.best_metrics if status else experiment.get("best_metrics"),
+            "checkpoint_path": status.checkpoint_path if status else experiment.get("checkpoint_path")
+        }
+    }
+    return result
+
+
+@router.get("/experiments/{task_id}/results")
+async def get_experiment_results(task_id: str):
+    """
+    获取实验验证结果图片接口
+
+    Args:
+        task_id: 实验 ID
+
+    Returns:
+        验证结果图片列表
+    """
+    from pathlib import Path
+
+    logger.debug(f"[训练] 查询验证结果: task_id={task_id}")
+
+    experiment = training_service.experiments.get(task_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="实验不存在")
+
+    project_name = experiment.get("project_name")
+    if not project_name:
+        raise HTTPException(status_code=400, detail="实验缺少项目名称")
+
+    train_dir = Path(settings.MODELS_DIR) / project_name / "train"
+    if not train_dir.exists():
+        return {"success": True, "data": {"images": [], "path": str(train_dir)}}
+
+    # 查找验证结果图片
+    result_images = []
+    image_patterns = [
+        "confusion_matrix*.png",
+        "BoxP_curve.png",
+        "BoxR_curve.png",
+        "BoxF1_curve.png",
+        "BoxPR_curve.png",
+        "labels.jpg",
+        "results.png"
+    ]
+
+    for pattern in image_patterns:
+        for img_path in train_dir.glob(pattern):
+            result_images.append({
+                "name": img_path.name,
+                "url": f"/models/{project_name}/train/{img_path.name}"
+            })
+
+    return {"success": True, "data": {"images": result_images, "path": str(train_dir)}}
+
+
+@router.post("/experiments/{task_id}/export")
+async def export_experiment_model(
+    task_id: str,
+    format: str = Query("onnx", description="导出格式: onnx/torchscript/tflite/pytorch")
+):
+    """
+    导出实验模型接口
+
+    Args:
+        task_id: 实验 ID
+        format: 导出格式
+
+    Returns:
+        导出结果
+    """
+    from pathlib import Path as PathLib
+
+    logger.info(f"[训练] 导出模型: task_id={task_id}, format={format}")
+
+    experiment = training_service.experiments.get(task_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="实验不存在")
+
+    project_name = experiment.get("project_name")
+    checkpoint_path = experiment.get("checkpoint_path")
+
+    if not checkpoint_path:
+        # 查找默认路径
+        best_pt = PathLib(settings.MODELS_DIR) / project_name / "train" / "weights" / "best.pt"
+        if best_pt.exists():
+            checkpoint_path = str(best_pt)
+
+    if not checkpoint_path or not PathLib(checkpoint_path).exists():
+        raise HTTPException(status_code=400, detail="模型文件不存在")
+
+    # 调用导出
+    from backend.core.yolo_engine import yolo_engine
+    result = yolo_engine.export_model(checkpoint_path, format=format)
+
+    return {"success": True, "data": result}
+
+
+@router.post("/experiments/{task_id}/infer")
+async def infer_with_experiment_model(
+    task_id: str,
+    image_url: str = Body(..., description="图片URL"),
+    conf_threshold: float = Body(0.25, description="置信度阈值"),
+    iou_threshold: float = Body(0.45, description="IOU阈值")
+):
+    """
+    使用实验模型进行推理接口
+
+    Args:
+        task_id: 实验 ID
+        image_url: 图片URL
+        conf_threshold: 置信度阈值
+        iou_threshold: IOU阈值
+
+    Returns:
+        推理结果
+    """
+    from pathlib import Path as PathLib
+
+    logger.info(f"[训练] 推理测试: task_id={task_id}")
+
+    experiment = training_service.experiments.get(task_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="实验不存在")
+
+    project_name = experiment.get("project_name")
+    checkpoint_path = experiment.get("checkpoint_path")
+
+    if not checkpoint_path:
+        best_pt = PathLib(settings.MODELS_DIR) / project_name / "train" / "weights" / "best.pt"
+        if best_pt.exists():
+            checkpoint_path = str(best_pt)
+
+    if not checkpoint_path or not PathLib(checkpoint_path).exists():
+        raise HTTPException(status_code=400, detail="模型文件不存在")
+
+    # 调用推理
+    from backend.core.yolo_engine import yolo_engine
+    result = yolo_engine.predict(
+        model_path=checkpoint_path,
+        source=image_url,
+        conf=conf_threshold,
+        iou=iou_threshold
+    )
+
+    return {"success": True, "data": result}
+
+
+@router.post("/experiments/{task_id}/resume")
+async def resume_training(
+    task_id: str,
+    epochs: int = Body(100, description="继续训练的轮数"),
+    batch_size: int = Body(None, description="批量大小"),
+    resume_from_best: bool = Body(True, description="是否从最佳权重继续")
+):
+    """
+    继续训练接口
+
+    Args:
+        task_id: 实验 ID
+        epochs: 继续训练的轮数
+        batch_size: 批量大小
+        resume_from_best: 是否从最佳权重继续
+
+    Returns:
+        新的训练任务信息
+    """
+    from pathlib import Path as PathLib
+
+    logger.info(f"[训练] 继续训练: task_id={task_id}, epochs={epochs}")
+
+    experiment = training_service.experiments.get(task_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="实验不存在")
+
+    project_name = experiment.get("project_name")
+    model_type = experiment.get("model_type")
+
+    # 查找模型路径
+    if resume_from_best:
+        model_path = PathLib(settings.MODELS_DIR) / project_name / "train" / "weights" / "best.pt"
+    else:
+        model_path = PathLib(settings.MODELS_DIR) / project_name / "train" / "weights" / "last.pt"
+
+    if not model_path.exists():
+        raise HTTPException(status_code=400, detail="模型权重文件不存在")
+
+    # 调用训练
+    from backend.core.yolo_engine import yolo_engine
+    result = yolo_engine.train(
+        model=str(model_path),
+        data=experiment.get("dataset_path"),
+        epochs=epochs,
+        batch_size=batch_size or experiment.get("batch_size"),
+        project=project_name + "_continue",
+        name=datetime.now().strftime("train_%H%M%S"),
+        exist_ok=True,
+        resume=True
+    )
+
+    return {"success": True, "data": result}
 
 
 @router.post("/experiments/compare")
@@ -844,26 +1117,35 @@ async def get_training_config(task_id: str):
 
 # ==================== 项目管理 ====================
 
-@router.post("/projects")
-async def create_project(
-    name: str,
-    description: str = "",
+class CreateProjectRequest(BaseModel):
+    """创建项目请求模型"""
+    name: str
+    description: str = ""
     cover_image: str = None
-):
+    task_type: str = "detect"
+    settings: dict = None
+
+
+@router.post("/projects")
+async def create_project(request: CreateProjectRequest):
     """
     创建新项目接口
 
     Args:
-        name: 项目名称
-        description: 项目描述
-        cover_image: 封面图片
+        request: 创建项目请求
 
     Returns:
         创建结果
     """
-    logger.info(f"[训练] 创建项目: {name}")
+    logger.info(f"[训练] 创建项目: {request.name}, task_type: {request.task_type}")
 
-    result = project_service.create_project(name, description, cover_image)
+    result = project_service.create_project(
+        request.name,
+        request.description,
+        request.cover_image,
+        request.task_type,
+        request.settings
+    )
     if result["success"]:
         logger.info(f"[训练] 项目创建成功: {result.get('project', {}).get('id')}")
         return result
@@ -1207,6 +1489,18 @@ async def list_models(project_id: str = None):
     logger.debug(f"[训练] 列出模型: project_id={project_id}")
 
     return model_service.list_models(project_id)
+
+
+@router.get("/models")
+async def list_user_models():
+    """
+    获取用户模型列表（上传的模型 + 训练项目的模型）
+
+    Returns:
+        用户模型列表
+    """
+    logger.debug("[训练] 获取用户模型列表")
+    return model_service.list_models()
 
 
 @router.get("/models/list")

@@ -61,12 +61,15 @@ export const datasetApi = {
 // ============ 模型 API ============
 export const modelApi = {
   list: () => api.get<ApiResponse<Model[]>>('/models/list'),
-  get: (id: string) => api.get<ApiResponse<Model>>(`/models/${id}`),
+  // 获取用户上传的模型
+  getUserModels: () => api.get<ApiResponse<{ models: any[]; total: number }>>('/training/models'),
+  // 上传模型
   upload: (formData: FormData) =>
-    api.post<ApiResponse<Model>>('/models/upload', formData, {
+    api.post<ApiResponse<any>>('/training/models/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
-  delete: (id: string) => api.delete(`/models/${id}`),
+  get: (id: string) => api.get<ApiResponse<Model>>(`/models/${id}`),
+  delete: (id: string) => api.delete(`/training/models/${id}`),
   // 获取已加载到内存的模型列表
   getLoadedModels: () => api.get<ApiResponse<{ models: any[]; total: number }>>('/models/loaded'),
   // 预加载模型到内存
@@ -86,7 +89,27 @@ export const trainingApi = {
   status: (taskId: string) =>
     api.get<ApiResponse<TrainingStatus>>(`/training/status/${taskId}`),
   stop: (taskId: string) => api.post(`/training/stop/${taskId}`),
-  getHistory: () => api.get('/training/tasks'),
+  // 获取训练历史列表 - 使用 experiments API
+  getHistory: () => api.get('/experiments'),
+  // 获取单个实验详情
+  getExperiment: (taskId: string) =>
+    api.get<ApiResponse<any>>(`/experiments/${taskId}`),
+  // 获取实验验证结果图片
+  getExperimentResults: (taskId: string) =>
+    api.get<ApiResponse<any>>(`/experiments/${taskId}/results`),
+  // 导出实验模型
+  exportExperimentModel: (taskId: string, format: string) =>
+    api.post<ApiResponse<any>>(`/experiments/${taskId}/export?format=${format}`),
+  // 使用实验模型推理
+  inferWithExperiment: (taskId: string, data: { image_url: string; conf_threshold?: number; iou_threshold?: number }) =>
+    api.post<ApiResponse<any>>(`/experiments/${taskId}/infer`, data),
+  // 继续训练
+  resumeTraining: (taskId: string, data: { epochs?: number; batch_size?: number; resume_from_best?: boolean }) =>
+    api.post<ApiResponse<any>>(`/experiments/${taskId}/resume`, data),
+  getChartData: (taskId: string) =>
+    api.get<ApiResponse<any>>(`/training/chart-data/${taskId}`),
+  getSystemInfo: () =>
+    api.get<ApiResponse<any>>('/training/system-info'),
 };
 
 // ============ 推理 API ============
@@ -191,6 +214,51 @@ export const samApi = {
   },
   // 获取支持的模型列表
   getModels: () => api.get('/sam/models'),
+};
+
+// ============ 项目 API ============
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  cover_image?: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  settings?: Record<string, any>;
+  models_count?: number;
+}
+
+export const projectApi = {
+  // 创建项目
+  create: (data: { name: string; description?: string; cover_image?: string; task_type?: string; settings?: Record<string, any> }) =>
+    api.post<ApiResponse<Project>>('/training/projects', data),
+  // 获取项目列表
+  list: () => api.get<ApiResponse<{ projects: Project[]; total: number }>>('/training/projects'),
+  // 获取项目详情
+  get: (projectId: string) =>
+    api.get<ApiResponse<Project>>(`/training/projects/${projectId}`),
+  // 更新项目
+  update: (projectId: string, data: { name?: string; description?: string; cover_image?: string; settings?: Record<string, any> }) =>
+    api.put<ApiResponse<Project>>(`/training/projects/${projectId}`, data),
+  // 删除项目
+  delete: (projectId: string) =>
+    api.delete<ApiResponse<void>>(`/training/projects/${projectId}`),
+  // 恢复项目
+  restore: (projectId: string) =>
+    api.post<ApiResponse<Project>>(`/training/projects/${projectId}/restore`),
+  // 获取回收站
+  getRecycleBin: () =>
+    api.get<ApiResponse<{ items: Project[]; expired: Project[]; total: number }>>('/training/projects/recycle-bin'),
+  // 清空回收站
+  emptyRecycleBin: () =>
+    api.post<ApiResponse<{ message: string }>>('/training/projects/recycle-bin/empty'),
+  // 获取项目模型列表
+  getModels: (projectId: string) =>
+    api.get<ApiResponse<{ models: any[]; total: number }>>(`/training/projects/${projectId}/models`),
+  // 获取项目活动日志
+  getActivity: (projectId: string) =>
+    api.get<ApiResponse<{ activities: any[]; total: number }>>(`/training/projects/${projectId}/activity`),
 };
 
 // ============ 解决方案 API ============

@@ -49,25 +49,32 @@ class TrainingService:
         """初始化训练服务"""
         logger.info("[训练] 初始化训练服务")
         self.experiments: Dict[str, Dict] = {}  # 实验记录字典
+        self.experiments_file = Path(settings.MODELS_DIR) / "experiments.json"  # 持久化文件
         self._load_experiments()  # 加载已有实验
 
     def _load_experiments(self):
         """
         加载已有的实验列表
-        从 models/experiments 目录读取历史实验记录
+        从持久化文件加载实验记录
         """
-        experiments_dir = Path(settings.MODELS_DIR) / "experiments"
+        # 优先从持久化文件加载
+        if self.experiments_file.exists():
+            try:
+                with open(self.experiments_file, 'r', encoding='utf-8') as f:
+                    self.experiments = json.load(f)
+                logger.info(f"[训练] 已从持久化文件加载 {len(self.experiments)} 个实验")
+                return
+            except Exception as e:
+                logger.warning(f"[训练] 加载实验文件失败: {e}")
 
-        # 检查实验目录是否存在
+        # 回退到从目录加载
+        experiments_dir = Path(settings.MODELS_DIR) / "experiments"
         if not experiments_dir.exists():
-            logger.info("[训练] 实验目录不存在，将创建")
             experiments_dir.mkdir(parents=True, exist_ok=True)
             return
 
-        # 遍历实验目录
         for exp_dir in experiments_dir.iterdir():
             if exp_dir.is_dir():
-                # 保存实验基本信息
                 self.experiments[exp_dir.name] = {
                     "name": exp_dir.name,
                     "path": str(exp_dir),
@@ -75,6 +82,17 @@ class TrainingService:
                 }
 
         logger.info(f"[训练] 已加载 {len(self.experiments)} 个历史实验")
+
+    def _save_experiments(self):
+        """
+        保存实验列表到持久化文件
+        """
+        try:
+            with open(self.experiments_file, 'w', encoding='utf-8') as f:
+                json.dump(self.experiments, f, ensure_ascii=False, indent=2)
+            logger.debug(f"[训练] 实验列表已保存到 {self.experiments_file}")
+        except Exception as e:
+            logger.error(f"[训练] 保存实验列表失败: {e}")
 
     def start_training(
         self,
@@ -133,6 +151,17 @@ class TrainingService:
         logger.info(f"[训练] 开始训练: 项目={project_name}, 模型={model_type}, 数据集={dataset_path}")
         logger.info(f"[训练] 训练参数: epochs={epochs}, batch_size={batch_size}, img_size={img_size}, device={device}")
 
+        # 验证必需参数
+        if not project_name:
+            error_msg = "项目名称不能为空"
+            logger.error(f"[训练] {error_msg}")
+            return {"success": False, "message": error_msg}
+
+        if not dataset_path:
+            error_msg = "数据集路径不能为空"
+            logger.error(f"[训练] {error_msg}")
+            return {"success": False, "message": error_msg}
+
         # 检查 Ultralytics 是否安装
         if not ULTRALYTICS_AVAILABLE:
             error_msg = "Ultralytics 未安装，无法进行训练"
@@ -155,9 +184,18 @@ class TrainingService:
             dataset_path_resolved = dataset_path
             dataset_path_obj = Path(dataset_path)
 
+            # 判断是否为绝对路径
+            is_absolute = dataset_path_obj.is_absolute()
+
             # 如果路径不存在，尝试作为数据集名称解析
             if not dataset_path_obj.exists():
                 logger.debug(f"[训练] 路径不存在，尝试解析为数据集名称: {dataset_path}")
+
+                # 如果是绝对路径但不存在，直接报错
+                if is_absolute:
+                    error_msg = f"数据集路径不存在: {dataset_path}"
+                    logger.error(f"[训练] {error_msg}")
+                    return {"success": False, "message": error_msg}
 
                 dataset_dir = settings.DATASETS_DIR / dataset_path
                 if dataset_dir.exists():
@@ -177,10 +215,23 @@ class TrainingService:
                         if yaml_files:
                             dataset_path_resolved = str(yaml_files[0])
                             logger.info(f"[训练] 在子目录找到配置文件: {yaml_files[0]}")
+                            yaml_found = True
                         else:
-                            error_msg = f"数据集 {dataset_path} 中未找到 data.yaml 文件"
-                            logger.error(f"[训练] {error_msg}")
-                            return {"success": False, "message": error_msg}
+                            # 尝试在嵌套子目录中查找
+                            nested_dir = dataset_dir / dataset_path
+                            if nested_dir.exists():
+                                for name in ["data.yaml", "data.yml"]:
+                                    yaml_file = nested_dir / name
+                                    if yaml_file.exists():
+                                        dataset_path_resolved = str(yaml_file)
+                                        logger.info(f"[训练] 在嵌套目录找到配置文件: {yaml_file}")
+                                        yaml_found = True
+                                        break
+
+                    if not yaml_found:
+                        error_msg = f"数据集 {dataset_path} 中未找到 data.yaml 文件"
+                        logger.error(f"[训练] {error_msg}")
+                        return {"success": False, "message": error_msg}
 
                     # 检查并修复 data.yaml 中的路径
                     yaml_path = Path(dataset_path_resolved)
@@ -264,9 +315,11 @@ class TrainingService:
             logger.info(f"[训练] 训练任务已提交: task_id={task_id}")
 
             # 保存实验信息
+            project_id = kwargs.get('project_id')  # 获取项目ID
             experiment = {
                 "task_id": task_id,
                 "project_name": project_name,
+                "project_id": project_id,  # 关联的项目ID
                 "model_type": model_type,
                 "dataset_path": dataset_path,
                 "epochs": epochs,
@@ -283,6 +336,7 @@ class TrainingService:
                 }
             }
             self.experiments[task_id] = experiment
+            self._save_experiments()  # 持久化保存
 
             logger.info(f"[训练] 训练已启动: task_id={task_id}")
 
@@ -348,6 +402,70 @@ class TrainingService:
         error_msg = "任务不存在"
         logger.warning(f"[训练] {error_msg}: task_id={task_id}")
         return {"success": False, "message": error_msg}
+
+    def get_chart_data(self, task_id: str) -> Dict[str, Any]:
+        """
+        获取训练图表数据
+
+        Args:
+            task_id: 训练任务 ID
+
+        Returns:
+            图表数据
+        """
+        logger.debug(f"[训练] 获取图表数据: task_id={task_id}")
+
+        from backend.core.yolo_engine import yolo_engine
+
+        if not yolo_engine:
+            return {"success": False, "message": "训练引擎未初始化"}
+
+        try:
+            status = yolo_engine.get_training_status(task_id)
+            if status:
+                chart_data = status.get_chart_data()
+                return {
+                    "success": True,
+                    "data": chart_data
+                }
+        except Exception as e:
+            error_msg = f"获取图表数据失败: {str(e)}"
+            logger.error(f"[训练] {error_msg}")
+            return {"success": False, "message": error_msg}
+
+        return {"success": False, "message": "任务不存在"}
+
+    def get_system_info(self) -> Dict[str, Any]:
+        """
+        获取系统信息
+
+        Returns:
+            系统信息（GPU、内存等）
+        """
+        logger.debug("[训练] 获取系统信息")
+
+        import torch
+        import psutil
+
+        info = {
+            "gpu_available": torch.cuda.is_available(),
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_total": psutil.virtual_memory().total,
+            "memory_used": psutil.virtual_memory().used,
+            "memory_percent": psutil.virtual_memory().percent,
+        }
+
+        if torch.cuda.is_available():
+            try:
+                info["gpu_name"] = torch.cuda.get_device_name(0)
+                info["gpu_memory_total"] = torch.cuda.get_device_properties(0).total_memory
+                info["gpu_memory_used"] = torch.cuda.memory_allocated(0)
+                info["gpu_memory_reserved"] = torch.cuda.memory_reserved(0)
+                info["gpu_utilization"] = 0  # 需要 nvidia-ml-py3 获取
+            except Exception as e:
+                logger.warning(f"[训练] 获取GPU信息失败: {e}")
+
+        return {"success": True, "data": info}
 
     def list_training_tasks(self) -> List[Dict[str, Any]]:
         """
