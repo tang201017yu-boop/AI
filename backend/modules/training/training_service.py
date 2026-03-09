@@ -371,33 +371,70 @@ class TrainingService:
 
         from backend.core.yolo_engine import yolo_engine
 
-        if yolo_engine is None:
-            error_msg = "训练引擎未初始化"
-            logger.error(f"[训练] {error_msg}")
-            return {"success": False, "message": error_msg}
+        # 1. 首先尝试从 experiments 中获取历史任务状态
+        experiment = self.experiments.get(task_id)
+        if experiment:
+            # 2. 检查 yolo_engine 中是否有正在运行的任务
+            try:
+                if yolo_engine:
+                    status = yolo_engine.get_training_status(task_id)
+                    if status:
+                        logger.debug(f"[训练] 任务状态: {status.status}, 进度: {status.progress:.1f}%")
+                        return {
+                            "success": True,
+                            "status": {
+                                "task_id": status.task_id,
+                                "status": status.status,
+                                "progress": status.progress,
+                                "current_epoch": status.current_epoch,
+                                "total_epochs": status.total_epochs,
+                                "metrics": status.metrics,
+                                "gpu_memory": status.gpu_memory,
+                                "error_message": status.error_message,
+                                "updatedAt": status.updated_at.isoformat() if hasattr(status, 'updated_at') and status.updated_at else None
+                            }
+                        }
+            except Exception as e:
+                logger.warning(f"[训练] 从 yolo_engine 获取状态失败: {e}")
 
-        try:
-            # 获取训练状态
-            status = yolo_engine.get_training_status(task_id)
-            if status:
-                logger.debug(f"[训练] 任务状态: {status.status}, 进度: {status.progress:.1f}%")
-                return {
-                    "success": True,
-                    "status": {
-                        "task_id": status.task_id,
-                        "status": status.status,
-                        "progress": status.progress,
-                        "current_epoch": status.current_epoch,
-                        "total_epochs": status.total_epochs,
-                        "metrics": status.metrics,
-                        "gpu_memory": status.gpu_memory,
-                        "error_message": status.error_message,
-                        "updatedAt": status.updated_at.isoformat() if hasattr(status, 'updated_at') and status.updated_at else None
-                    }
+            # yolo_engine 中没有，从 experiments 返回历史状态
+            return {
+                "success": True,
+                "status": {
+                    "task_id": task_id,
+                    "status": experiment.get("status", "completed"),
+                    "progress": 100.0 if experiment.get("status") == "completed" else 0.0,
+                    "current_epoch": experiment.get("epochs", 0),
+                    "total_epochs": experiment.get("epochs", 0),
+                    "metrics": experiment.get("metrics", {}),
+                    "best_metrics": experiment.get("best_metrics", {}),
+                    "project_name": experiment.get("project_name", ""),
+                    "created_at": experiment.get("created_at", ""),
+                    "updatedAt": experiment.get("created_at", "")
                 }
+            }
+
+        # 3. 如果 experiments 也没有，检查 yolo_engine（可能是新的训练任务）
+        try:
+            if yolo_engine:
+                status = yolo_engine.get_training_status(task_id)
+                if status:
+                    return {
+                        "success": True,
+                        "status": {
+                            "task_id": status.task_id,
+                            "status": status.status,
+                            "progress": status.progress,
+                            "current_epoch": status.current_epoch,
+                            "total_epochs": status.total_epochs,
+                            "metrics": status.metrics,
+                            "gpu_memory": status.gpu_memory,
+                            "error_message": status.error_message,
+                            "updatedAt": status.updated_at.isoformat() if hasattr(status, 'updated_at') and status.updated_at else None
+                        }
+                    }
         except Exception as e:
-            error_msg = f"获取训练状态失败: {str(e)}"
-            logger.error(f"[训练] {error_msg}")
+            logger.warning(f"[训练] 从 yolo_engine 获取状态失败: {e}")
 
         error_msg = "任务不存在"
         logger.warning(f"[训练] {error_msg}: task_id={task_id}")

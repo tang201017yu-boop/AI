@@ -3,9 +3,12 @@ API 路由定义
 """
 import sys
 import os
+import logging
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse, JSONResponse
@@ -24,11 +27,18 @@ from backend.models.schemas import (
     QueueManagementRequest, SolutionResponse
 )
 from backend.services.yolo_service import yolo_service
+from backend.core.yolo_engine import yolo_engine
 from backend.services import annotation_service, dataset_service, solutions_service
 from backend.services.supervision_service import supervision_service
+from backend.modules.training.training_service import training_service
+from backend.modules.training.project_service import project_service
+from backend.modules.training import routes as training_routes
 from backend.utils.file_utils import allowed_file, save_uploaded_file, get_unique_filename
 
 router = APIRouter()
+
+# 挂载训练模块路由
+router.include_router(training_routes.router, prefix="/training", tags=["训练"])
 
 
 # ==================== 系统信息 ====================
@@ -180,40 +190,239 @@ async def infer_batch(
 @router.post("/training/start")
 async def start_training(config: TrainingConfig):
     """开始训练"""
-    if not yolo_service:
-        raise HTTPException(status_code=500, detail="YOLO service not available")
-    
     try:
-        task_id = yolo_service.train(config)
-        return {
-            "success": True,
-            "task_id": task_id,
-            "message": "Training started successfully"
-        }
+        # 使用 training_service 来处理训练启动（包含数据集路径解析）
+        result = training_service.start_training(
+            project_name=config.project_name,
+            dataset_path=config.dataset_path,
+            model_type=config.model_type,
+            epochs=config.epochs,
+            batch_size=config.batch_size,
+            img_size=config.img_size,
+            device=config.device,
+            optimizer=getattr(config, 'optimizer', 'auto'),
+            amp=getattr(config, 'amp', True),
+            workers=getattr(config, 'workers', 8),
+            lr0=getattr(config, 'lr0', 0.01),
+            lrf=getattr(config, 'lrf', 0.01),
+            warmup_epochs=getattr(config, 'warmup_epochs', 3.0),
+            warmup_bias_lr=getattr(config, 'warmup_bias_lr', 0.1),
+            mosaic=getattr(config, 'mosaic', 1.0),
+            close_mosaic_epochs=getattr(config, 'close_mosaic', 10)
+        )
+        if result.get("success"):
+            return {
+                "success": True,
+                "task_id": result.get("task_id"),
+                "message": "训练已开始"
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result.get("message", "启动训练失败"))
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/training/status/{task_id}", response_model=TrainingStatus)
+@router.get("/training/status/{task_id}")
 async def get_training_status(task_id: str):
     """获取训练状态"""
-    if not yolo_service:
-        raise HTTPException(status_code=500, detail="YOLO service not available")
-    
-    status = yolo_service.get_training_status(task_id)
-    if not status:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    return status
+    # 优先从 training_service 获取（支持历史任务）
+    from backend.modules.training.training_service import training_service
+    result = training_service.get_training_status(task_id)
+    if result.get("success"):
+        return clean_nan_values(result["status"])
+
+    # 如果 training_service 找不到，尝试从 yolo_engine 获取
+    if not yolo_engine:
+        raise HTTPException(status_code=500, detail="YOLO engine not available")
+
+    try:
+        status = yolo_engine.get_training_status(task_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Task not found")
+        status_dict = status_to_dict(status)
+        return clean_nan_values(status_dict)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] 获取训练状态失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def clean_nan_values(obj):
+    """递归清理字典/列表中的 NaN 值"""
+    import math
+    if isinstance(obj, dict):
+        return {k: clean_nan_values(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_nan_values(item) for item in obj]
+    elif isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
+
+
+def status_to_dict(status) -> dict:
+    """将 TrainingStatus 转换为字典，处理各种 Pydantic 版本"""
+    # 方法1: 尝试 model_dump (Pydantic v2)
+    if hasattr(status, 'model_dump'):
+        try:
+            return status.model_dump()
+        except Exception:
+            pass
+    # 方法2: 尝试 model_dump(mode='json') (Pydantic v2)
+    if hasattr(status, 'model_dump'):
+        try:
+            return status.model_dump(mode='json')
+        except Exception:
+            pass
+    # 方法3: 尝试 dict() (Pydantic v1)
+    if hasattr(status, 'dict'):
+        try:
+            return status.dict()
+        except Exception:
+            pass
+    # 方法4: 手动构建字典
+    return {
+        'task_id': status.task_id,
+        'status': status.status,
+        'progress': status.progress,
+        'current_epoch': status.current_epoch,
+        'total_epochs': status.total_epochs,
+        'metrics': status.metrics,
+        'project_name': getattr(status, 'project_name', None),
+        'created_at': status.created_at.isoformat() if hasattr(status.created_at, 'isoformat') else str(status.created_at),
+        'updated_at': status.updated_at.isoformat() if hasattr(status.updated_at, 'isoformat') else str(status.updated_at),
+        'error_message': status.error_message,
+        'gpu_memory': status.gpu_memory,
+    }
 
 
 @router.get("/training/tasks")
 async def list_training_tasks():
     """列出所有训练任务"""
-    if not yolo_service:
-        raise HTTPException(status_code=500, detail="YOLO service not available")
-    
-    return {"tasks": yolo_service.list_training_statuses()}
+    if not yolo_engine:
+        raise HTTPException(status_code=500, detail="YOLO engine not available")
+
+    try:
+        tasks = yolo_engine.list_training_statuses()
+        # 清理 NaN 值
+        tasks_data = []
+        for task in tasks:
+            task_dict = status_to_dict(task)
+            tasks_data.append(clean_nan_values(task_dict))
+        return {"tasks": tasks_data}
+    except Exception as e:
+        logger.error(f"[API] 获取训练任务列表失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"tasks": []}
+        import traceback
+        traceback.print_exc()
+        return {"tasks": []}
+
+
+# ==================== 项目管理 ====================
+@router.post("/training/projects")
+async def create_project(name: str, description: str = "", cover_image: str = None):
+    """创建新项目"""
+    logger.debug(f"[API] 创建项目: name={name}")
+    result = project_service.create_project(name, description, cover_image)
+    return result
+
+
+@router.get("/training/projects")
+async def list_projects(include_deleted: bool = False):
+    """列出所有项目"""
+    logger.debug(f"[API] 列出项目: include_deleted={include_deleted}")
+    result = project_service.list_projects(include_deleted)
+    return result
+
+
+@router.get("/training/projects/{project_id}")
+async def get_project(project_id: str):
+    """获取项目详情"""
+    logger.debug(f"[API] 获取项目: project_id={project_id}")
+    result = project_service.get_project(project_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.put("/training/projects/{project_id}")
+async def update_project(project_id: str, data: dict):
+    """更新项目"""
+    logger.debug(f"[API] 更新项目: project_id={project_id}")
+    result = project_service.update_project(
+        project_id,
+        name=data.get("name"),
+        description=data.get("description"),
+        cover_image=data.get("cover_image"),
+        settings=data.get("settings")
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.delete("/training/projects/{project_id}")
+async def delete_project(project_id: str):
+    """删除项目"""
+    logger.debug(f"[API] 删除项目: project_id={project_id}")
+    result = project_service.delete_project(project_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.post("/training/projects/{project_id}/restore")
+async def restore_project(project_id: str):
+    """恢复项目"""
+    logger.debug(f"[API] 恢复项目: project_id={project_id}")
+    result = project_service.restore_project(project_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.get("/training/projects/recycle-bin")
+async def get_recycle_bin():
+    """获取回收站"""
+    logger.debug("[API] 获取回收站")
+    result = project_service.get_recycle_bin()
+    return result
+
+
+@router.post("/training/projects/recycle-bin/empty")
+async def empty_recycle_bin():
+    """清空回收站"""
+    logger.debug("[API] 清空回收站")
+    result = project_service.empty_recycle_bin()
+    return result
+
+
+@router.get("/training/projects/{project_id}/models")
+async def get_project_models(project_id: str):
+    """获取项目模型列表"""
+    logger.debug(f"[API] 获取项目模型: project_id={project_id}")
+    result = project_service.get_models(project_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.get("/training/projects/{project_id}/activity")
+async def get_project_activity(project_id: str, limit: int = 50):
+    """获取项目活动日志"""
+    logger.debug(f"[API] 获取项目活动: project_id={project_id}")
+    result = project_service.get_activity_log(project_id, limit)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
 
 
 # ==================== 模型相关 ====================
@@ -222,8 +431,51 @@ async def list_models():
     """列出所有模型"""
     if not yolo_service:
         raise HTTPException(status_code=500, detail="YOLO service not available")
-    
+
     return yolo_service.list_models()
+
+
+@router.get("/models/loaded")
+async def get_loaded_models():
+    """获取已加载到内存的模型列表"""
+    if not yolo_engine:
+        raise HTTPException(status_code=500, detail="YOLO engine not available")
+
+    try:
+        models = yolo_engine.get_loaded_models()
+        return {
+            "success": True,
+            "models": models,
+            "total": len(models)
+        }
+    except Exception as e:
+        logger.error(f"[API] 获取已加载模型失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/models/load")
+async def load_model_to_memory(
+    model_name: str = Form(...),
+    device: str = Form("cpu")
+):
+    """预加载模型到内存"""
+    if not yolo_engine:
+        raise HTTPException(status_code=500, detail="YOLO engine not available")
+
+    try:
+        model = yolo_engine.load_model(model_name, device)
+        return {
+            "success": True,
+            "message": f"模型 {model_name} 已加载到内存",
+            "model_name": model_name,
+            "device": device
+        }
+    except Exception as e:
+        logger.error(f"[API] 加载模型失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"加载模型失败: {str(e)}"
+        }
 
 
 @router.post("/models/export")
@@ -595,11 +847,17 @@ async def solution_object_counting(
         # 解析参数
         region = None
         if region_points:
-            region = json.loads(region_points)
-        
+            try:
+                region = json.loads(region_points)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+
         class_list = None
         if classes:
-            class_list = json.loads(classes)
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
         
         # 设置输出路径
         output_path = str(settings.UPLOADS_DIR / f"counted_{filename}")
@@ -630,38 +888,43 @@ async def solution_object_counting(
 async def solution_heatmap(
     file: UploadFile = File(...),
     model_name: Optional[str] = Form(None),
-    colormap: int = Form(2),  # cv2.COLORMAP_JET
+    colormap: str = Form("COLORMAP_JET"),
     classes: Optional[str] = Form(None),
     conf: float = Form(0.25)
 ):
     """热图生成 - 可视化检测密度"""
+    import cv2
+
+    # 转换 colormap 名称为 OpenCV 常量
+    colormap_value = getattr(cv2, colormap, cv2.COLORMAP_JET)
+
     if not solutions_service:
         raise HTTPException(status_code=500, detail="Solutions service not available")
-    
+
     if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "mp4", "avi", "mov"]):
         raise HTTPException(status_code=400, detail="Invalid file type")
-    
+
     try:
         import json
-        
+
         # 保存上传文件
         filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
-        
+
         # 解析参数
         class_list = None
         if classes:
             class_list = json.loads(classes)
-        
+
         # 设置输出路径
         output_path = str(settings.UPLOADS_DIR / f"heatmap_{filename}")
-        
+
         # 生成热图
         result = solutions_service.generate_heatmap(
             source=str(file_path),
             model_name=model_name,
-            colormap=colormap,
+            colormap=colormap_value,
             classes=class_list,
             conf=conf,
             output_path=output_path
@@ -703,11 +966,17 @@ async def solution_speed_estimation(
         # 解析参数
         region = None
         if region_points:
-            region = json.loads(region_points)
-        
+            try:
+                region = json.loads(region_points)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+
         class_list = None
         if classes:
-            class_list = json.loads(classes)
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
         
         # 设置输出路径
         output_path = str(settings.UPLOADS_DIR / f"speed_{filename}")
@@ -915,11 +1184,17 @@ async def solution_queue_management(
         # 解析参数
         region = None
         if region_points:
-            region = json.loads(region_points)
-        
+            try:
+                region = json.loads(region_points)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+
         class_list = None
         if classes:
-            class_list = json.loads(classes)
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
         
         # 设置输出路径
         output_path = str(settings.UPLOADS_DIR / f"queue_{filename}")
