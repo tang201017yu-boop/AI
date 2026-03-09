@@ -376,7 +376,7 @@ export const TrainingMonitor: React.FC = () => {
                     <td style={{ padding: 'var(--space-2)', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
                       {task.createdAt ? new Date(task.createdAt).toLocaleString() : '-'}
                     </td>
-                    <td style={{ padding: 'var(--space-2)' }}>
+                    <td style={{ padding: 'var(--space-2)', display: 'flex', gap: 'var(--space-2)' }}>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -385,7 +385,26 @@ export const TrainingMonitor: React.FC = () => {
                           navigate(`/training/${task.id}/details`);
                         }}
                       >
-                        查看详情 →
+                        查看详情
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (confirm(`确定要删除训练记录 "${task.name}" 吗？`)) {
+                            try {
+                              await trainingApi.deleteExperiment(task.id);
+                              loadTasks();
+                            } catch (err) {
+                              console.error('删除失败:', err);
+                              alert('删除失败');
+                            }
+                          }
+                        }}
+                        style={{ color: 'var(--color-danger)' }}
+                      >
+                        删除
                       </Button>
                     </td>
                   </tr>

@@ -106,6 +106,9 @@ export const trainingApi = {
   // 继续训练
   resumeTraining: (taskId: string, data: { epochs?: number; batch_size?: number; resume_from_best?: boolean }) =>
     api.post<ApiResponse<any>>(`/experiments/${taskId}/resume`, data),
+  // 删除实验
+  deleteExperiment: (taskId: string) =>
+    api.delete<ApiResponse<any>>(`/experiments/${taskId}`),
   getChartData: (taskId: string) =>
     api.get<ApiResponse<any>>(`/training/chart-data/${taskId}`),
   getSystemInfo: () =>
