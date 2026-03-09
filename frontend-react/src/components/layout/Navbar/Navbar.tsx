@@ -7,6 +7,7 @@ const navItems = [
   { path: '/ai-native', label: '🔮 AI原生' },
   { path: '/inference', label: '模型推理' },
   { path: '/training', label: '模型训练' },
+  { path: '/training-monitor', label: '训练监控' },
   { path: '/solutions', label: '智能方案' },
   { path: '/models', label: '模型管理' },
   { path: '/datasets', label: '数据集' },
