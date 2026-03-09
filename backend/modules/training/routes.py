@@ -464,6 +464,52 @@ async def get_experiment(task_id: str):
     return result
 
 
+@router.delete("/experiments/{task_id}")
+async def delete_experiment(task_id: str):
+    """
+    删除实验接口
+
+    Args:
+        task_id: 实验 ID
+
+    Returns:
+        删除结果
+    """
+    from pathlib import Path
+    import shutil
+
+    logger.info(f"[训练] 删除实验: task_id={task_id}")
+
+    # 检查实验是否存在
+    experiment = training_service.experiments.get(task_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="实验不存在")
+
+    project_name = experiment.get("project_name")
+
+    # 从 experiments 中删除
+    if task_id in training_service.experiments:
+        del training_service.experiments[task_id]
+        training_service._save_experiments()
+
+    # 删除实验目录（可选，保留模型文件）
+    if project_name:
+        project_dir = Path(settings.MODELS_DIR) / project_name
+        # 检查是否还有其他实验使用这个项目
+        other_experiments = [e for e in training_service.experiments.values() if e.get("project_name") == project_name]
+        if not other_experiments and project_dir.exists():
+            try:
+                # 只删除 train 目录，保留其他文件
+                train_dir = project_dir / "train"
+                if train_dir.exists():
+                    shutil.rmtree(train_dir)
+                logger.info(f"[训练] 已删除实验目录: {project_dir}")
+            except Exception as e:
+                logger.warning(f"[训练] 删除实验目录失败: {e}")
+
+    return {"success": True, "message": "实验已删除"}
+
+
 @router.get("/experiments/{task_id}/results")
 async def get_experiment_results(task_id: str):
     """
