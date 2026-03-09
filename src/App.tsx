@@ -11,6 +11,7 @@ import { Solutions } from './pages/Solutions/Solutions';
 import { Augmentation } from './pages/Augmentation/Augmentation';
 import { ImageBrowser } from './pages/ImageBrowser/ImageBrowser';
 import { TrainingMonitor } from './pages/TrainingMonitor/TrainingMonitor';
+import { TrainingDetails } from './pages/TrainingDetails/TrainingDetails';
 import { Projects } from './pages/Projects/Projects';
 import { AINative } from './pages/AINative/AINative';
 
@@ -29,6 +30,7 @@ export const App: React.FC = () => {
         <Route path="augmentation" element={<Augmentation />} />
         <Route path="image-browser" element={<ImageBrowser />} />
         <Route path="training-monitor" element={<TrainingMonitor />} />
+        <Route path="training/:taskId/details" element={<TrainingDetails />} />
         <Route path="projects" element={<Projects />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
