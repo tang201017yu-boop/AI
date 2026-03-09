@@ -271,10 +271,35 @@ export const solutionsApi = {
     api.post('/solutions/object-counting', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
-  heatmap: (formData: FormData) =>
-    api.post('/solutions/heatmap', formData, {
+  // 热力图（异步任务，需要轮询）
+  heatmap: async (formData: FormData) => {
+    // 提交任务
+    const response = await api.post('/solutions/heatmap', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+    });
+    const taskId = response.data?.task_id;
+    if (!taskId) {
+      return response;
+    }
+
+    // 轮询等待完成
+    const maxAttempts = 300; // 最多5分钟
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try {
+        const statusResponse = await api.get(`/solutions/heatmap/status/${taskId}`);
+        const status = statusResponse.data;
+        if (status.status === 'completed') {
+          return { data: { success: true, ...status } };
+        } else if (status.status === 'failed') {
+          return { data: { success: false, message: status.message || '处理失败' } };
+        }
+      } catch (e) {
+        // 继续轮询
+      }
+    }
+    return { data: { success: false, message: '处理超时' } };
+  },
   speedEstimation: (formData: FormData) =>
     api.post('/solutions/speed-estimation', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
