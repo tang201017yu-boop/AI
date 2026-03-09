@@ -305,9 +305,88 @@ class ModelManagementService:
         return {"success": False, "message": "模型不存在"}
 
     def list_models(self, project_id: str = None) -> Dict[str, Any]:
-        """列出所有模型"""
-        index = self._load_index()
-        return {"success": True, "models": index, "total": len(index)}
+        """列出所有模型，包括上传的模型和训练项目的模型"""
+        # 1. 获取上传的模型
+        uploaded_index = self._load_index()
+        uploaded_models = []
+        for model in uploaded_index:
+            model['source'] = 'uploaded'
+            uploaded_models.append(model)
+
+        # 2. 获取训练项目的模型
+        training_models = []
+
+        # 需要搜索的目录列表
+        search_dirs = [settings.MODELS_DIR]
+
+        # 添加 projects 目录（如果存在）
+        projects_dir = settings.MODELS_DIR / "projects"
+        if projects_dir.exists():
+            search_dirs.append(projects_dir)
+
+        # 遍历所有搜索目录
+        for models_base_dir in search_dirs:
+            if not models_base_dir.exists():
+                continue
+
+            # 遍历目录下的所有子目录（训练项目）
+            for project_dir in models_base_dir.iterdir():
+                if not project_dir.is_dir():
+                    continue
+
+                # 跳过特殊目录
+                if project_dir.name.startswith('.'):
+                    continue
+
+                # 情况1: 检查 train/weights 目录（训练输出）
+                weights_dir = project_dir / "train" / "weights"
+                if weights_dir.exists():
+                    for weight_file in weights_dir.glob("*.pt"):
+                        # 过滤掉训练过程中的中间检查点文件（只保留 best.pt 和 last.pt）
+                        filename = weight_file.name.lower()
+                        if filename.startswith('epoch') or filename in ['best_full.pt']:
+                            continue
+
+                        model_path_str = str(weight_file)
+                        if any(m.get('path') == model_path_str for m in uploaded_models):
+                            continue
+
+                        training_models.append({
+                            'id': weight_file.stem,
+                            'name': weight_file.name,
+                            'path': model_path_str,
+                            'project': project_dir.name,
+                            'source': 'training',
+                            'task': 'detect',
+                            'created_at': datetime.fromtimestamp(weight_file.stat().st_ctime).isoformat()
+                        })
+
+                # 情况2: 检查 models 目录（项目模型目录）
+                models_dir = project_dir / "models"
+                if models_dir.exists():
+                    for weight_file in models_dir.glob("*.pt"):
+                        # 过滤掉训练过程中的中间检查点文件
+                        filename = weight_file.name.lower()
+                        if filename.startswith('epoch') or filename in ['best.pt', 'last.pt', 'best_full.pt']:
+                            continue
+
+                        model_path_str = str(weight_file)
+                        if any(m.get('path') == model_path_str for m in uploaded_models):
+                            continue
+
+                        training_models.append({
+                            'id': weight_file.stem,
+                            'name': weight_file.name,
+                            'path': model_path_str,
+                            'project': project_dir.name,
+                            'source': 'project_model',
+                            'task': 'detect',
+                            'created_at': datetime.fromtimestamp(weight_file.stat().st_ctime).isoformat()
+                        })
+
+        # 合并所有模型
+        all_models = uploaded_models + training_models
+        return {"success": True, "models": all_models, "total": len(all_models)}
 
     def delete_model(self, model_id: str) -> Dict[str, Any]:
         """删除模型"""
