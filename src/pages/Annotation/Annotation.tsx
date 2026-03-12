@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardHeader, Button, Input, Select } from '../../components/common';
-import { annotationApi, inferenceApi } from '../../services/api';
-import type { AnnotationProject } from '../../types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Card, CardHeader, Button, Input } from '../../components/common';
+import { annotationApi, inferenceApi, samApi } from '../../services/api';
+import type { AnnotationProject, SAMAnnotation, AnnotationTool, AnnotationPoint, AnnotationBox, AnnotationMask, ClassSuggestion } from '../../types';
+import { AnnotationCanvas, AnnotationToolbar, AnnotationPanel } from '../../components/Annotation';
 
 export const Annotation: React.FC = () => {
   const [projects, setProjects] = useState<AnnotationProject[]>([]);
@@ -9,6 +10,10 @@ export const Annotation: React.FC = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [selectedProject, setSelectedProject] = useState<AnnotationProject | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [projectImages, setProjectImages] = useState<{ name: string; url: string }[]>([]);
+  const [loadingImages, setLoadingImages] = useState(false);
 
   // 智能标注状态
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -18,6 +23,365 @@ export const Annotation: React.FC = () => {
   const [confidence, setConfidence] = useState(0.25);
   const [showAutoLabel, setShowAutoLabel] = useState(false);
 
+  // ============ SAM 标注功能状态 ============
+  const [activeTab, setActiveTab] = useState<'yolo' | 'sam'>('yolo');
+  const [samImage, setSamImage] = useState<string | null>(null);
+  const [samImagePath, setSamImagePath] = useState<string>('');
+  const [samFile, setSamFile] = useState<File | null>(null);
+  const [samTool, setSamTool] = useState<AnnotationTool>('box');
+  const [samCurrentClass, setSamCurrentClass] = useState('person');
+  const [samClasses, setSamClasses] = useState(['person', 'car', 'dog', 'cat', 'bicycle', 'bird']);
+  const [samPoints, setSamPoints] = useState<AnnotationPoint[]>([]);
+  const [samBoxes, setSamBoxes] = useState<AnnotationBox[]>([]);
+  const [samMasks, setSamMasks] = useState<AnnotationMask[]>([]);
+  const [samAnnotations, setSamAnnotations] = useState<SAMAnnotation[]>([]);
+  const [samSelectedId, setSamSelectedId] = useState<string | null>(null);
+  const [samLoading, setSamLoading] = useState(false);
+  const [samLoaded, setSamLoaded] = useState(false);
+  const [samHistory, setSamHistory] = useState<{ points: AnnotationPoint[]; boxes: AnnotationBox[]; masks: AnnotationMask[] }[]>([]);
+  const [samHistoryIndex, setSamHistoryIndex] = useState(-1);
+  const [imgSize, setImgSize] = useState({ width: 800, height: 600 });
+
+  // 类别建议（基于检测结果）
+  const [classSuggestions, setClassSuggestions] = useState<ClassSuggestion[]>([]);
+
+  // 初始化加载 SAM 模型
+  useEffect(() => {
+    const initSAM = async () => {
+      try {
+        const res = await samApi.loadModel('vit_b');
+        setSamLoaded(res.data?.success || res.data?.data?.success || false);
+      } catch (e) {
+        console.error('SAM init failed:', e);
+      }
+    };
+    if (activeTab === 'sam') {
+      initSAM();
+    }
+  }, [activeTab]);
+
+  // 保存历史记录
+  const saveSamHistory = useCallback((newPoints: AnnotationPoint[], newBoxes: AnnotationBox[], newMasks: AnnotationMask[]) => {
+    const newHistory = samHistory.slice(0, samHistoryIndex + 1);
+    newHistory.push({ points: newPoints, boxes: newBoxes, masks: newMasks });
+    setSamHistory(newHistory);
+    setSamHistoryIndex(newHistory.length - 1);
+  }, [samHistory, samHistoryIndex]);
+
+  // 撤销
+  const handleSamUndo = useCallback(() => {
+    if (samHistoryIndex > 0) {
+      const prev = samHistory[samHistoryIndex - 1];
+      setSamPoints(prev.points);
+      setSamBoxes(prev.boxes);
+      setSamMasks(prev.masks);
+      setSamHistoryIndex(samHistoryIndex - 1);
+    }
+  }, [samHistory, samHistoryIndex]);
+
+  // 重做
+  const handleSamRedo = useCallback(() => {
+    if (samHistoryIndex < samHistory.length - 1) {
+      const next = samHistory[samHistoryIndex + 1];
+      setSamPoints(next.points);
+      setSamBoxes(next.boxes);
+      setSamMasks(next.masks);
+      setSamHistoryIndex(samHistoryIndex + 1);
+    }
+  }, [samHistory, samHistoryIndex]);
+
+  // 添加点
+  const handleSamPointAdd = useCallback((point: AnnotationPoint) => {
+    const newPoints = [...samPoints, point];
+    setSamPoints(newPoints);
+    saveSamHistory(newPoints, samBoxes, samMasks);
+  }, [samPoints, samBoxes, samMasks, saveSamHistory]);
+
+  // 添加框
+  const handleSamBoxAdd = useCallback(async (box: AnnotationBox) => {
+    const newBoxes = [...samBoxes, box];
+    setSamBoxes(newBoxes);
+
+    // 调用 SAM 框选分割
+    if (samLoaded && samImagePath) {
+      setSamLoading(true);
+      try {
+        const res = await samApi.predictBox([box.x1, box.y1, box.x2, box.y2]);
+        const result = res.data?.data || res.data;
+        if (result?.success && result.masks?.length > 0) {
+          const newMasks = [...samMasks, {
+            polygons: result.masks[0],
+            color: getRandomColor()
+          }];
+          setSamMasks(newMasks);
+          saveSamHistory(samPoints, newBoxes, newMasks);
+        }
+      } catch (e) {
+        console.error('SAM predict failed:', e);
+      } finally {
+        setSamLoading(false);
+      }
+    } else {
+      saveSamHistory(samPoints, newBoxes, samMasks);
+    }
+  }, [samBoxes, samMasks, samPoints, samLoaded, samImagePath, saveSamHistory]);
+
+  // 清除
+  const handleSamClear = useCallback(() => {
+    setSamPoints([]);
+    setSamBoxes([]);
+    setSamMasks([]);
+    setSamAnnotations([]);
+    saveSamHistory([], [], []);
+  }, [saveSamHistory]);
+
+  // 自动标注
+  const handleSamAutoLabel = useCallback(async () => {
+    if (!samFile) return;
+
+    setSamLoading(true);
+    try {
+      // 使用批量同类标注 - 传入文件对象
+      const res = await samApi.batchSamLabel(samFile, samCurrentClass);
+      const result = res.data?.data || res.data;
+
+      if (result?.success) {
+        setSamAnnotations(result.annotations || []);
+
+        // 生成掩码显示
+        const newMasks = (result.annotations || []).map((ann: SAMAnnotation, idx: number) => ({
+          polygons: ann.segmentation?.split(' ').map(Number) || [],
+          color: getRandomColor(),
+        }));
+        setSamMasks(newMasks);
+        saveSamHistory(samPoints, samBoxes, newMasks);
+
+        // 更新类别建议
+        const classCounts: Record<string, number> = {};
+        const colors: Record<string, string> = {};
+        (result.annotations || []).forEach((ann: SAMAnnotation) => {
+          classCounts[ann.class] = (classCounts[ann.class] || 0) + 1;
+          if (!colors[ann.class]) {
+            colors[ann.class] = getRandomColor();
+          }
+        });
+
+        const suggestions: ClassSuggestion[] = Object.entries(classCounts).map(([name, count]) => ({
+          name,
+          count,
+          color: colors[name],
+        }));
+
+        setClassSuggestions(suggestions);
+
+        // 自动添加未存在的类别
+        Object.keys(classCounts).forEach(cls => {
+          if (!samClasses.includes(cls)) {
+            setSamClasses(prev => [...prev, cls]);
+          }
+        });
+      } else {
+        alert(result?.message || '标注失败');
+      }
+    } catch (e) {
+      console.error('Auto label failed:', e);
+      alert('标注失败，请重试');
+    } finally {
+      setSamLoading(false);
+    }
+  }, [samFile, samCurrentClass, samPoints, samBoxes, samClasses, saveSamHistory]);
+
+  // 处理 SAM 图片上传
+  const handleSamFileSelect = async (files: File[]) => {
+    if (files.length === 0) return;
+    const file = files[0];
+    const imageUrl = URL.createObjectURL(file);
+    setSamImage(imageUrl);
+    setSamImagePath(file.name);
+    setSamFile(file);
+
+    // 获取图片尺寸
+    const img = new Image();
+    img.onload = () => {
+      setImgSize({ width: img.width, height: img.height });
+    };
+    img.src = imageUrl;
+  };
+
+  // 删除标注
+  const handleSamDelete = (id: string) => {
+    const idx = parseInt(id);
+    const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
+    setSamAnnotations(newAnnotations);
+  };
+
+  // 类别修改
+  const handleSamClassChange = (id: string, newClass: string) => {
+    const idx = parseInt(id);
+    setSamAnnotations(samAnnotations.map((a, i) => i === idx ? { ...a, class: newClass } : a));
+  };
+
+  // 随机颜色
+  const getRandomColor = () => {
+    const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+    return colors[Math.floor(Math.random() * colors.length)];
+  };
+
+  // 导出
+  const handleSamExport = () => {
+    console.log('导出标注:', samAnnotations);
+    // 可以调用导出 API
+    alert(`已导出 ${samAnnotations.length} 个标注到 YOLO 格式`);
+  };
+
+  // 添加新类别
+  const handleAddClass = (className: string) => {
+    if (!samClasses.includes(className)) {
+      setSamClasses([...samClasses, className]);
+      setSamCurrentClass(className);
+    }
+  };
+
+  // 删除选中的标注
+  const handleDeleteSelected = () => {
+    if (samSelectedId) {
+      const idx = parseInt(samSelectedId);
+      const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
+      setSamAnnotations(newAnnotations);
+      setSamSelectedId(null);
+    }
+  };
+
+  // 保存标注
+  const handleSave = async () => {
+    if (!selectedProject) {
+      alert('请先选择一个项目');
+      return;
+    }
+
+    if (!samFile || !samAnnotations.length) {
+      alert('没有可保存的标注');
+      return;
+    }
+
+    try {
+      // 1. 上传图片到项目
+      const uploadRes = await annotationApi.addImages(selectedProject.id || selectedProject.name, [samFile]);
+      console.log('图片上传结果:', uploadRes);
+
+      if (!uploadRes.data?.success && !uploadRes.data?.data?.success) {
+        alert('图片上传失败: ' + (uploadRes.data?.message || '未知错误'));
+        return;
+      }
+
+      // 2. 保存标注
+      const imageName = samFile.name;
+      const annotationsToSave = samAnnotations.map(ann => ({
+        class: ann.class,
+        class_id: ann.class_id,
+        bbox: ann.bbox,
+        segmentation: ann.segmentation,
+        confidence: ann.confidence,
+      }));
+
+      const saveRes = await annotationApi.saveAnnotations(
+        selectedProject.id || selectedProject.name,
+        imageName,
+        annotationsToSave
+      );
+
+      console.log('标注保存结果:', saveRes);
+
+      if (saveRes.data?.success || saveRes.data?.data?.success) {
+        alert(`成功保存 ${samAnnotations.length} 个标注到项目 "${selectedProject.name}"`);
+        // 刷新项目图片列表
+        const projectId = selectedProject.id || selectedProject.name;
+        const res = await annotationApi.getImages(projectId);
+        const data = res.data?.images || res.data?.data?.images || [];
+        setProjectImages(data);
+      } else {
+        alert('保存标注失败: ' + (saveRes.data?.message || '未知错误'));
+      }
+    } catch (error) {
+      console.error('保存失败:', error);
+      alert('保存失败，请重试');
+    }
+  };
+
+  // 键盘快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 如果正在输入，不触发快捷键
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // 快捷键处理
+      if (activeTab === 'sam') {
+        // Ctrl+Z: 撤销
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+          e.preventDefault();
+          handleSamUndo();
+        }
+        // Ctrl+Y: 重做
+        else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+          e.preventDefault();
+          handleSamRedo();
+        }
+        // Delete: 删除选中
+        else if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (samSelectedId) {
+            e.preventDefault();
+            handleDeleteSelected();
+          }
+        }
+        // P: 点标注
+        else if (e.key === 'p' || e.key === 'P') {
+          e.preventDefault();
+          setSamTool('point');
+        }
+        // B: 框选
+        else if (e.key === 'b' || e.key === 'B') {
+          e.preventDefault();
+          setSamTool('box');
+        }
+        // S: 选择
+        else if (e.key === 's' || e.key === 'S') {
+          if (!e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            setSamTool('select');
+          }
+        }
+        // A: 自动标注
+        else if (e.key === 'a' || e.key === 'A') {
+          if (!e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            handleSamAutoLabel();
+          }
+        }
+        // L: 多边形
+        else if (e.key === 'l' || e.key === 'L') {
+          e.preventDefault();
+          setSamTool('polygon');
+        }
+        // 数字键 1-9: 快速选择类别
+        else if (e.key >= '1' && e.key <= '9') {
+          const idx = parseInt(e.key) - 1;
+          if (idx < samClasses.length) {
+            setSamCurrentClass(samClasses[idx]);
+          }
+        }
+        // Esc: 取消选择
+        else if (e.key === 'Escape') {
+          setSamSelectedId(null);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, samSelectedId, samClasses, handleSamUndo, handleSamRedo, handleDeleteSelected, handleSamAutoLabel]);
+
   useEffect(() => {
     loadProjects();
   }, []);
@@ -25,7 +389,8 @@ export const Annotation: React.FC = () => {
   const loadProjects = async () => {
     try {
       const res = await annotationApi.listProjects();
-      setProjects(res.data?.data || res.data || []);
+      const data = res.data?.data || res.data;
+      setProjects(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error(error);
     } finally {
@@ -46,6 +411,62 @@ export const Annotation: React.FC = () => {
       loadProjects();
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  // 删除项目
+  const handleDeleteProject = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('确定要删除这个标注项目吗？此操作不可恢复。')) {
+      return;
+    }
+    setDeletingId(id);
+    try {
+      await annotationApi.deleteProject(id);
+      setProjects(projects.filter(p => p.id !== id));
+      if (selectedProject?.id === id) {
+        setSelectedProject(null);
+      }
+    } catch (error) {
+      console.error('删除项目失败:', error);
+      alert('删除项目失败，请重试');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // 选择项目
+  const handleSelectProject = async (project: AnnotationProject) => {
+    setSelectedProject(project);
+    setActiveTab('sam');
+
+    // 如果项目有预定义类别，加载它们
+    if (project.classes && project.classes.length > 0) {
+      setSamClasses(project.classes);
+      setSamCurrentClass(project.classes[0]);
+    }
+
+    // 清除当前标注状态
+    setSamPoints([]);
+    setSamBoxes([]);
+    setSamMasks([]);
+    setSamAnnotations([]);
+    setSamImage(null);
+    setSamImagePath('');
+    setSamFile(null);
+
+    // 加载项目图片
+    setLoadingImages(true);
+    try {
+      const projectId = project.id || project.name;
+      const res = await annotationApi.getImages(projectId);
+      const data = res.data?.images || res.data?.data?.images || [];
+      setProjectImages(data);
+    } catch (error) {
+      console.error('加载项目图片失败:', error);
+      setProjectImages([]);
+    } finally {
+      setLoadingImages(false);
     }
   };
 
@@ -76,7 +497,7 @@ export const Annotation: React.FC = () => {
         confidence
       );
 
-      const result = res.data?.data || res.data;
+      const result = res.data?.data || res.data as any;
       if (result && result.detections) {
         setAutoLabelResult({
           success: true,
@@ -295,7 +716,24 @@ export const Annotation: React.FC = () => {
 
       {/* 项目列表 */}
       <Card>
-        <CardHeader icon="✏️" title="标注项目列表" />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+          <CardHeader icon="✏️" title="标注项目列表" />
+          <button
+            onClick={loadProjects}
+            disabled={loading}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid #e2e8f0',
+              borderRadius: '6px',
+              background: '#fff',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              fontSize: '13px',
+            }}
+            title="刷新列表"
+          >
+            {loading ? '⏳' : '🔄'}
+          </button>
+        </div>
         {loading ? (
           <p style={{ color: 'var(--text-secondary)' }}>加载中...</p>
         ) : projects.length === 0 ? (
@@ -310,8 +748,38 @@ export const Annotation: React.FC = () => {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
             {projects.map((project) => (
-              <Card key={project.id} variant="elevated">
-                <h3 style={{ fontWeight: 600, marginBottom: 'var(--space-1)' }}>{project.name}</h3>
+              <div
+                key={project.id}
+                onClick={() => handleSelectProject(project)}
+                style={{
+                  padding: '16px',
+                  borderRadius: '8px',
+                  border: selectedProject?.id === project.id ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                  background: selectedProject?.id === project.id ? '#eff6ff' : '#fff',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <h3 style={{ fontWeight: 600, marginBottom: 'var(--space-1)', fontSize: '16px' }}>{project.name}</h3>
+                  <button
+                    onClick={(e) => handleDeleteProject(project.id!, e)}
+                    disabled={deletingId === project.id}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      cursor: deletingId === project.id ? 'not-allowed' : 'pointer',
+                      padding: '4px',
+                      borderRadius: '4px',
+                      color: '#94a3b8',
+                      fontSize: '16px',
+                    }}
+                    title="删除项目"
+                  >
+                    {deletingId === project.id ? '⏳' : '🗑️'}
+                  </button>
+                </div>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: 'var(--space-3)' }}>
                   {project.description || '无描述'}
                 </p>
@@ -320,11 +788,216 @@ export const Annotation: React.FC = () => {
                   {project.classes && <p>类别数: {project.classes.length}</p>}
                 </div>
                 <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                  <Button variant="primary" size="sm">开始标注</Button>
-                  <Button variant="secondary" size="sm">自动标注</Button>
+                  <Button
+                    variant={selectedProject?.id === project.id ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectProject(project);
+                    }}
+                  >
+                    {selectedProject?.id === project.id ? '已选中' : '开始标注'}
+                  </Button>
                 </div>
-              </Card>
+              </div>
             ))}
+          </div>
+        )}
+      </Card>
+
+      {/* SAM 分割标注 */}
+      <Card style={{ marginTop: 'var(--space-6)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+          <CardHeader icon="✂️" title="SAM 分割标注" />
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <button
+              onClick={() => setActiveTab('yolo')}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                background: activeTab === 'yolo' ? '#3b82f6' : '#f1f5f9',
+                color: activeTab === 'yolo' ? '#fff' : '#475569',
+                cursor: 'pointer',
+                fontWeight: 500,
+              }}
+            >
+              YOLO 预标注
+            </button>
+            <button
+              onClick={() => setActiveTab('sam')}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                background: activeTab === 'sam' ? '#3b82f6' : '#f1f5f9',
+                color: activeTab === 'sam' ? '#fff' : '#475569',
+                cursor: 'pointer',
+                fontWeight: 500,
+              }}
+            >
+              SAM 分割
+            </button>
+          </div>
+        </div>
+
+        {activeTab === 'sam' && (
+          <div>
+            {/* 项目信息 */}
+            {selectedProject && (
+              <div style={{
+                padding: '12px 16px',
+                background: '#f0f9ff',
+                borderRadius: '8px',
+                marginBottom: '16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <div>
+                  <span style={{ fontWeight: 600, color: '#0369a1' }}>
+                    当前项目: {selectedProject.name}
+                  </span>
+                  <span style={{ marginLeft: '16px', color: '#64748b', fontSize: '13px' }}>
+                    {projectImages.length} 张已标注图片
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedProject(null);
+                    setSamImage(null);
+                    setSamImagePath('');
+                    setSamFile(null);
+                    setSamAnnotations([]);
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '6px',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                  }}
+                >
+                  关闭项目
+                </button>
+              </div>
+            )}
+
+            {/* 项目图片列表 */}
+            {selectedProject && projectImages.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <h4 style={{ fontSize: '14px', marginBottom: '8px', color: '#64748b' }}>已标注图片:</h4>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxHeight: '120px', overflowX: 'auto' }}>
+                  {projectImages.map((img, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        width: '80px',
+                        height: '80px',
+                        borderRadius: '6px',
+                        overflow: 'hidden',
+                        border: '2px solid #e2e8f0',
+                        cursor: 'pointer',
+                      }}
+                      title={img.name}
+                    >
+                      <img
+                        src={img.url}
+                        alt={img.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 工具栏 */}
+            <AnnotationToolbar
+              tool={samTool}
+              currentClass={samCurrentClass}
+              classes={samClasses}
+              suggestions={classSuggestions}
+              onToolChange={setSamTool}
+              onClassChange={setSamCurrentClass}
+              onAddClass={handleAddClass}
+              onAutoLabel={handleSamAutoLabel}
+              onClear={handleSamClear}
+              onUndo={handleSamUndo}
+              onRedo={handleSamRedo}
+              onDeleteSelected={handleDeleteSelected}
+              onSave={handleSave}
+              loading={samLoading}
+            />
+
+            {/* 主工作区 */}
+            <div style={{ display: 'flex', gap: '24px', marginTop: '24px' }}>
+              {/* 画布区域 */}
+              <div style={{ flex: 1 }}>
+                {samImage ? (
+                  <AnnotationCanvas
+                    image={samImage}
+                    width={imgSize.width}
+                    height={imgSize.height}
+                    points={samPoints}
+                    boxes={samBoxes}
+                    masks={samMasks}
+                    annotations={samAnnotations}
+                    tool={samTool}
+                    selectedId={samSelectedId}
+                    onPointAdd={handleSamPointAdd}
+                    onBoxAdd={handleSamBoxAdd}
+                    onMaskSelect={(idx) => setSamSelectedId(String(idx))}
+                    onAnnotationSelect={setSamSelectedId}
+                  />
+                ) : (
+                  <div style={{
+                    width: '100%',
+                    height: '400px',
+                    border: '2px dashed #e2e8f0',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: '#f8fafc',
+                  }}>
+                    <label style={{ cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '16px' }}>📁</div>
+                      <div>点击或拖拽上传图片</div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleSamFileSelect(e.target.files ? Array.from(e.target.files) : [])}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* 标注面板 */}
+              <AnnotationPanel
+                annotations={samAnnotations}
+                selectedId={samSelectedId}
+                onSelect={setSamSelectedId}
+                onDelete={handleSamDelete}
+                onClassChange={handleSamClassChange}
+                onExport={handleSamExport}
+                classes={samClasses}
+              />
+            </div>
+
+            {/* 说明 */}
+            <div style={{ marginTop: '24px', color: '#64748b', fontSize: '14px' }}>
+              <p><strong>使用说明:</strong></p>
+              <ul>
+                <li>点击图片添加正样本点 (绿色 +)</li>
+                <li>Shift + 点击添加负样本点 (红色 -)</li>
+                <li>选择框选工具拖动画框进行分割</li>
+                <li>选择自动标注并指定类别进行批量标注</li>
+              </ul>
+            </div>
           </div>
         )}
       </Card>

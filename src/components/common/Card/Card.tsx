@@ -5,6 +5,8 @@ interface CardProps {
   children: React.ReactNode;
   variant?: 'default' | 'elevated' | 'highlight';
   className?: string;
+  style?: React.CSSProperties;
+  onClick?: () => void;
 }
 
 interface CardHeaderProps {
@@ -13,11 +15,11 @@ interface CardHeaderProps {
   action?: React.ReactNode;
 }
 
-export const Card: React.FC<CardProps> = ({ children, variant = 'default', className = '' }) => {
+export const Card: React.FC<CardProps> = ({ children, variant = 'default', className = '', style, onClick }) => {
   const classes = [styles.card, variant !== 'default' && styles[variant], className]
     .filter(Boolean)
     .join(' ');
-  return <div className={classes}>{children}</div>;
+  return <div className={classes} style={style} onClick={onClick}>{children}</div>;
 };
 
 export const CardHeader: React.FC<CardHeaderProps> = ({ title, icon, action }) => (

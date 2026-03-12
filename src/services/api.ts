@@ -3,7 +3,7 @@ import type { ApiResponse, SystemInfo, Dataset, DatasetUploadResponse, Model, Tr
 
 const api: AxiosInstance = axios.create({
   baseURL: '/api/v1',
-  timeout: 60000,
+  timeout: 300000, // 5分钟超时
   headers: {
     'Content-Type': 'application/json',
   },
@@ -72,8 +72,8 @@ export const modelApi = {
   delete: (id: string) => api.delete(`/training/models/${id}`),
   // 获取已加载到内存的模型列表
   getLoadedModels: () => api.get<ApiResponse<{ models: any[]; total: number }>>('/models/loaded'),
-  // 预加载模型到内存
-  loadModel: (modelName: string, device: string = 'cpu') =>
+  // 预加载模型到内存（默认自动检测GPU）
+  loadModel: (modelName: string, device: string = 'auto') =>
     api.post<ApiResponse<{ success: boolean; message: string }>>('/models/load', {
       model_name: modelName,
       device: device,
@@ -271,34 +271,13 @@ export const solutionsApi = {
     api.post('/solutions/object-counting', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
-  // 热力图（异步任务，需要轮询）
+  // 热力图（同步处理）
   heatmap: async (formData: FormData) => {
-    // 提交任务
+    // 直接提交任务，等待同步结果
     const response = await api.post('/solutions/heatmap', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
-    const taskId = response.data?.task_id;
-    if (!taskId) {
-      return response;
-    }
-
-    // 轮询等待完成
-    const maxAttempts = 300; // 最多5分钟
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      try {
-        const statusResponse = await api.get(`/solutions/heatmap/status/${taskId}`);
-        const status = statusResponse.data;
-        if (status.status === 'completed') {
-          return { data: { success: true, ...status } };
-        } else if (status.status === 'failed') {
-          return { data: { success: false, message: status.message || '处理失败' } };
-        }
-      } catch (e) {
-        // 继续轮询
-      }
-    }
-    return { data: { success: false, message: '处理超时' } };
+    return response;
   },
   speedEstimation: (formData: FormData) =>
     api.post('/solutions/speed-estimation', formData, {
