@@ -4,9 +4,13 @@
 """
 import cv2
 import numpy as np
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+
+# 创建日志记录器
+logger = logging.getLogger(__name__)
 
 try:
     from ultralytics import YOLO, solutions
@@ -116,11 +120,16 @@ class SolutionsService:
             raise ImportError("Ultralytics YOLO is not installed")
 
         self.models: Dict[str, YOLO] = {}
+        # 默认使用 GPU（如果可用）
+        import torch
+        self.default_device = "0" if torch.cuda.is_available() else "cpu"
+        logger.info(f"[解决方案] 默认设备: {self.default_device}")
 
     def load_model(self, model_name: str = None) -> 'YOLO':
-        """加载模型"""
+        """加载模型，优先使用 GPU"""
         from backend.core.yolo_engine import yolo_engine
-        return yolo_engine.load_model(model_name)
+        # 优先使用 GPU
+        return yolo_engine.load_model(model_name, device=self.default_device)
 
     def list_solutions(self) -> List[Dict[str, Any]]:
         """列出所有解决方案"""
@@ -140,20 +149,28 @@ class SolutionsService:
         self,
         source: str,
         model_name: str = None,
+        region_type: str = "polygon",
         region_points: List[Tuple] = None,
         show_in: bool = True,
         show_out: bool = True,
         classes: List[int] = None,
         conf: float = 0.25,
+        line_width: int = 2,
         output_path: str = None
     ) -> Dict[str, Any]:
-        """对象计数"""
+        """对象计数 - 支持区域计数和分类统计"""
         try:
             model = self.load_model(model_name)
             model_path = get_model_path(model)
 
+            # 根据区域类型设置默认区域
             if region_points is None:
-                region_points = [(20, 400), (1260, 400), (1260, 360), (20, 360)]
+                if region_type == "line":
+                    # 直线模式 - 用于进出计数
+                    region_points = [(20, 400), (1260, 400)]
+                else:
+                    # 多边形模式 - 用于区域计数
+                    region_points = [(20, 400), (1260, 400), (1260, 360), (20, 360)]
 
             counter = solutions.ObjectCounter(
                 show=False,
@@ -162,7 +179,7 @@ class SolutionsService:
                 classes=classes,
                 show_in=show_in,
                 show_out=show_out,
-                line_width=2
+                line_width=line_width
             )
 
             cap = cv2.VideoCapture(source)
@@ -313,9 +330,11 @@ class SolutionsService:
         region_points: List[Tuple] = None,
         classes: List[int] = None,
         conf: float = 0.25,
+        pixel_to_meter: float = 10,
+        line_width: int = 2,
         output_path: str = None
     ) -> Dict[str, Any]:
-        """速度估算"""
+        """速度估算 - 参考 Ultralytics 官方文档"""
         try:
             model = self.load_model(model_name)
             model_path = get_model_path(model)
@@ -348,8 +367,9 @@ class SolutionsService:
                 result = speed_estimator(frame)
                 frame_count += 1
 
-                if hasattr(result, 'speed_dict'):
-                    speeds.append(result.speed_dict)
+                # speed 是整体速度，speed_dict 是每个跟踪对象的速度
+                if hasattr(result, 'speed'):
+                    speeds.append(result.speed)
 
                 if output_path:
                     out.write(frame)
@@ -373,12 +393,21 @@ class SolutionsService:
         image_path: str,
         model_name: str = None,
         classes: List[int] = None,
-        conf: float = 0.25
+        conf: float = 0.25,
+        max_connections: int = 5  # 最多显示的连接数
     ) -> Dict[str, Any]:
         """距离计算"""
         try:
             model = self.load_model(model_name)
             img = cv2.imread(image_path)
+
+            # 获取图片尺寸，用于自适应调整绘制参数
+            img_height, img_width = img.shape[:2]
+            # 根据图片尺寸计算线条粗细和字体大小
+            scale_factor = max(img_width, img_height) / 1000  # 基准尺寸
+            line_width = max(2, int(2 * scale_factor))  # 线条粗细
+            font_scale = max(0.6, 0.8 * scale_factor)  # 字体大小
+            text_thickness = max(2, int(2 * scale_factor))  # 文字线条粗细
 
             results = model.predict(source=img, conf=conf, classes=classes, verbose=False)
 
@@ -386,28 +415,80 @@ class SolutionsService:
                 return {"success": False, "message": "需要至少检测到2个对象", "distances": []}
 
             boxes = results[0].boxes
+            num_objects = len(boxes)
+
+            # 创建带透明通道的图片用于绘制半透明线条
+            img_overlay = img.copy()
+
             centroids = []
-            for box in boxes:
+            # 绘制每个检测对象的中心点和边框
+            for idx, box in enumerate(boxes):
                 xyxy = box.xyxy[0].cpu().numpy()
                 cx = int((xyxy[0] + xyxy[2]) / 2)
                 cy = int((xyxy[1] + xyxy[3]) / 2)
                 centroids.append((cx, cy))
+                # 绘制检测框 - 黄色
+                x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 255), line_width)
+                # 绘制中心点 - 黄色实心圆
+                cv2.circle(img, (cx, cy), max(4, int(6 * scale_factor)), (0, 255, 255), -1)
+                # 在中心点旁边标注序号
+                cv2.putText(img, str(idx + 1), (cx + 8, cy + 5), cv2.FONT_HERSHEY_SIMPLEX,
+                           font_scale * 0.7, (0, 255, 255), text_thickness)
 
-            distances = []
-            annotator = Annotator(img, line_width=2)
-
+            # 计算所有距离对
+            all_distances = []
             for i in range(len(centroids)):
                 for j in range(i + 1, len(centroids)):
                     p1, p2 = centroids[i], centroids[j]
                     distance = np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
-                    distances.append({
-                        "object1_index": i,
-                        "object2_index": j,
-                        "pixel_distance": float(distance)
+                    all_distances.append({
+                        "object1_index": i + 1,
+                        "object2_index": j + 1,
+                        "pixel_distance": float(distance),
+                        "p1": p1,
+                        "p2": p2
                     })
-                    cv2.line(img, p1, p2, (0, 255, 0), 2)
-                    mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2)
-                    cv2.putText(img, f"{distance:.1f}px", mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            # 按距离排序，只显示最近的几对
+            all_distances.sort(key=lambda x: x["pixel_distance"])
+            connections_to_show = all_distances[:max_connections]
+
+            # 使用半透明线条绘制连接线
+            for conn in connections_to_show:
+                p1, p2 = conn["p1"], conn["p2"]
+                # 绘制半透明粗线作为底色
+                cv2.line(img_overlay, p1, p2, (255, 0, 255), line_width * 3)
+                # 绘制实线
+                cv2.line(img_overlay, p1, p2, (180, 0, 180), line_width)
+
+            # 混合透明层
+            alpha = 0.6
+            img = cv2.addWeighted(img_overlay, alpha, img, 1 - alpha, 0)
+
+            # 在原图上绘制文字标签（不旋转）
+            for conn in connections_to_show:
+                p1, p2 = conn["p1"], conn["p2"]
+                distance = conn["pixel_distance"]
+                mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2)
+
+                # 绘制距离文字背景（半透明黑色矩形）
+                text = f"{int(distance)}px"
+                (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness)
+                bg_x1 = mid[0] - text_w // 2 - 8
+                bg_y1 = mid[1] - text_h - 8
+                bg_x2 = mid[0] + text_w // 2 + 8
+                bg_y2 = mid[1] + 8
+                # 确保背景框在图像范围内
+                bg_x1, bg_y1 = max(0, bg_x1), max(0, bg_y1)
+                bg_x2, bg_y2 = min(img_width, bg_x2), min(img_height, bg_y2)
+                # 绘制半透明背景
+                overlay = img.copy()
+                cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+                img = cv2.addWeighted(overlay, 0.7, img, 0.3, 0)
+                # 绘制文字 - 亮黄色
+                cv2.putText(img, text, (bg_x1 + 5, bg_y1 + text_h + 5),
+                          cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), text_thickness)
 
             output_path = str(settings.UPLOADS_DIR / f"distance_{Path(image_path).name}")
             cv2.imwrite(output_path, img)
@@ -415,7 +496,7 @@ class SolutionsService:
             return {
                 "success": True,
                 "message": "距离计算完成",
-                "distances": distances,
+                "distances": all_distances,
                 "output_image": output_path
             }
         except Exception as e:
@@ -533,9 +614,10 @@ class SolutionsService:
         region_points: List[Tuple] = None,
         classes: List[int] = None,
         conf: float = 0.25,
+        line_width: int = 2,
         output_path: str = None
     ) -> Dict[str, Any]:
-        """队列管理"""
+        """队列管理 - 参考 Ultralytics 官方文档"""
         try:
             model = self.load_model(model_name)
             model_path = get_model_path(model)

@@ -56,7 +56,9 @@ class ProjectService:
         self,
         name: str,
         description: str = "",
-        cover_image: str = None
+        cover_image: str = None,
+        task_type: str = "detect",
+        settings: dict = None
     ) -> Dict[str, Any]:
         """
         创建新项目
@@ -65,6 +67,8 @@ class ProjectService:
             name: 项目名称
             description: 项目描述
             cover_image: 封面图片路径
+            task_type: 任务类型
+            settings: 项目设置
 
         Returns:
             创建的项目信息
@@ -86,6 +90,11 @@ class ProjectService:
         (project_dir / "exports").mkdir(exist_ok=True)
         (project_dir / "activity").mkdir(exist_ok=True)
 
+        # 合并设置
+        project_settings = self._default_settings()
+        if settings:
+            project_settings.update(settings)
+
         # 保存项目信息
         project_info = {
             "id": project_id,
@@ -93,10 +102,11 @@ class ProjectService:
             "slug": project_slug,
             "description": description,
             "cover_image": cover_image,
+            "task_type": task_type,
             "status": ProjectStatus.ACTIVE.value,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "settings": self._default_settings()
+            "settings": project_settings
         }
 
         self._save_project_json(project_dir, project_info)

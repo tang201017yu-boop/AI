@@ -516,6 +516,95 @@ class SAMService:
             "total_annotations": total_annotations
         }
 
+    def batch_sam_label(
+        self,
+        image_path: str,
+        class_name: str,
+        model_name: str = "yolo11n.pt",
+        confidence: float = 0.25
+    ) -> Dict[str, Any]:
+        """
+        批量 SAM 标注 - 针对特定类别的所有对象
+
+        Args:
+            image_path: 图片路径
+            class_name: 类别名称
+            model_name: YOLO 模型
+            confidence: 置信度阈值
+
+        Returns:
+            Dict: 标注结果
+        """
+        logger.info(f"[SAM] 批量标注类别: {class_name}, 图片: {image_path}")
+
+        # 检查 SAM 模型是否加载
+        if not self.model_loaded:
+            return {"success": False, "message": "SAM 模型未加载，请先加载模型"}
+
+        # 设置图片
+        set_result = self.set_image(image_path)
+        if not set_result.get("success"):
+            return set_result
+
+        # 检查图片是否设置成功
+        if self.current_image is None:
+            return {"success": False, "message": "图片加载失败"}
+
+        # 使用 YOLO 检测
+        try:
+            from backend.core.yolo_engine import yolo_engine
+            result = yolo_engine.infer(
+                image_path=image_path,
+                model_identifier=model_name,
+                confidence=confidence
+            )
+        except Exception as e:
+            logger.error(f"[SAM] YOLO 检测失败: {str(e)}")
+            return {"success": False, "message": f"YOLO 检测失败: {str(e)}"}
+
+        if not result.get("success"):
+            return result
+
+        detections = result.get("detections", [])
+
+        # 过滤特定类别
+        filtered = [d for d in detections if d["class_name"].lower() == class_name.lower()]
+
+        logger.info(f"[SAM] 找到 {len(filtered)} 个 {class_name} 对象，共 {len(detections)} 个检测结果")
+
+        # 对每个检测结果进行 SAM 分割
+        annotations = []
+        for det in filtered:
+            bbox = det["bbox"]
+            seg_result = self.predict_box(bbox)
+
+            if seg_result.get("success") and seg_result.get("masks"):
+                yolo_seg = self._polygons_to_yolo_format(
+                    seg_result["masks"],
+                    self.current_image.shape[1],
+                    self.current_image.shape[0]
+                )
+
+                annotations.append({
+                    "class": det["class_name"],
+                    "class_id": det["class_id"],
+                    "bbox": bbox,
+                    "segmentation": yolo_seg,
+                    "confidence": det["confidence"],
+                    "segment_score": seg_result.get("score", 0)
+                })
+
+        preview = self._generate_annotation_preview(annotations)
+
+        return {
+            "success": True,
+            "message": f"找到 {len(annotations)} 个 {class_name} 对象",
+            "class_name": class_name,
+            "annotations": annotations,
+            "preview_image": preview,
+            "total": len(annotations)
+        }
+
     def export_yolo_format(
         self,
         annotations: List[Dict],

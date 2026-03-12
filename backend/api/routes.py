@@ -456,19 +456,24 @@ async def get_loaded_models():
 @router.post("/models/load")
 async def load_model_to_memory(
     model_name: str = Form(...),
-    device: str = Form("cpu")
+    device: str = Form(None)
 ):
     """预加载模型到内存"""
     if not yolo_engine:
         raise HTTPException(status_code=500, detail="YOLO engine not available")
 
     try:
+        # 自动检测设备
+        if device is None or device == "":
+            device = "auto"
         model = yolo_engine.load_model(model_name, device)
+        # 获取实际使用的设备
+        actual_device = yolo_engine.default_device if device == "auto" else device
         return {
             "success": True,
-            "message": f"模型 {model_name} 已加载到内存",
+            "message": f"模型 {model_name} 已加载到内存（设备: {actual_device}）",
             "model_name": model_name,
-            "device": device
+            "device": actual_device
         }
     except Exception as e:
         logger.error(f"[API] 加载模型失败: {str(e)}")
@@ -946,7 +951,9 @@ async def solution_speed_estimation(
     model_name: Optional[str] = Form(None),
     region_points: Optional[str] = Form(None),
     classes: Optional[str] = Form(None),
-    conf: float = Form(0.25)
+    conf: float = Form(0.25),
+    pixel_to_meter: float = Form(10),
+    line_width: int = Form(2)
 ):
     """速度估算 - 计算对象移动速度"""
     if not solutions_service:
@@ -988,6 +995,8 @@ async def solution_speed_estimation(
             region_points=region,
             classes=class_list,
             conf=conf,
+            pixel_to_meter=pixel_to_meter,
+            line_width=line_width,
             output_path=output_path
         )
 

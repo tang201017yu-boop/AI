@@ -114,6 +114,11 @@ class YOLOService:
             if not root.exists():
                 continue
             for path in root.glob("**/*.pt"):
+                # 过滤掉训练过程中的中间检查点文件
+                filename = path.name.lower()
+                if filename.startswith('epoch') or filename in ['best.pt', 'last.pt', 'best_full.pt']:
+                    continue
+
                 try:
                     resolved = path.resolve()
                 except FileNotFoundError:

@@ -217,12 +217,6 @@ async def save_image_annotation(
     return annotation_service.save_annotation(project_name, image_name, ann_list)
 
 
-@router.get("/annotation/tasks")
-async def get_task_types():
-    """获取支持的标注任务类型"""
-    return {"success": True, "tasks": annotation_service.TASK_TYPES}
-
-
 @router.post("/annotation/export/{project_name}")
 async def export_dataset(project_name: str, format: str = "yolo"):
     """导出数据集"""
@@ -327,6 +321,52 @@ async def batch_auto_label(
     result = sam_service.batch_auto_label(img_list, class_list, model_name, confidence)
 
     return result
+
+
+@router.post("/sam/batch-sam-label")
+async def batch_sam_label(
+    file: UploadFile = File(...),
+    class_name: str = Form(...),
+    model_name: str = Form("yolo11n.pt"),
+    confidence: float = Form(0.25)
+):
+    """批量 SAM 标注 - 针对特定类别"""
+    import tempfile
+    import os
+
+    # 保存上传的文件到临时目录
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, file.filename)
+
+    try:
+        # 写入临时文件
+        content = await file.read()
+        with open(temp_path, 'wb') as f:
+            f.write(content)
+
+        # 调用 SAM 服务
+        result = sam_service.batch_sam_label(
+            image_path=temp_path,
+            class_name=class_name,
+            model_name=model_name,
+            confidence=confidence
+        )
+
+        # 清理临时文件
+        try:
+            os.remove(temp_path)
+        except:
+            pass
+
+        return result
+    except Exception as e:
+        # 清理临时文件
+        try:
+            os.remove(temp_path)
+        except:
+            pass
+        logger.error(f"[API] batch-sam-label error: {str(e)}")
+        return {"success": False, "message": str(e)}
 
 
 @router.post("/sam/export-yolo")

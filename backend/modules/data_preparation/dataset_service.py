@@ -879,15 +879,31 @@ class DatasetService:
         task_type: str
     ) -> Dict[str, Any]:
         """生成数据集信息"""
+        # 支持嵌套目录结构：dataset_name/images/train 和 dataset_name/images/val
         images_dir = dataset_dir / "images"
+
+        # 如果顶层没有 images，尝试在嵌套目录中查找（使用数据集名称作为子目录）
+        if not images_dir.exists():
+            nested_images_dir = dataset_dir / name / "images"
+            if nested_images_dir.exists():
+                images_dir = nested_images_dir
+
         labels_dir = dataset_dir / "labels"
 
-        # 统计图片数量
+        # 如果顶层没有 labels，尝试在嵌套目录中查找
+        if not labels_dir.exists():
+            nested_labels_dir = dataset_dir / name / "labels"
+            if nested_labels_dir.exists():
+                labels_dir = nested_labels_dir
+
+        # 统计图片数量 - 支持 train/val 子目录
         image_count = 0
         class_counts: Dict[str, int] = {}
 
-        for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
-            image_count += len(list(images_dir.rglob(ext)))
+        if images_dir.exists():
+            for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
+                # 递归查找所有图片（包括子目录 train/val）
+                image_count += len(list(images_dir.rglob(ext)))
 
         # 读取 YAML 配置获取类别
         yaml_path = dataset_dir / "data.yaml"

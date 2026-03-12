@@ -1,0 +1,57 @@
+{
+  "id": "0f2f5ab5-c9d9-474e-8727-2639f5b2f120",
+  "name": "帮我检测工厂里的安全帽",
+  "requirement": "帮我检测工厂里的安全帽",
+  "understanding": {
+    "success": true,
+    "scenes": [
+      "安全帽"
+    ],
+    "threshold": 0.5,
+    "threshold_unit": null,
+    "alarm": false,
+    "alarm_type": "popup",
+    "models": [
+      "hardhat",
+      "safety",
+      "helmet"
+    ],
+    "config": {
+      "version": "1.0",
+      "created_at": "2026-03-03T09:22:18.887878",
+      "detection": {
+        "scenes": [
+          "安全帽"
+        ],
+        "models": [
+          "hardhat",
+          "safety",
+          "helmet"
+        ],
+        "threshold": 0.5,
+        "iou_threshold": 0.45
+      },
+      "alarm": {
+        "enabled": false,
+        "type": "popup",
+        "conditions": [
+          {
+            "scene": "安全帽",
+            "threshold": 0.5,
+            "action": "none"
+          }
+        ]
+      },
+      "post_processing": {
+        "min_area": null,
+        "max_area": null,
+        "tracking": false
+      }
+    },
+    "explanation": "我已经理解您的需求：\n\n📍 检测场景：安全帽\n🎯 检测模型：hardhat, safety, helmet\n⚡ 置信度阈值：50%（默认值）\n🔔 报警：未启用\n\n💡 系统将自动完成以下工作：\n   1. 选择合适的AI模型\n   2. 配置检测参数\n   4. 生成可部署的检测系统\n",
+    "raw_text": "帮我检测工厂里的安全帽"
+  },
+  "status": "created",
+  "created_at": "2026-03-03T09:22:18.887907",
+  "path": "data/ai_projects/0f2f5ab5-c9d9-474e-8727-2639f5b2f120"
+}

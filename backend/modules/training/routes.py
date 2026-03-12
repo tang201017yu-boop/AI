@@ -165,9 +165,10 @@ async def get_training_status(task_id: str):
     Returns:
         训练状态信息
     """
-    logger.debug(f"[训练] 查询训练状态: task_id={task_id}")
+    logger.info(f"[训练] 查询训练状态: task_id={task_id}")
 
     result = training_service.get_training_status(task_id)
+    logger.info(f"[训练] 查询结果: {result}")
     if result["success"]:
         return result
 

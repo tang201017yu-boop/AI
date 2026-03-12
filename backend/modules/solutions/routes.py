@@ -28,37 +28,64 @@ async def list_solutions():
 async def solution_object_counting(
     file: UploadFile = File(...),
     model_name: Optional[str] = Form(None),
+    region_type: str = Form("polygon"),
     region_points: Optional[str] = Form(None),
     show_in: bool = Form(True),
     show_out: bool = Form(True),
     classes: Optional[str] = Form(None),
-    conf: float = Form(0.25)
+    conf: float = Form(0.25),
+    line_width: int = Form(2)
 ):
-    """对象计数"""
-    filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
-    file_path = settings.UPLOADS_DIR / filename
-    save_uploaded_file(file, str(file_path))
+    """对象计数 - 支持区域计数和分类统计"""
+    import traceback
+    import logging
+    logger = logging.getLogger(__name__)
 
-    region = json.loads(region_points) if region_points else None
-    class_list = json.loads(classes) if classes else None
+    try:
+        logger.info(f"[object-counting] Received request, region_points={region_points}, classes={classes}")
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+        logger.info(f"[object-counting] File saved: {file_path}")
 
-    output_path = str(settings.UPLOADS_DIR / f"counted_{filename}")
+        # 解析区域坐标
+        region = None
+        if region_points:
+            try:
+                region = json.loads(region_points)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"[object-counting] Failed to parse region_points: {e}")
 
-    result = solutions_service.object_counting(
-        source=str(file_path),
-        model_name=model_name,
-        region_points=region,
-        show_in=show_in,
-        show_out=show_out,
-        classes=class_list,
-        conf=conf,
-        output_path=output_path
-    )
+        # 解析类别列表
+        class_list = None
+        if classes:
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"[object-counting] Failed to parse classes: {e}")
 
-    if result.get("output_path"):
-        result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+        output_path = str(settings.UPLOADS_DIR / f"counted_{filename}")
 
-    return result
+        result = solutions_service.object_counting(
+            source=str(file_path),
+            model_name=model_name,
+            region_type=region_type,
+            region_points=region,
+            show_in=show_in,
+            show_out=show_out,
+            classes=class_list,
+            conf=conf,
+            line_width=line_width,
+            output_path=output_path
+        )
+
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+        return result
+    except Exception as e:
+        logger.error(f"[object-counting] Error: {traceback.format_exc()}")
+        return {"success": False, "message": f"Error: {str(e)}"}
 
 
 # ==================== 热图生成 ====================
@@ -70,10 +97,13 @@ heatmap_tasks = {}
 async def solution_heatmap(
     file: UploadFile = File(...),
     model_name: Optional[str] = Form(None),
-    colormap: int = Form(2),
+    colormap: str = Form("COLORMAP_JET"),
     classes: Optional[str] = Form(None),
     conf: float = Form(0.25)
 ):
+    # 转换 colormap 名称为 OpenCV 常量
+    import cv2
+    colormap_value = getattr(cv2, colormap, cv2.COLORMAP_JET)
     """热图生成（异步）"""
     import uuid
     from concurrent.futures import ThreadPoolExecutor
@@ -96,7 +126,12 @@ async def solution_heatmap(
         "output_path": None
     }
 
-    class_list = json.loads(classes) if classes else None
+    class_list = None
+    if classes:
+        try:
+            class_list = json.loads(classes)
+        except (json.JSONDecodeError, ValueError):
+            pass
 
     # 在后台线程中执行
     def process_heatmap():
@@ -153,15 +188,27 @@ async def solution_speed_estimation(
     model_name: Optional[str] = Form(None),
     region_points: Optional[str] = Form(None),
     classes: Optional[str] = Form(None),
-    conf: float = Form(0.25)
+    conf: float = Form(0.25),
+    pixel_to_meter: float = Form(10),
+    line_width: int = Form(2)
 ):
     """速度估算"""
     filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
     file_path = settings.UPLOADS_DIR / filename
     save_uploaded_file(file, str(file_path))
 
-    region = json.loads(region_points) if region_points else None
-    class_list = json.loads(classes) if classes else None
+    region = None
+    if region_points:
+        try:
+            region = json.loads(region_points)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    class_list = None
+    if classes:
+        try:
+            class_list = json.loads(classes)
+        except (json.JSONDecodeError, ValueError):
+            pass
     output_path = str(settings.UPLOADS_DIR / f"speed_{filename}")
 
     result = solutions_service.estimate_speed(
@@ -170,6 +217,8 @@ async def solution_speed_estimation(
         region_points=region,
         classes=class_list,
         conf=conf,
+        pixel_to_meter=pixel_to_meter,
+        line_width=line_width,
         output_path=output_path
     )
 
@@ -193,7 +242,12 @@ async def solution_distance_calculation(
     file_path = settings.UPLOADS_DIR / filename
     save_uploaded_file(file, str(file_path))
 
-    class_list = json.loads(classes) if classes else None
+    class_list = None
+    if classes:
+        try:
+            class_list = json.loads(classes)
+        except (json.JSONDecodeError, ValueError):
+            pass
 
     result = solutions_service.calculate_distance(
         image_path=str(file_path),
@@ -223,7 +277,12 @@ async def solution_object_blur(
     file_path = settings.UPLOADS_DIR / filename
     save_uploaded_file(file, str(file_path))
 
-    class_list = json.loads(classes) if classes else None
+    class_list = None
+    if classes:
+        try:
+            class_list = json.loads(classes)
+        except (json.JSONDecodeError, ValueError):
+            pass
     output_path = str(settings.UPLOADS_DIR / f"blurred_{filename}")
 
     result = solutions_service.blur_objects(
@@ -255,7 +314,12 @@ async def solution_object_crop(
     file_path = settings.UPLOADS_DIR / filename
     save_uploaded_file(file, str(file_path))
 
-    class_list = json.loads(classes) if classes else None
+    class_list = None
+    if classes:
+        try:
+            class_list = json.loads(classes)
+        except (json.JSONDecodeError, ValueError):
+            pass
 
     result = solutions_service.crop_objects(
         image_path=str(file_path),
@@ -281,15 +345,26 @@ async def solution_queue_management(
     model_name: Optional[str] = Form(None),
     region_points: Optional[str] = Form(None),
     classes: Optional[str] = Form(None),
-    conf: float = Form(0.25)
+    conf: float = Form(0.25),
+    line_width: int = Form(2)
 ):
     """队列管理"""
     filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
     file_path = settings.UPLOADS_DIR / filename
     save_uploaded_file(file, str(file_path))
 
-    region = json.loads(region_points) if region_points else None
-    class_list = json.loads(classes) if classes else None
+    region = None
+    if region_points:
+        try:
+            region = json.loads(region_points)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    class_list = None
+    if classes:
+        try:
+            class_list = json.loads(classes)
+        except (json.JSONDecodeError, ValueError):
+            pass
     output_path = str(settings.UPLOADS_DIR / f"queue_{filename}")
 
     result = solutions_service.queue_management(
@@ -298,6 +373,7 @@ async def solution_queue_management(
         region_points=region,
         classes=class_list,
         conf=conf,
+        line_width=line_width,
         output_path=output_path
     )
 

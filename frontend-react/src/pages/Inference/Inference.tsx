@@ -1,17 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, Button, Input } from '../../components/common';
 import { Upload } from '../../components/features';
-import { inferenceApi } from '../../services/api';
+import { inferenceApi, modelApi } from '../../services/api';
 import styles from './Inference.module.css';
 
+interface TrainedModel {
+  name: string;
+  path: string;
+  task?: string;
+}
+
 export const Inference: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [selectedModel, setSelectedModel] = useState('');
+  const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [confThreshold, setConfThreshold] = useState(0.25);
   const [showAnnotated, setShowAnnotated] = useState(true);
+
+  useEffect(() => {
+    loadTrainedModels();
+
+    // 从 URL 参数加载模型
+    const modelParam = searchParams.get('model');
+    if (modelParam) {
+      setSelectedModel(decodeURIComponent(modelParam));
+    }
+  }, [searchParams]);
+
+  const loadTrainedModels = async () => {
+    try {
+      const res = await modelApi.list();
+      const models = res.data || [];
+      setTrainedModels(models);
+    } catch (error) {
+      console.error('加载训练模型失败:', error);
+    }
+  };
 
   const handleFileSelect = (files: File[]) => {
     if (files[0]) {
@@ -119,6 +148,15 @@ export const Inference: React.FC = () => {
                 onChange={(e) => setSelectedModel(e.target.value)}
               >
                 <option value="">请选择模型</option>
+                {trainedModels.length > 0 && (
+                  <optgroup label="训练模型">
+                    {trainedModels.map((model, idx) => (
+                      <option key={`trained-${idx}`} value={model.path}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 <optgroup label="YOLO26 (最新)">
                   <option value="yolo26n.pt">YOLO26n - 最新最快</option>
                   <option value="yolo26s.pt">YOLO26s - 轻量快速</option>

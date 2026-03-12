@@ -53,6 +53,7 @@ export interface ModelMetrics {
 // 训练
 export interface TrainingConfig {
   project_name: string;      // 项目名称
+  project_id?: string;       // 项目ID（关联训练项目）
   dataset_path: string;     // 数据集路径
   model_type?: string;       // 模型类型
   epochs?: number;           // 训练轮数
@@ -106,6 +107,19 @@ export interface Detection {
   class_name: string;
   confidence: number;
   bbox: [number, number, number, number]; // x1, y1, x2, y2
+}
+
+// 项目（训练项目）
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  cover_image?: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  settings?: Record<string, any>;
+  models_count?: number;
 }
 
 // 标注

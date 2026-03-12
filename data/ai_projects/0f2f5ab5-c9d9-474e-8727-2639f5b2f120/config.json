@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "created_at": "2026-03-03T09:22:18.887878",
+  "detection": {
+    "scenes": [
+      "安全帽"
+    ],
+    "models": [
+      "hardhat",
+      "safety",
+      "helmet"
+    ],
+    "threshold": 0.5,
+    "iou_threshold": 0.45
+  },
+  "alarm": {
+    "enabled": false,
+    "type": "popup",
+    "conditions": [
+      {
+        "scene": "安全帽",
+        "threshold": 0.5,
+        "action": "none"
+      }
+    ]
+  },
+  "post_processing": {
+    "min_area": null,
+    "max_area": null,
+    "tracking": false
+  }
+}

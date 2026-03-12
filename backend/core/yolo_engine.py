@@ -216,10 +216,40 @@ class YOLOEngine:
             # 直接查找
             direct = root / alias
             if direct.exists():
+                # 如果是目录，查找 weights 下的模型文件
+                if direct.is_dir():
+                    best_pt = direct / "weights" / "best.pt"
+                    last_pt = direct / "weights" / "last.pt"
+                    if best_pt.exists():
+                        return str(best_pt.resolve())
+                    if last_pt.exists():
+                        return str(last_pt.resolve())
+                    # 如果目录下没有 weights，递归查找
+                    nested = next(direct.glob("**/*.pt"), None)
+                    if nested and nested.exists():
+                        return str(nested.resolve())
+                    # 目录为空，没有模型文件，继续查找下一个
+                    logger.warning(f"[YOLO引擎] 目录 {direct} 中没有找到模型文件")
+                    continue
                 return str(direct.resolve())
             # 嵌套查找
             nested = next(root.glob(f"**/{alias}"), None)
             if nested and nested.exists():
+                # 如果是目录，同样处理
+                if nested.is_dir():
+                    best_pt = nested / "weights" / "best.pt"
+                    last_pt = nested / "weights" / "last.pt"
+                    if best_pt.exists():
+                        return str(best_pt.resolve())
+                    if last_pt.exists():
+                        return str(last_pt.resolve())
+                    # 递归查找
+                    pt_file = next(nested.glob("**/*.pt"), None)
+                    if pt_file and pt_file.exists():
+                        return str(pt_file.resolve())
+                    # 目录为空，没有模型文件，继续查找下一个
+                    logger.warning(f"[YOLO引擎] 目录 {nested} 中没有找到模型文件")
+                    continue
                 return str(nested.resolve())
 
         # 如果都找不到，返回原始标识符

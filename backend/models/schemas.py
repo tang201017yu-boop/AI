@@ -41,7 +41,7 @@ class TrainingConfig(BaseModel):
     epochs: int = 100
     batch_size: int = 16
     img_size: int = 640
-    device: str = "cpu"  # cpu 或 cuda
+    device: str = "auto"  # cpu, cuda, 或 auto (自动检测)
     patience: int = 50
     save_period: int = 10
     pretrained: bool = True

@@ -877,4 +877,234 @@ class SmartAnnotationService:
 # 创建全局服务实例
 smart_annotation_service = SmartAnnotationService()
 
+
+class MultiObjectAutoAnnotator:
+    """
+    多对象自动标注器
+    支持批量多对象标注，适用于复杂场景
+    """
+
+    def __init__(self):
+        """初始化多对象标注器"""
+        logger.info("[多对象标注] 初始化多对象自动标注器")
+        self.current_service = smart_annotation_service
+        self.results_cache = []  # 缓存标注结果
+        self.current_image = None
+        self.current_image_path = None
+
+    def annotate_single_image(
+        self,
+        image_path: str,
+        task: str = "detect",
+        model_name: str = None,
+        confidence: float = 0.25,
+        class_names: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        对单张图片进行多对象标注
+        Args:
+            image_path: 图片路径
+            task: 任务类型
+            model_name: 模型名称
+            confidence: 置信度阈值
+            class_names: 类别名称列表
+        Returns:
+            Dict: 标注结果
+        """
+        logger.info(f"[多对象标注] 处理图片: {image_path}")
+
+        try:
+            # 加载图片
+            load_result = self.current_service.load_image(image_path)
+            if not load_result.get("success"):
+                return load_result
+
+            self.current_image_path = image_path
+            self.current_image = self.current_service.current_image
+
+            # 设置类别
+            if class_names:
+                self.current_service.set_classes(class_names)
+
+            # 执行自动标注
+            result = self.current_service.auto_annotate(task, model_name, confidence)
+
+            # 缓存结果
+            if result.get("success"):
+                self.results_cache = result.get("annotations", []) or result.get("detections", [])
+                result["image_path"] = image_path
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[多对象标注] 处理失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"success": False, "message": str(e)}
+
+    def annotate_batch(
+        self,
+        image_paths: List[str],
+        task: str = "detect",
+        model_name: str = None,
+        confidence: float = 0.25,
+        class_names: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        批量标注多张图片
+        Args:
+            image_paths: 图片路径列表
+            task: 任务类型
+            model_name: 模型名称
+            confidence: 置信度阈值
+            class_names: 类别名称列表
+        Returns:
+            Dict: 批量标注结果
+        """
+        logger.info(f"[多对象标注] 批量处理 {len(image_paths)} 张图片")
+
+        results = []
+        success_count = 0
+        failed_count = 0
+
+        for img_path in image_paths:
+            try:
+                result = self.annotate_single_image(
+                    img_path, task, model_name, confidence, class_names
+                )
+
+                if result.get("success"):
+                    success_count += 1
+                else:
+                    failed_count += 1
+
+                results.append({
+                    "image_path": img_path,
+                    "success": result.get("success", False),
+                    "result": result
+                })
+
+            except Exception as e:
+                logger.error(f"[多对象标注] 处理图片失败 {img_path}: {e}")
+                failed_count += 1
+                results.append({
+                    "image_path": img_path,
+                    "success": False,
+                    "error": str(e)
+                })
+
+        return {
+            "success": True,
+            "message": f"批量处理完成: 成功 {success_count}, 失败 {failed_count}",
+            "total": len(image_paths),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "results": results
+        }
+
+    def upload_and_annotate(
+        self,
+        image_data: bytes,
+        filename: str,
+        task: str = "detect",
+        model_name: str = None,
+        confidence: float = 0.25,
+        class_names: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        上传图片并自动标注
+        Args:
+            image_data: 图片二进制数据
+            filename: 文件名
+            task: 任务类型
+            model_name: 模型名称
+            confidence: 置信度阈值
+            class_names: 类别名称列表
+        Returns:
+            Dict: 标注结果
+        """
+        logger.info(f"[多对象标注] 上传并标注: {filename}")
+
+        try:
+            # 保存临时文件
+            import tempfile
+            from pathlib import Path
+
+            temp_dir = Path(tempfile.gettempdir()) / "annotation_upload"
+            temp_dir.mkdir(exist_ok=True)
+            temp_path = temp_dir / filename
+
+            with open(temp_path, 'wb') as f:
+                f.write(image_data)
+
+            # 执行标注
+            return self.annotate_single_image(
+                str(temp_path), task, model_name, confidence, class_names
+            )
+
+        except Exception as e:
+            logger.error(f"[多对象标注] 上传标注失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def export_to_yolo(
+        self,
+        output_dir: str,
+        image_filename: str = None
+    ) -> Dict[str, Any]:
+        """
+        导出标注结果为YOLO格式
+        Args:
+            output_dir: 输出目录
+            image_filename: 图片文件名（可选）
+        Returns:
+            Dict: 导出结果
+        """
+        logger.info(f"[多对象标注] 导出YOLO格式: {output_dir}")
+
+        if not self.results_cache:
+            return {"success": False, "message": "没有标注结果可导出"}
+
+        try:
+            # 使用 smart_annotation_service 导出
+            filename = image_filename or "image.jpg"
+            return self.current_service.export_yolo_format(
+                self.results_cache,
+                output_dir,
+                filename
+            )
+        except Exception as e:
+            logger.error(f"[多对象标注] 导出失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def get_available_models(self) -> Dict[str, Any]:
+        """
+        获取可用的模型列表
+        Returns:
+            Dict: 模型列表
+        """
+        models = {
+            "detect": ["yolo11n.pt", "yolo11s.pt", "yolo11m.pt", "yolo26n.pt", "yolo26s.pt", "yolo26m.pt"],
+            "segment": ["yolo11n-seg.pt", "yolo11s-seg.pt", "yolo11m-seg.pt"],
+            "pose": ["yolo11n-pose.pt", "yolo11s-pose.pt", "yolo11m-pose.pt"],
+            "obb": ["yolo11n-obb.pt", "yolo11s-obb.pt", "yolo11m-obb.pt"],
+            "classify": ["yolo11n-cls.pt", "yolo11s-cls.pt", "yolo11m-cls.pt"]
+        }
+
+        return {
+            "success": True,
+            "models": models,
+            "default_models": {
+                "detect": "yolo11n.pt",
+                "segment": "yolo11n-seg.pt",
+                "pose": "yolo11n-pose.pt",
+                "obb": "yolo11n-obb.pt",
+                "classify": "yolo11n-cls.pt"
+            }
+        }
+
+
+# 创建全局多对象标注器实例
+multi_object_annotator = MultiObjectAutoAnnotator()
+
+logger.info("[标注] 多对象自动标注器加载完成")
 logger.info("[标注] 智能标注服务模块加载完成")

@@ -120,6 +120,7 @@ class ProxyAPIMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if DEV_MODE and str(request.url.path).startswith("/api/v1/"):
             import httpx
+            import json as json_mod
             remote_url = f"{REMOTE_API_URL.rstrip('/')}{request.url.path}"
             logger.info(f"[代理] {request.method} {request.url.path} -> {remote_url}")
 
@@ -135,8 +136,14 @@ class ProxyAPIMiddleware(BaseHTTPMiddleware):
                         content=body,
                         params=request.query_params
                     )
+                    # 尝试解析JSON响应
+                    try:
+                        response_data = remote_response.json()
+                    except json_mod.JSONDecodeError:
+                        # 如果不是JSON，返回原始文本
+                        response_data = {"success": False, "message": "远程服务器返回非JSON响应", "raw_response": remote_response.text[:500]}
                     return JSONResponse(
-                        content=remote_response.json(),
+                        content=response_data,
                         status_code=remote_response.status_code
                     )
             except httpx.TimeoutException:
