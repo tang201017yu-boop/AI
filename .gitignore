@@ -61,5 +61,9 @@ weights/
 *.onnx
 *.engine
 
+# Node
+node_modules/
+frontend-react/node_modules/
+
 # Docker
 docker-compose.override.yml
