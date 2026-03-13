@@ -13,7 +13,7 @@ export const Annotation: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<AnnotationProject | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [projectImages, setProjectImages] = useState<{ name: string; url: string }[]>([]);
-  const [loadingImages, setLoadingImages] = useState(false);
+  const [, setLoadingImages] = useState(false);
 
   // 智能标注状态
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -21,7 +21,7 @@ export const Annotation: React.FC = () => {
   const [autoLabelResult, setAutoLabelResult] = useState<any>(null);
   const [selectedModel, setSelectedModel] = useState('yolo11n.pt');
   const [confidence, setConfidence] = useState(0.25);
-  const [showAutoLabel, setShowAutoLabel] = useState(false);
+  const [, setShowAutoLabel] = useState(false);
 
   // ============ SAM 标注功能状态 ============
   const [activeTab, setActiveTab] = useState<'yolo' | 'sam'>('yolo');
@@ -149,7 +149,7 @@ export const Annotation: React.FC = () => {
         setSamAnnotations(result.annotations || []);
 
         // 生成掩码显示
-        const newMasks = (result.annotations || []).map((ann: SAMAnnotation, idx: number) => ({
+        const newMasks = (result.annotations || []).map((ann: SAMAnnotation) => ({
           polygons: ann.segmentation?.split(' ').map(Number) || [],
           color: getRandomColor(),
         }));
@@ -517,20 +517,61 @@ export const Annotation: React.FC = () => {
     }
   };
 
+  const pageStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 'var(--space-6)',
+  };
+
+  const sectionHeaderStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 'var(--space-5)',
+  };
+
+  const tabBtnStyle = (active: boolean): React.CSSProperties => ({
+    padding: '8px 20px',
+    border: active ? '2px solid var(--primary-500)' : '2px solid var(--border-color)',
+    borderRadius: 'var(--radius-full)',
+    background: active ? 'var(--primary-500)' : 'transparent',
+    color: active ? '#fff' : 'var(--text-secondary)',
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontSize: '13px',
+    transition: 'all var(--transition-base)',
+  });
+
+  const projectCardStyle = (selected: boolean): React.CSSProperties => ({
+    padding: '20px',
+    borderRadius: 'var(--radius-lg)',
+    border: selected ? '2px solid var(--primary-500)' : '1px solid var(--border-color)',
+    background: selected ? 'var(--primary-50)' : 'var(--bg-primary)',
+    cursor: 'pointer',
+    transition: 'all var(--transition-base)',
+    boxShadow: selected ? 'var(--shadow-md)' : 'var(--shadow-sm)',
+  });
+
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
-        <h1 style={{ fontFamily: 'DM Sans', fontWeight: 700 }}>智能标注</h1>
+    <div style={pageStyle}>
+      {/* 页面标题 */}
+      <div style={sectionHeaderStyle}>
+        <div>
+          <h1 style={{ fontWeight: 700, fontSize: '1.75rem', marginBottom: '4px' }}>智能标注</h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+            支持 YOLO 预标注、SAM 分割标注和手动标注
+          </p>
+        </div>
         <Button variant="primary" onClick={() => setShowCreate(!showCreate)}>
-          {showCreate ? '取消' : '创建项目'}
+          {showCreate ? '取消' : '+ 创建项目'}
         </Button>
       </div>
 
       {/* 创建项目 */}
       {showCreate && (
-        <Card style={{ marginBottom: 'var(--space-6)' }}>
+        <Card style={{ border: '1px solid var(--primary-200)', background: 'var(--primary-50)' }}>
           <CardHeader icon="➕" title="创建标注项目" />
-          <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 'var(--space-4)', alignItems: 'flex-end' }}>
             <Input
               label="项目名称"
               value={newProjectName}
@@ -538,10 +579,10 @@ export const Annotation: React.FC = () => {
               placeholder="输入项目名称"
             />
             <Input
-              label="项目描述"
+              label="项目描述（可选）"
               value={newProjectDesc}
               onChange={(e) => setNewProjectDesc(e.target.value)}
-              placeholder="输入项目描述（可选）"
+              placeholder="输入项目描述"
             />
             <Button variant="primary" onClick={handleCreateProject}>
               创建
@@ -550,253 +591,202 @@ export const Annotation: React.FC = () => {
         </Card>
       )}
 
-      {/* 智能标注工具 */}
-      <Card style={{ marginBottom: 'var(--space-6)' }}>
-        <CardHeader icon="🤖" title="YOLO 智能预标注" />
-        <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-          {/* 配置选项 */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-4)' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontWeight: 500 }}>
-                检测模型
-              </label>
-              <select
-                className="form-select"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                style={{ width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)' }}
-              >
-                <optgroup label="YOLO26 (最新)">
-                  <option value="yolo26n.pt">YOLO26n - 速度最快</option>
-                  <option value="yolo26s.pt">YOLO26s - 轻量快速</option>
-                  <option value="yolo26m.pt">YOLO26m - 平衡推荐</option>
-                </optgroup>
-                <optgroup label="YOLO11 (经典)">
-                  <option value="yolo11n.pt">YOLO11n</option>
-                  <option value="yolo11s.pt">YOLO11s</option>
-                  <option value="yolo11m.pt">YOLO11m</option>
-                </optgroup>
-              </select>
-            </div>
-            <Input
-              type="number"
-              label="置信度阈值"
-              value={confidence}
-              onChange={(e) => setConfidence(parseFloat(e.target.value))}
-              min={0}
-              max={1}
-              step={0.05}
-            />
-            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-2)',
-                  cursor: 'pointer',
-                  padding: 'var(--space-2) var(--space-3)',
-                  background: 'var(--primary-50)',
-                  border: '1px dashed var(--primary-300)',
-                  borderRadius: 'var(--radius-md)',
-                  width: '100%',
-                  justifyContent: 'center'
-                }}
-              >
-                <span style={{ fontSize: '1.5rem' }}>📁</span>
-                <span>选择图片或拖拽</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleFileSelect(e.target.files ? Array.from(e.target.files) : [])}
-                  style={{ display: 'none' }}
-                />
-              </label>
-            </div>
+      {/* YOLO 智能预标注 */}
+      <Card>
+        <div style={sectionHeaderStyle}>
+          <CardHeader icon="🤖" title="YOLO 智能预标注" />
+          <span style={{
+            fontSize: '12px', padding: '3px 10px',
+            background: 'var(--success-light)', color: 'var(--success)',
+            borderRadius: 'var(--radius-full)', fontWeight: 600
+          }}>自动检测</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500, fontSize: '13px', color: 'var(--text-secondary)' }}>
+              检测模型
+            </label>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              style={{
+                width: '100%', padding: '8px 12px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+                fontSize: '14px', outline: 'none',
+              }}
+            >
+              <optgroup label="YOLO26 (最新)">
+                <option value="yolo26n.pt">YOLO26n - 速度最快</option>
+                <option value="yolo26s.pt">YOLO26s - 轻量快速</option>
+                <option value="yolo26m.pt">YOLO26m - 平衡推荐</option>
+              </optgroup>
+              <optgroup label="YOLO11 (经典)">
+                <option value="yolo11n.pt">YOLO11n</option>
+                <option value="yolo11s.pt">YOLO11s</option>
+                <option value="yolo11m.pt">YOLO11m</option>
+              </optgroup>
+            </select>
           </div>
+          <Input
+            type="number"
+            label="置信度阈值"
+            value={confidence}
+            onChange={(e) => setConfidence(parseFloat(e.target.value))}
+            min={0} max={1} step={0.05}
+          />
+          <div>
+            <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500, fontSize: '13px', color: 'var(--text-secondary)' }}>
+              上传图片
+            </label>
+            <label style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 'var(--space-2)', cursor: 'pointer',
+              padding: '8px 12px', height: '38px',
+              background: 'var(--primary-50)',
+              border: '1.5px dashed var(--primary-300)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--primary-600)', fontWeight: 500, fontSize: '14px',
+              transition: 'all var(--transition-base)',
+            }}>
+              📁 选择图片或拖拽
+              <input type="file" accept="image/*"
+                onChange={(e) => handleFileSelect(e.target.files ? Array.from(e.target.files) : [])}
+                style={{ display: 'none' }} />
+            </label>
+          </div>
+        </div>
 
-          {/* 标注结果显示 */}
-          {selectedImage && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-              {/* 原图 */}
-              <div>
-                <h4 style={{ marginBottom: 'var(--space-2)' }}>📷 原图</h4>
-                <div style={{
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-lg)',
-                  overflow: 'hidden',
-                  background: 'var(--gray-50)'
-                }}>
-                  <img
-                    src={selectedImage}
-                    alt="Original"
-                    style={{ width: '100%', display: 'block' }}
-                  />
-                </div>
+        {selectedImage && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-5)' }}>
+            <div>
+              <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>原图</p>
+              <div style={{ borderRadius: 'var(--radius-lg)', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--gray-900)' }}>
+                <img src={selectedImage} alt="Original" style={{ width: '100%', display: 'block' }} />
               </div>
-
-              {/* 标注结果 */}
-              <div>
-                <h4 style={{ marginBottom: 'var(--space-2)' }}>🎯 智能标注结果</h4>
-                <div style={{
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-lg)',
-                  overflow: 'hidden',
-                  background: 'var(--gray-50)',
-                  minHeight: '300px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  {autoLabelLoading ? (
-                    <div style={{ textAlign: 'center', padding: 'var(--space-8)' }}>
-                      <div style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>⏳</div>
-                      <p>正在智能标注中...</p>
-                    </div>
-                  ) : autoLabelResult?.annotated_image ? (
-                    <img
-                      src={autoLabelResult.annotated_image}
-                      alt="Annotated"
-                      style={{ width: '100%', display: 'block' }}
-                    />
-                  ) : autoLabelResult?.detections ? (
-                    <img
-                      src={selectedImage}
-                      alt="Original"
-                      style={{ width: '100%', display: 'block' }}
-                    />
-                  ) : (
-                    <div style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--text-secondary)' }}>
-                      <div style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>📷</div>
-                      <p>上传图片自动检测</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* 检测结果统计 */}
-                {autoLabelResult?.detections && (
-                  <div style={{ marginTop: 'var(--space-3)' }}>
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      padding: 'var(--space-2) var(--space-3)',
-                      background: 'var(--primary-50)',
-                      borderRadius: 'var(--radius-md)',
-                      marginBottom: 'var(--space-2)'
-                    }}>
-                      <span>检测到 <strong>{autoLabelResult.detections.length}</strong> 个对象</span>
-                      <span>⏱️ {autoLabelResult.inference_time?.toFixed(2)}s</span>
-                    </div>
-
-                    {/* 类别统计 */}
-                    <div style={{ maxHeight: '150px', overflowY: 'auto' }}>
-                      {Object.entries(
-                        autoLabelResult.detections.reduce((acc: any, det: any) => {
-                          acc[det.class_name] = (acc[det.class_name] || 0) + 1;
-                          return acc;
-                        }, {})
-                      ).map(([className, count]: [string, any]) => (
-                        <div key={className} style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          padding: 'var(--space-1) var(--space-2)',
-                          borderBottom: '1px solid var(--gray-100)'
-                        }}>
-                          <span style={{ textTransform: 'capitalize' }}>{className}</span>
-                          <span style={{ color: 'var(--primary-600)', fontWeight: 600 }}>× {count}</span>
-                        </div>
-                      ))}
-                    </div>
+            </div>
+            <div>
+              <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>标注结果</p>
+              <div style={{
+                borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+                border: '1px solid var(--border-color)', background: 'var(--gray-900)',
+                minHeight: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                {autoLabelLoading ? (
+                  <div style={{ textAlign: 'center', color: '#fff', padding: 'var(--space-8)' }}>
+                    <div style={{ fontSize: '2rem', marginBottom: '8px' }}>⏳</div>
+                    <p style={{ fontSize: '14px' }}>正在智能标注中...</p>
+                  </div>
+                ) : autoLabelResult?.annotated_image ? (
+                  <img src={autoLabelResult.annotated_image} alt="Annotated" style={{ width: '100%', display: 'block' }} />
+                ) : (
+                  <div style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 'var(--space-8)' }}>
+                    <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🎯</div>
+                    <p style={{ fontSize: '14px' }}>等待检测结果</p>
                   </div>
                 )}
               </div>
+              {autoLabelResult?.detections && (
+                <div style={{
+                  marginTop: 'var(--space-3)', padding: 'var(--space-3)',
+                  background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-2)', fontSize: '13px' }}>
+                    <span style={{ fontWeight: 600 }}>检测到 <span style={{ color: 'var(--primary-500)' }}>{autoLabelResult.detections.length}</span> 个对象</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>⏱ {autoLabelResult.inference_time?.toFixed(2)}s</span>
+                  </div>
+                  <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {Object.entries(
+                      autoLabelResult.detections.reduce((acc: any, det: any) => {
+                        acc[det.class_name] = (acc[det.class_name] || 0) + 1;
+                        return acc;
+                      }, {})
+                    ).map(([className, count]: [string, any]) => (
+                      <div key={className} style={{
+                        display: 'flex', justifyContent: 'space-between',
+                        padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                        background: 'var(--bg-primary)', fontSize: '13px'
+                      }}>
+                        <span style={{ textTransform: 'capitalize' }}>{className}</span>
+                        <span style={{
+                          background: 'var(--primary-100)', color: 'var(--primary-700)',
+                          padding: '1px 8px', borderRadius: 'var(--radius-full)', fontWeight: 600
+                        }}>×{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </Card>
 
       {/* 项目列表 */}
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-5)' }}>
           <CardHeader icon="✏️" title="标注项目列表" />
-          <button
-            onClick={loadProjects}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              border: '1px solid #e2e8f0',
-              borderRadius: '6px',
-              background: '#fff',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '13px',
-            }}
-            title="刷新列表"
-          >
-            {loading ? '⏳' : '🔄'}
+          <button onClick={loadProjects} disabled={loading} style={{
+            padding: '6px 14px', border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)', background: 'var(--bg-primary)',
+            cursor: loading ? 'not-allowed' : 'pointer', fontSize: '13px',
+            color: 'var(--text-secondary)', transition: 'all var(--transition-base)',
+          }}>
+            {loading ? '⏳' : '🔄 刷新'}
           </button>
         </div>
         {loading ? (
-          <p style={{ color: 'var(--text-secondary)' }}>加载中...</p>
+          <div style={{ textAlign: 'center', padding: 'var(--space-10)', color: 'var(--text-secondary)' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '8px' }}>⏳</div>
+            <p>加载中...</p>
+          </div>
         ) : projects.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 'var(--space-8)' }}>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-4)' }}>
-              暂无标注项目，请创建一个新项目
-            </p>
+          <div style={{
+            textAlign: 'center', padding: 'var(--space-10)',
+            border: '2px dashed var(--border-color)', borderRadius: 'var(--radius-lg)',
+            background: 'var(--bg-secondary)'
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '12px' }}>📂</div>
+            <p style={{ fontWeight: 600, marginBottom: '6px' }}>暂无标注项目</p>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-              支持 YOLO 自动预标注和 SAM 分割标注
+              点击右上角「+ 创建项目」开始
             </p>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
             {projects.map((project) => (
-              <div
-                key={project.id}
-                onClick={() => handleSelectProject(project)}
-                style={{
-                  padding: '16px',
-                  borderRadius: '8px',
-                  border: selectedProject?.id === project.id ? '2px solid #3b82f6' : '1px solid #e2e8f0',
-                  background: selectedProject?.id === project.id ? '#eff6ff' : '#fff',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <h3 style={{ fontWeight: 600, marginBottom: 'var(--space-1)', fontSize: '16px' }}>{project.name}</h3>
-                  <button
-                    onClick={(e) => handleDeleteProject(project.id!, e)}
-                    disabled={deletingId === project.id}
-                    style={{
-                      border: 'none',
-                      background: 'transparent',
-                      cursor: deletingId === project.id ? 'not-allowed' : 'pointer',
-                      padding: '4px',
-                      borderRadius: '4px',
-                      color: '#94a3b8',
-                      fontSize: '16px',
-                    }}
-                    title="删除项目"
-                  >
+              <div key={project.id} onClick={() => handleSelectProject(project)} style={projectCardStyle(selectedProject?.id === project.id)}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{
+                      width: '36px', height: '36px', borderRadius: 'var(--radius-md)',
+                      background: selectedProject?.id === project.id ? 'var(--primary-500)' : 'var(--bg-tertiary)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px'
+                    }}>✏️</div>
+                    <h3 style={{ fontWeight: 600, fontSize: '15px' }}>{project.name}</h3>
+                  </div>
+                  <button onClick={(e) => handleDeleteProject(project.id!, e)} disabled={deletingId === project.id} style={{
+                    border: 'none', background: 'transparent',
+                    cursor: deletingId === project.id ? 'not-allowed' : 'pointer',
+                    padding: '4px', borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-muted)', fontSize: '15px',
+                  }}>
                     {deletingId === project.id ? '⏳' : '🗑️'}
                   </button>
                 </div>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: 'var(--space-3)' }}>
-                  {project.description || '无描述'}
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '12px', minHeight: '20px' }}>
+                  {project.description || '暂无描述'}
                 </p>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 'var(--space-3)' }}>
-                  <p>创建时间: {new Date(project.created_at).toLocaleDateString()}</p>
-                  {project.classes && <p>类别数: {project.classes.length}</p>}
-                </div>
-                <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                  <Button
-                    variant={selectedProject?.id === project.id ? "primary" : "secondary"}
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectProject(project);
-                    }}
-                  >
-                    {selectedProject?.id === project.id ? '已选中' : '开始标注'}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    {new Date(project.created_at).toLocaleDateString()}
+                    {project.classes && <span style={{ marginLeft: '8px' }}>· {project.classes.length} 类别</span>}
+                  </div>
+                  <Button variant={selectedProject?.id === project.id ? "primary" : "secondary"} size="sm"
+                    onClick={(e) => { e.stopPropagation(); handleSelectProject(project); }}>
+                    {selectedProject?.id === project.id ? '✓ 已选中' : '开始标注'}
                   </Button>
                 </div>
               </div>
@@ -806,232 +796,135 @@ export const Annotation: React.FC = () => {
       </Card>
 
       {/* SAM 分割标注 */}
-      <Card style={{ marginTop: 'var(--space-6)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-5)' }}>
           <CardHeader icon="✂️" title="SAM 分割标注" />
           <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <button
-              onClick={() => setActiveTab('yolo')}
-              style={{
-                padding: '8px 16px',
-                border: 'none',
-                borderRadius: '6px',
-                background: activeTab === 'yolo' ? '#3b82f6' : '#f1f5f9',
-                color: activeTab === 'yolo' ? '#fff' : '#475569',
-                cursor: 'pointer',
-                fontWeight: 500,
-              }}
-            >
-              YOLO 预标注
-            </button>
-            <button
-              onClick={() => setActiveTab('sam')}
-              style={{
-                padding: '8px 16px',
-                border: 'none',
-                borderRadius: '6px',
-                background: activeTab === 'sam' ? '#3b82f6' : '#f1f5f9',
-                color: activeTab === 'sam' ? '#fff' : '#475569',
-                cursor: 'pointer',
-                fontWeight: 500,
-              }}
-            >
-              SAM 分割
-            </button>
+            <button onClick={() => setActiveTab('yolo')} style={tabBtnStyle(activeTab === 'yolo')}>YOLO 预标注</button>
+            <button onClick={() => setActiveTab('sam')} style={tabBtnStyle(activeTab === 'sam')}>SAM 分割</button>
           </div>
         </div>
 
         {activeTab === 'sam' && (
           <div>
-            {/* 项目信息 */}
             {selectedProject && (
               <div style={{
-                padding: '12px 16px',
-                background: '#f0f9ff',
-                borderRadius: '8px',
-                marginBottom: '16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
+                padding: '12px 16px', borderRadius: 'var(--radius-md)', marginBottom: '16px',
+                background: 'var(--info-light)', border: '1px solid #bfdbfe',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               }}>
-                <div>
-                  <span style={{ fontWeight: 600, color: '#0369a1' }}>
-                    当前项目: {selectedProject.name}
-                  </span>
-                  <span style={{ marginLeft: '16px', color: '#64748b', fontSize: '13px' }}>
-                    {projectImages.length} 张已标注图片
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '18px' }}>📂</span>
+                  <div>
+                    <span style={{ fontWeight: 600, color: 'var(--primary-700)' }}>{selectedProject.name}</span>
+                    <span style={{ marginLeft: '12px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                      {projectImages.length} 张已标注图片
+                    </span>
+                  </div>
                 </div>
-                <button
-                  onClick={() => {
-                    setSelectedProject(null);
-                    setSamImage(null);
-                    setSamImagePath('');
-                    setSamFile(null);
-                    setSamAnnotations([]);
-                  }}
-                  style={{
-                    padding: '6px 12px',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '6px',
-                    background: '#fff',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                  }}
-                >
+                <button onClick={() => { setSelectedProject(null); setSamImage(null); setSamImagePath(''); setSamFile(null); setSamAnnotations([]); }}
+                  style={{ padding: '5px 12px', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: 'var(--bg-primary)', cursor: 'pointer', fontSize: '13px' }}>
                   关闭项目
                 </button>
               </div>
             )}
 
-            {/* 项目图片列表 */}
             {selectedProject && projectImages.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
-                <h4 style={{ fontSize: '14px', marginBottom: '8px', color: '#64748b' }}>已标注图片:</h4>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxHeight: '120px', overflowX: 'auto' }}>
-                  {projectImages.map((img, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        width: '80px',
-                        height: '80px',
-                        borderRadius: '6px',
-                        overflow: 'hidden',
-                        border: '2px solid #e2e8f0',
-                        cursor: 'pointer',
-                      }}
-                      title={img.name}
-                    >
-                      <img
-                        src={img.url}
-                        alt={img.name}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
+                <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px' }}>已标注图片</p>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxHeight: '100px', overflowY: 'auto' }}>
+                  {projectImages.map((img, i) => (
+                    <div key={i} title={img.name} style={{
+                      width: '72px', height: '72px', borderRadius: 'var(--radius-md)',
+                      overflow: 'hidden', border: '2px solid var(--border-color)', cursor: 'pointer',
+                      transition: 'border-color var(--transition-base)',
+                    }}>
+                      <img src={img.url} alt={img.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 工具栏 */}
             <AnnotationToolbar
-              tool={samTool}
-              currentClass={samCurrentClass}
-              classes={samClasses}
-              suggestions={classSuggestions}
-              onToolChange={setSamTool}
-              onClassChange={setSamCurrentClass}
-              onAddClass={handleAddClass}
-              onAutoLabel={handleSamAutoLabel}
-              onClear={handleSamClear}
-              onUndo={handleSamUndo}
-              onRedo={handleSamRedo}
-              onDeleteSelected={handleDeleteSelected}
-              onSave={handleSave}
+              tool={samTool} currentClass={samCurrentClass} classes={samClasses}
+              suggestions={classSuggestions} onToolChange={setSamTool}
+              onClassChange={setSamCurrentClass} onAddClass={handleAddClass}
+              onAutoLabel={handleSamAutoLabel} onClear={handleSamClear}
+              onUndo={handleSamUndo} onRedo={handleSamRedo}
+              onDeleteSelected={handleDeleteSelected} onSave={handleSave}
               loading={samLoading}
             />
 
-            {/* 主工作区 */}
-            <div style={{ display: 'flex', gap: '24px', marginTop: '24px' }}>
-              {/* 画布区域 */}
+            <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
               <div style={{ flex: 1 }}>
                 {samImage ? (
                   <AnnotationCanvas
-                    image={samImage}
-                    width={imgSize.width}
-                    height={imgSize.height}
-                    points={samPoints}
-                    boxes={samBoxes}
-                    masks={samMasks}
-                    annotations={samAnnotations}
-                    tool={samTool}
-                    selectedId={samSelectedId}
-                    onPointAdd={handleSamPointAdd}
-                    onBoxAdd={handleSamBoxAdd}
+                    image={samImage} width={imgSize.width} height={imgSize.height}
+                    points={samPoints} boxes={samBoxes} masks={samMasks}
+                    annotations={samAnnotations} tool={samTool} selectedId={samSelectedId}
+                    onPointAdd={handleSamPointAdd} onBoxAdd={handleSamBoxAdd}
                     onMaskSelect={(idx) => setSamSelectedId(String(idx))}
                     onAnnotationSelect={setSamSelectedId}
                   />
                 ) : (
-                  <div style={{
-                    width: '100%',
-                    height: '400px',
-                    border: '2px dashed #e2e8f0',
-                    borderRadius: '12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: '#f8fafc',
+                  <label style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    width: '100%', height: '420px', cursor: 'pointer',
+                    border: '2px dashed var(--border-color)', borderRadius: 'var(--radius-xl)',
+                    background: 'var(--bg-secondary)', transition: 'all var(--transition-base)',
                   }}>
-                    <label style={{ cursor: 'pointer', textAlign: 'center' }}>
-                      <div style={{ fontSize: '48px', marginBottom: '16px' }}>📁</div>
-                      <div>点击或拖拽上传图片</div>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleSamFileSelect(e.target.files ? Array.from(e.target.files) : [])}
-                        style={{ display: 'none' }}
-                      />
-                    </label>
-                  </div>
+                    <div style={{ fontSize: '52px', marginBottom: '16px' }}>🖼️</div>
+                    <p style={{ fontWeight: 600, marginBottom: '4px' }}>点击或拖拽上传图片</p>
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>支持 JPG、PNG、WebP</p>
+                    <input type="file" accept="image/*"
+                      onChange={(e) => handleSamFileSelect(e.target.files ? Array.from(e.target.files) : [])}
+                      style={{ display: 'none' }} />
+                  </label>
                 )}
               </div>
-
-              {/* 标注面板 */}
               <AnnotationPanel
-                annotations={samAnnotations}
-                selectedId={samSelectedId}
-                onSelect={setSamSelectedId}
-                onDelete={handleSamDelete}
-                onClassChange={handleSamClassChange}
-                onExport={handleSamExport}
+                annotations={samAnnotations} selectedId={samSelectedId}
+                onSelect={setSamSelectedId} onDelete={handleSamDelete}
+                onClassChange={handleSamClassChange} onExport={handleSamExport}
                 classes={samClasses}
               />
             </div>
 
-            {/* 说明 */}
-            <div style={{ marginTop: '24px', color: '#64748b', fontSize: '14px' }}>
-              <p><strong>使用说明:</strong></p>
-              <ul>
-                <li>点击图片添加正样本点 (绿色 +)</li>
-                <li>Shift + 点击添加负样本点 (红色 -)</li>
-                <li>选择框选工具拖动画框进行分割</li>
-                <li>选择自动标注并指定类别进行批量标注</li>
-              </ul>
+            <div style={{
+              marginTop: '20px', padding: '12px 16px',
+              background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-color)',
+              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px',
+              fontSize: '13px', color: 'var(--text-secondary)'
+            }}>
+              <span>🟢 点击 — 正样本点</span>
+              <span>🔴 Shift+点击 — 负样本点</span>
+              <span>⬜ 拖动 — 框选分割</span>
+              <span>⚡ 自动标注 — 批量检测</span>
             </div>
           </div>
         )}
       </Card>
 
       {/* 功能说明 */}
-      <Card style={{ marginTop: 'var(--space-6)' }}>
-        <CardHeader icon="📖" title="功能说明" />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)' }}>
-          <div style={{ padding: 'var(--space-3)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-            <h4 style={{ marginBottom: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <span>🎯</span> YOLO 预标注
-            </h4>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              使用 YOLO 模型自动检测图片中的目标物体，一键生成检测框和类别标签
-            </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)' }}>
+        {[
+          { icon: '🎯', title: 'YOLO 预标注', desc: '使用 YOLO 模型自动检测目标，一键生成检测框和类别标签' },
+          { icon: '✏️', title: '手动修正', desc: '在自动标注基础上手动修正，添加、删除或调整检测框' },
+          { icon: '📦', title: '一键导出', desc: '导出为 YOLO 格式训练数据，直接用于模型训练' },
+        ].map(({ icon, title, desc }) => (
+          <div key={title} style={{
+            padding: 'var(--space-4)', borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--border-color)', background: 'var(--bg-primary)',
+            boxShadow: 'var(--shadow-sm)',
+          }}>
+            <div style={{ fontSize: '28px', marginBottom: '10px' }}>{icon}</div>
+            <h4 style={{ fontWeight: 600, marginBottom: '6px' }}>{title}</h4>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>{desc}</p>
           </div>
-          <div style={{ padding: 'var(--space-3)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-            <h4 style={{ marginBottom: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <span>✏️</span> 手动修正
-            </h4>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              在自动标注基础上进行手动修正，添加、删除或调整检测框
-            </p>
-          </div>
-          <div style={{ padding: 'var(--space-3)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-            <h4 style={{ marginBottom: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <span>📦</span> 一键导出
-            </h4>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              导出为 YOLO 格式训练数据，直接用于模型训练
-            </p>
-          </div>
-        </div>
-      </Card>
+        ))}
+      </div>
     </div>
   );
 };
