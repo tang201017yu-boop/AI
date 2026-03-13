@@ -65,5 +65,8 @@ weights/
 node_modules/
 frontend-react/node_modules/
 
+# Claude Code
+.claude/
+
 # Docker
 docker-compose.override.yml
