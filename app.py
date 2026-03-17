@@ -186,6 +186,11 @@ if annotation_images_dir.exists():
     app.mount("/annotation-images", StaticFiles(directory=str(annotation_images_dir)), name="annotation_images")
     logger.info(f"标注图片服务: /annotation-images -> {annotation_images_dir}")
 
+models_dir = Path("/root/wuyu/Vision_Platform/data/models")
+models_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/models", StaticFiles(directory=str(models_dir)), name="models")
+logger.info(f"模型文件服务: /models -> {models_dir}")
+
 # ============================================================================
 # 路由注册
 # ============================================================================

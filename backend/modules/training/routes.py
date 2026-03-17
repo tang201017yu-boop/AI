@@ -10,7 +10,19 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, UploadFile, Request, Query, Body
 from typing import Optional, Dict, Any, List
 import json
+import math
 from datetime import datetime
+
+
+def sanitize_floats(obj):
+    """递归清理 nan/inf 为 None"""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: sanitize_floats(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_floats(i) for i in obj]
+    return obj
 
 from backend.core.config import settings
 from backend.modules.training.training_service import training_service, export_service
@@ -462,7 +474,7 @@ async def get_experiment(task_id: str):
             "checkpoint_path": status.checkpoint_path if status else experiment.get("checkpoint_path")
         }
     }
-    return result
+    return sanitize_floats(result)
 
 
 @router.delete("/experiments/{task_id}")
