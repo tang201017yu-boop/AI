@@ -56,7 +56,7 @@ export const Datasets: React.FC = () => {
   const [totalImages, setTotalImages] = useState(0);
 
   // 视图和筛选状态
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [splitFilter, setSplitFilter] = useState<string>('');
   const [labeledFilter, setLabeledFilter] = useState<string>('');
   const [sortBy, setSortBy] = useState<SortOption>('name_asc');
@@ -145,6 +145,20 @@ export const Datasets: React.FC = () => {
       console.error(error);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleDeleteDataset = async () => {
+    if (!selectedDataset) return;
+    if (!confirm(`确定要删除数据集 ${selectedDataset} 吗？此操作不可恢复。`)) return;
+    try {
+      await datasetApi.delete(selectedDataset);
+      const res = await datasetApi.list();
+      const datasetsData = res.data?.datasets || res.data?.data?.datasets || [];
+      setDatasets(datasetsData);
+      setSelectedDataset(datasetsData.length > 0 ? datasetsData[0].name : null);
+    } catch (error) {
+      console.error(error);
     }
   };
 
@@ -468,38 +482,8 @@ export const Datasets: React.FC = () => {
           </select>
         </div>
 
-        {/* 右侧视图切换和导出 */}
+        {/* 右侧导出 */}
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-            <button
-              onClick={() => setViewMode('grid')}
-              style={{
-                padding: 'var(--space-2)', border: 'none', background: viewMode === 'grid' ? 'var(--primary-500)' : 'transparent',
-                color: viewMode === 'grid' ? 'white' : 'var(--text-secondary)', cursor: 'pointer'
-              }}
-            >
-              ▦ 网格
-            </button>
-            <button
-              onClick={() => setViewMode('compact')}
-              style={{
-                padding: 'var(--space-2)', border: 'none', background: viewMode === 'compact' ? 'var(--primary-500)' : 'transparent',
-                color: viewMode === 'compact' ? 'white' : 'var(--text-secondary)', cursor: 'pointer'
-              }}
-            >
-              ▤ 紧凑
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              style={{
-                padding: 'var(--space-2)', border: 'none', background: viewMode === 'table' ? 'var(--primary-500)' : 'transparent',
-                color: viewMode === 'table' ? 'white' : 'var(--text-secondary)', cursor: 'pointer'
-              }}
-            >
-              ☰ 表格
-            </button>
-          </div>
-
           <Button variant="secondary" size="sm" onClick={() => setShowExportModal(true)}>
             📥 导出
           </Button>
@@ -580,7 +564,7 @@ export const Datasets: React.FC = () => {
 
         {/* 图片区域 */}
         <div
-          style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}
+          style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onWheel={(e) => {
             if (e.ctrlKey || e.metaKey) {
               e.preventDefault();
@@ -588,35 +572,38 @@ export const Datasets: React.FC = () => {
             }
           }}
         >
-          <img
-            src={fullscreenImage.path}
-            alt={fullscreenImage.filename}
-            style={{
-              maxWidth: '90%', maxHeight: '90%', transform: `scale(${zoom})`,
-              imageRendering: pixelView ? 'pixelated' : 'auto',
-              transition: 'transform 0.1s'
-            }}
-          />
-          {/* 标注叠加层 */}
-          {showLabels && fullscreenImage.labels.length > 0 && fullscreenImage.labels.map((label, idx) => {
-            const bbox = label.bbox;
-            if (bbox.length < 4) return null;
-            const [x, y, w, h] = bbox;
-            return (
-              <div
-                key={idx}
-                style={{
-                  position: 'absolute',
-                  left: `${(x - w/2) * 100}%`,
-                  top: `${(y - h/2) * 100}%`,
-                  width: `${w * 100}%`,
-                  height: `${h * 100}%`,
-                  border: '2px solid red',
-                  pointerEvents: 'none'
-                }}
-              />
-            );
-          })}
+          <div style={{ position: 'relative', display: 'inline-block', transform: `scale(${zoom})`, transformOrigin: 'center', transition: 'transform 0.1s' }}>
+            <img
+              src={fullscreenImage.path}
+              alt={fullscreenImage.filename}
+              style={{
+                display: 'block',
+                maxWidth: '80vw',
+                maxHeight: '72vh',
+                imageRendering: pixelView ? 'pixelated' : 'auto',
+              }}
+            />
+            {/* 标注叠加层 */}
+            {showLabels && fullscreenImage.labels.length > 0 && fullscreenImage.labels.map((label, idx) => {
+              const bbox = label.bbox;
+              if (bbox.length < 4) return null;
+              const [x, y, w, h] = bbox;
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    position: 'absolute',
+                    left: `${(x - w/2) * 100}%`,
+                    top: `${(y - h/2) * 100}%`,
+                    width: `${w * 100}%`,
+                    height: `${h * 100}%`,
+                    border: '2px solid red',
+                    pointerEvents: 'none'
+                  }}
+                />
+              );
+            })}
+          </div>
         </div>
 
         {/* 底部信息栏 */}
@@ -750,6 +737,9 @@ export const Datasets: React.FC = () => {
           />
           <Button variant="primary" loading={uploading} onClick={() => fileInputRef.current?.click()}>
             上传数据集
+          </Button>
+          <Button variant="secondary" disabled={!selectedDataset} onClick={handleDeleteDataset}>
+            删除数据集
           </Button>
         </div>
       </div>

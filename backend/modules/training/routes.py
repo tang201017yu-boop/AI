@@ -609,7 +609,18 @@ async def export_experiment_model(
 
     # 调用导出
     from backend.core.yolo_engine import yolo_engine
-    result = yolo_engine.export_model(checkpoint_path, format=format)
+
+    if yolo_engine:
+        result = yolo_engine.export_model(checkpoint_path, format=format)
+    else:
+        # 引擎未初始化时直接用 ultralytics 导出
+        try:
+            from ultralytics import YOLO
+            model = YOLO(checkpoint_path)
+            export_path = model.export(format=format)
+            result = {"success": True, "path": str(export_path)}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
     return {"success": True, "data": result}
 

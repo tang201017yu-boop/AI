@@ -154,6 +154,25 @@ export const annotationApi = {
     api.post(`/annotation/projects/${projectId}/images/${imageId}/annotations`, { annotations }),
   getAnnotations: (projectId: string, imageId: string) =>
     api.get(`/annotation/projects/${projectId}/image/${imageId}`),
+  uploadVideo: (projectId: string, file: File, frameInterval = 30) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('frame_interval', String(frameInterval));
+    return api.post(`/annotation/projects/${projectId}/upload-video`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  uploadArchive: (projectId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/annotation/projects/${projectId}/upload-archive`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  exportNdjson: (projectId: string) =>
+    api.get(`/annotation/projects/${projectId}/export/ndjson`, { responseType: 'blob' }),
+  getStatistics: (projectId: string) =>
+    api.get(`/annotation/projects/${projectId}/statistics`),
 };
 
 // ============ SAM 智能标注 API ============

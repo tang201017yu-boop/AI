@@ -64,9 +64,9 @@ export const Models: React.FC = () => {
       const res = await modelApi.getUserModels();
       const responseData = res.data as any;
       const allModels = responseData?.models || [];
-      // 只显示上传的模型 (source === 'uploaded')
-      const uploadedModels = allModels.filter((m: UserModel) => m.source === 'uploaded');
-      setModels(uploadedModels);
+      // 显示上传的模型和训练导出的模型
+      const userModels = allModels.filter((m: UserModel) => m.source === 'uploaded' || m.source === 'training' || m.source === 'project_model');
+      setModels(userModels);
     } catch (error) {
       console.error(error);
     } finally {
@@ -289,42 +289,82 @@ export const Models: React.FC = () => {
       ) : (
         <Card>
           <CardHeader icon="📁" title={`我的模型 (${models.length})`} />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
-            {models.map((model, idx) => (
-              <div
-                key={idx}
-                style={{
-                  padding: '16px',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '8px',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-                  <span style={{ fontSize: '1.5rem' }}>📦</span>
-                  <div>
-                    <h3 style={{ fontWeight: 600, margin: 0 }}>{model.name}</h3>
-                    <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{model.model_type || 'YOLO'}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 'var(--space-4)' }}>
+            {models.map((model, idx) => {
+              const isTraining = model.source !== 'uploaded';
+              const displayName = isTraining && model.project
+                ? model.name.replace(`${model.project}_`, '')
+                : model.name;
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    padding: '16px',
+                    border: `1px solid ${isTraining ? '#a7f3d0' : '#e2e8f0'}`,
+                    borderRadius: '10px',
+                    background: isTraining ? '#f0fdf4' : '#fff',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                  }}
+                >
+                  {/* 头部 */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <h3 style={{ fontWeight: 700, margin: 0, fontSize: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {displayName}
+                      </h3>
+                      {isTraining && model.project && (
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
+                          {model.project}
+                        </div>
+                      )}
+                    </div>
+                    <span style={{
+                      flexShrink: 0,
+                      padding: '3px 10px',
+                      borderRadius: '20px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      background: isTraining ? '#dcfce7' : '#e0e7ff',
+                      color: isTraining ? '#15803d' : '#4338ca',
+                    }}>
+                      {isTraining ? '训练' : '上传'}
+                    </span>
+                  </div>
+
+                  {/* 信息标签 */}
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={{ padding: '2px 8px', background: '#f1f5f9', borderRadius: '6px', fontSize: '12px', color: '#475569' }}>
+                      {model.task || 'detect'}
+                    </span>
+                    {model.classes && (
+                      <span style={{ padding: '2px 8px', background: '#f1f5f9', borderRadius: '6px', fontSize: '12px', color: '#475569' }}>
+                        {model.classes.length} 类
+                      </span>
+                    )}
+                    {model.created_at && (
+                      <span style={{ padding: '2px 8px', background: '#f1f5f9', borderRadius: '6px', fontSize: '12px', color: '#475569' }}>
+                        {new Date(model.created_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 操作按钮 */}
+                  <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'auto' }}>
+                    <Button variant="secondary" size="sm" onClick={(e) => handleInference(model, e)} style={{ flex: 1 }}>推理</Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => handleDeleteModel(model, e)}
+                      disabled={deletingId === model.id}
+                    >
+                      {deletingId === model.id ? '删除中...' : '删除'}
+                    </Button>
                   </div>
                 </div>
-                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: 'var(--space-3)' }}>
-                  <p>路径: {model.path}</p>
-                  <p>任务: {model.task || '检测'}</p>
-                  {model.classes && <p>类别数: {model.classes.length}</p>}
-                  {model.created_at && <p>上传时间: {new Date(model.created_at).toLocaleString()}</p>}
-                </div>
-                <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                  <Button variant="secondary" size="sm" onClick={(e) => handleInference(model, e)}>推理</Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => handleDeleteModel(model, e)}
-                    disabled={deletingId === model.id}
-                  >
-                    {deletingId === model.id ? '删除中...' : '删除'}
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       )}

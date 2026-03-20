@@ -352,8 +352,8 @@ class ModelManagementService:
                             continue
 
                         training_models.append({
-                            'id': weight_file.stem,
-                            'name': weight_file.name,
+                            'id': f"{project_dir.name}_{weight_file.stem}",
+                            'name': f"{project_dir.name}_{weight_file.name}",
                             'path': model_path_str,
                             'project': project_dir.name,
                             'source': 'training',
@@ -375,8 +375,8 @@ class ModelManagementService:
                             continue
 
                         training_models.append({
-                            'id': weight_file.stem,
-                            'name': weight_file.name,
+                            'id': f"{project_dir.name}_{weight_file.stem}",
+                            'name': f"{project_dir.name}_{weight_file.name}",
                             'path': model_path_str,
                             'project': project_dir.name,
                             'source': 'project_model',

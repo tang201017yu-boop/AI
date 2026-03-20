@@ -6,6 +6,7 @@ interface Props {
   currentClass: string;
   classes: string[];
   suggestions?: ClassSuggestion[];
+  samVersion?: 'sam2' | 'sam3';
   onToolChange: (tool: AnnotationTool) => void;
   onClassChange: (className: string) => void;
   onAddClass?: (className: string) => void;
@@ -15,6 +16,7 @@ interface Props {
   onRedo: () => void;
   onDeleteSelected?: () => void;
   onSave?: () => void;
+  onSamVersionChange?: (version: 'sam2' | 'sam3') => void;
   loading?: boolean;
   shortcuts?: { key: string; desc: string }[];
 }
@@ -24,6 +26,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
   currentClass,
   classes,
   suggestions = [],
+  samVersion = 'sam2',
   onToolChange,
   onClassChange,
   onAddClass,
@@ -33,6 +36,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
   onRedo,
   onDeleteSelected,
   onSave,
+  onSamVersionChange,
   loading = false,
   shortcuts = [
     { key: 'P', desc: '点标注' },
@@ -354,6 +358,37 @@ export const AnnotationToolbar: React.FC<Props> = ({
         >
           💾 保存
         </button>
+      )}
+
+      {/* SAM 版本选择 */}
+      {onSamVersionChange && (
+        <>
+          <div style={{ width: '1px', height: '28px', background: '#e2e8f0' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 500 }}>SAM:</span>
+            <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: '6px', padding: '2px' }}>
+              {(['sam2', 'sam3'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => onSamVersionChange(v)}
+                  style={{
+                    padding: '4px 10px',
+                    border: 'none',
+                    borderRadius: '4px',
+                    background: samVersion === v ? '#3b82f6' : 'transparent',
+                    color: samVersion === v ? '#fff' : '#64748b',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {v === 'sam2' ? 'SAM 2.1' : 'SAM 3'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
       )}
 
       {/* 快捷键帮助 */}

@@ -120,9 +120,18 @@ class SolutionsService:
             raise ImportError("Ultralytics YOLO is not installed")
 
         self.models: Dict[str, YOLO] = {}
-        # 默认使用 GPU（如果可用）
+        # 检查 GPU 兼容性（RTX 5080 sm_120 需要 PyTorch 2.7+）
         import torch
-        self.default_device = "0" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability()
+            # sm_120+ (Blackwell) 需要 PyTorch 2.7+
+            if cap[0] >= 12:
+                self.default_device = "cpu"
+                logger.warning(f"[解决方案] GPU sm_{cap[0]}{cap[1]} 与当前 PyTorch 不兼容，使用 CPU")
+            else:
+                self.default_device = "0"
+        else:
+            self.default_device = "cpu"
         logger.info(f"[解决方案] 默认设备: {self.default_device}")
 
     def load_model(self, model_name: str = None) -> 'YOLO':
@@ -179,7 +188,8 @@ class SolutionsService:
                 classes=classes,
                 show_in=show_in,
                 show_out=show_out,
-                line_width=line_width
+                line_width=line_width,
+                device=self.default_device
             )
 
             cap = cv2.VideoCapture(source)
@@ -347,7 +357,8 @@ class SolutionsService:
                 model=model_path,
                 region=region_points,
                 classes=classes,
-                line_width=2
+                line_width=2,
+                device=self.default_device
             )
 
             cap = cv2.VideoCapture(source)
@@ -521,7 +532,8 @@ class SolutionsService:
                 show=False,
                 model=model_path,
                 classes=classes,
-                blur_ratio=int(blur_ratio)
+                blur_ratio=int(blur_ratio),
+                device=self.default_device
             )
 
             cap = cv2.VideoCapture(source)
@@ -630,7 +642,8 @@ class SolutionsService:
                 model=model_path,
                 region=region_points,
                 classes=classes,
-                line_width=2
+                line_width=2,
+                device=self.default_device
             )
 
             cap = cv2.VideoCapture(source)

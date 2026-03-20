@@ -454,23 +454,115 @@ class TrainingService:
 
         from backend.core.yolo_engine import yolo_engine
 
-        if not yolo_engine:
-            return {"success": False, "message": "训练引擎未初始化"}
+        # 1. 优先从 yolo_engine 内存中获取（训练正在进行时）
+        if yolo_engine:
+            try:
+                status = yolo_engine.get_training_status(task_id)
+                if status:
+                    chart_data = status.get_chart_data()
+                    return {"success": True, "data": chart_data}
+            except Exception as e:
+                logger.warning(f"[训练] 从 yolo_engine 获取图表数据失败: {e}")
+
+        # 2. 回退：从磁盘 results.csv 读取历史训练数据
+        experiment = self.experiments.get(task_id)
+        project_name = experiment.get("project_name") if experiment else None
+        if not project_name:
+            # 尝试从 task_id 推断（兼容旧格式）
+            project_name = task_id.replace("train_", "")
+
+        from backend.core.config import settings
+        import csv, math
+
+        train_dir = settings.MODELS_DIR / project_name / "train"
+        results_file = train_dir / "results.csv"
+
+        if not results_file.exists():
+            if not experiment:
+                return {"success": False, "message": "任务不存在"}
+            # 实验存在但尚无 results.csv（可能还未开始第一个 epoch）
+            return {"success": True, "data": {"epochs": [], "losses": {}, "metrics_history": [], "best_metrics": {}}}
 
         try:
-            status = yolo_engine.get_training_status(task_id)
-            if status:
-                chart_data = status.get_chart_data()
-                return {
-                    "success": True,
-                    "data": chart_data
+            with open(results_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                rows = [row for row in reader]
+
+            if not rows:
+                return {"success": True, "data": {"epochs": [], "losses": {}, "metrics_history": [], "best_metrics": {}}}
+
+            def safe_float(v):
+                try:
+                    val = float(v)
+                    return None if (math.isnan(val) or math.isinf(val)) else val
+                except (TypeError, ValueError):
+                    return None
+
+            epochs = []
+            box_loss, cls_loss, dfl_loss = [], [], []
+            metrics_history = []
+            best_map50 = 0.0
+            best_metrics = {}
+
+            for row in rows:
+                # strip whitespace from keys
+                row = {k.strip(): v.strip() for k, v in row.items()}
+                epoch = safe_float(row.get('epoch', row.get('                   epoch', '')))
+                if epoch is None:
+                    continue
+                ep = int(epoch) + 1
+                epochs.append(ep)
+
+                bl = safe_float(row.get('train/box_loss'))
+                cl = safe_float(row.get('train/cls_loss'))
+                dl = safe_float(row.get('train/dfl_loss'))
+                box_loss.append(bl)
+                cls_loss.append(cl)
+                dfl_loss.append(dl)
+
+                map50   = safe_float(row.get('metrics/mAP50(B)'))
+                map5095 = safe_float(row.get('metrics/mAP50-95(B)'))
+                prec    = safe_float(row.get('metrics/precision(B)'))
+                rec     = safe_float(row.get('metrics/recall(B)'))
+
+                record = {
+                    "epoch": ep,
+                    "metrics/mAP50(B)": map50,
+                    "metrics/mAP50-95(B)": map5095,
+                    "metrics/precision(B)": prec,
+                    "metrics/recall(B)": rec,
+                    "train/box_loss": bl,
+                    "train/cls_loss": cl,
+                    "train/dfl_loss": dl,
                 }
+                metrics_history.append(record)
+
+                if map50 is not None and map50 > best_map50:
+                    best_map50 = map50
+                    best_metrics = {
+                        "epoch": ep,
+                        "metrics/mAP50(B)": map50,
+                        "metrics/mAP50-95(B)": map5095,
+                        "metrics/precision(B)": prec,
+                        "metrics/recall(B)": rec,
+                    }
+
+            chart_data = {
+                "epochs": epochs,
+                "losses": {
+                    "box_loss": box_loss,
+                    "cls_loss": cls_loss,
+                    "dfl_loss": dfl_loss,
+                },
+                "metrics_history": metrics_history,
+                "best_metrics": best_metrics,
+            }
+            return {"success": True, "data": chart_data}
+
         except Exception as e:
-            error_msg = f"获取图表数据失败: {str(e)}"
+            error_msg = f"读取训练历史数据失败: {str(e)}"
             logger.error(f"[训练] {error_msg}")
             return {"success": False, "message": error_msg}
-
-        return {"success": False, "message": "任务不存在"}
 
     def get_system_info(self) -> Dict[str, Any]:
         """

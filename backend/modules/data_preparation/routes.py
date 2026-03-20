@@ -223,6 +223,202 @@ async def export_dataset(project_name: str, format: str = "yolo"):
     return annotation_service.export_dataset(project_name, format)
 
 
+@router.post("/annotation/projects/{project_name}/upload-video")
+async def upload_project_video(
+    project_name: str,
+    file: UploadFile = File(...),
+    frame_interval: int = Form(30)
+):
+    """上传视频并抽帧为图像"""
+    import tempfile
+    import cv2
+
+    project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    images_dir = project_dir / "images"
+    images_dir.mkdir(exist_ok=True)
+
+    # 保存视频到临时文件
+    suffix = Path(file.filename or 'video.mp4').suffix or '.mp4'
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+
+    try:
+        cap = cv2.VideoCapture(tmp_path)
+        frame_count = 0
+        saved_count = 0
+        stem = Path(file.filename or 'frame').stem
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame_count % frame_interval == 0:
+                frame_name = f"{stem}_frame{frame_count:06d}.jpg"
+                cv2.imwrite(str(images_dir / frame_name), frame)
+                saved_count += 1
+            frame_count += 1
+
+        cap.release()
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    return {"success": True, "message": f"已从视频中提取 {saved_count} 帧", "frames": saved_count}
+
+
+@router.post("/annotation/projects/{project_name}/upload-archive")
+async def upload_project_archive(
+    project_name: str,
+    file: UploadFile = File(...)
+):
+    """解压归档文件（ZIP/TAR/GZ）并提取图像"""
+    import tempfile
+    import zipfile
+    import tarfile
+
+    project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    images_dir = project_dir / "images"
+    images_dir.mkdir(exist_ok=True)
+
+    filename = file.filename or 'archive'
+    suffix = ''.join(Path(filename).suffixes).lower()
+    content = await file.read()
+
+    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+    saved_count = 0
+
+    with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        if suffix.endswith('.zip'):
+            with zipfile.ZipFile(tmp_path) as zf:
+                for member in zf.namelist():
+                    if Path(member).suffix.lower() in IMAGE_EXTS:
+                        data = zf.read(member)
+                        dest = images_dir / Path(member).name
+                        dest.write_bytes(data)
+                        saved_count += 1
+        elif '.tar' in suffix or suffix.endswith('.gz') or suffix.endswith('.bz2'):
+            with tarfile.open(tmp_path) as tf:
+                for member in tf.getmembers():
+                    if member.isfile() and Path(member.name).suffix.lower() in IMAGE_EXTS:
+                        f = tf.extractfile(member)
+                        if f:
+                            dest = images_dir / Path(member.name).name
+                            dest.write_bytes(f.read())
+                            saved_count += 1
+        else:
+            raise HTTPException(status_code=400, detail="不支持的归档格式，请使用 ZIP、TAR 或 GZ")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    return {"success": True, "message": f"已提取 {saved_count} 张图像", "extracted": saved_count}
+
+
+@router.get("/annotation/projects/{project_name}/export/ndjson")
+async def export_project_ndjson(project_name: str):
+    """导出项目标注为 NDJSON 格式（用于本地训练）"""
+    from fastapi.responses import StreamingResponse
+    import json as json_mod
+
+    project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    images_dir = project_dir / "images"
+    labels_dir = project_dir / "labels"
+
+    def generate():
+        if not images_dir.exists():
+            return
+        for img_path in sorted(images_dir.iterdir()):
+            if img_path.suffix.lower() not in {'.jpg', '.jpeg', '.png', '.bmp'}:
+                continue
+            label_path = labels_dir / img_path.with_suffix('.txt').name if labels_dir.exists() else None
+            labels = []
+            if label_path and label_path.exists():
+                for line in label_path.read_text().splitlines():
+                    parts = line.strip().split()
+                    if len(parts) >= 5:
+                        labels.append({
+                            "class_id": int(parts[0]),
+                            "bbox": [float(x) for x in parts[1:5]]
+                        })
+            record = {"filename": img_path.name, "labels": labels}
+            yield json_mod.dumps(record, ensure_ascii=False) + '\n'
+
+    return StreamingResponse(
+        generate(),
+        media_type='application/x-ndjson',
+        headers={"Content-Disposition": f'attachment; filename="{project_name}.ndjson"'}
+    )
+
+
+@router.get("/annotation/projects/{project_name}/statistics")
+async def get_project_statistics(project_name: str):
+    """获取项目标注统计"""
+    project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    images_dir = project_dir / "images"
+    labels_dir = project_dir / "labels"
+
+    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+    total_images = 0
+    annotated_images = 0
+    total_annotations = 0
+    class_counts: dict = {}
+
+    # 尝试读取 project.json 获取类别名
+    project_json = project_dir / "project.json"
+    class_names: list = []
+    if project_json.exists():
+        import json as json_mod
+        try:
+            pdata = json_mod.loads(project_json.read_text(encoding='utf-8'))
+            class_names = pdata.get('classes', [])
+        except Exception:
+            pass
+
+    if images_dir.exists():
+        for img_path in images_dir.iterdir():
+            if img_path.suffix.lower() in IMAGE_EXTS:
+                total_images += 1
+                if labels_dir and labels_dir.exists():
+                    label_path = labels_dir / img_path.with_suffix('.txt').name
+                    if label_path.exists():
+                        lines = [l for l in label_path.read_text().splitlines() if l.strip()]
+                        if lines:
+                            annotated_images += 1
+                            total_annotations += len(lines)
+                            for line in lines:
+                                parts = line.strip().split()
+                                if parts:
+                                    cid = int(parts[0])
+                                    cname = class_names[cid] if cid < len(class_names) else str(cid)
+                                    class_counts[cname] = class_counts.get(cname, 0) + 1
+
+    return {
+        "success": True,
+        "statistics": {
+            "total_images": total_images,
+            "annotated_images": annotated_images,
+            "unannotated_images": total_images - annotated_images,
+            "total_annotations": total_annotations,
+            "class_counts": class_counts
+        }
+    }
+
+
 # ==================== SAM 智能标注 ====================
 
 @router.post("/sam/load")
@@ -790,8 +986,9 @@ async def list_dataset_images(
     if not dataset_path.exists():
         raise HTTPException(status_code=404, detail="数据集不存在")
 
-    images_dir = dataset_path / "images"
-    labels_dir = dataset_path / "labels"
+    # 支持 images/ 和 image/ 两种目录名
+    images_dir = dataset_path / "images" if (dataset_path / "images").exists() else dataset_path / "image"
+    labels_dir = dataset_path / "labels" if (dataset_path / "labels").exists() else dataset_path / "annotation"
 
     if not images_dir.exists():
         return {"success": True, "images": [], "total": 0}
@@ -826,6 +1023,10 @@ async def list_dataset_images(
                         pass
                     break
 
+    # 检查缩略图目录是否存在
+    thumbs_dir = dataset_path / ".thumbnails"
+    has_thumbnails = thumbs_dir.exists()
+
     # 构建图片列表
     images = []
     for img_path in sorted(image_files):
@@ -834,7 +1035,7 @@ async def list_dataset_images(
                 width, height = img.size
 
             # 确定拆分（从路径推断或默认unknown）
-            path_parts = str(img_path).split('/')
+            path_parts = img_path.parts
             if 'train' in path_parts:
                 split_name = 'train'
             elif 'val' in path_parts:
@@ -857,10 +1058,14 @@ async def list_dataset_images(
             if labeled == "unlabeled" and is_labeled:
                 continue
 
+            thumb_name = f"{img_path.stem}_thumb{img_path.suffix}"
+            thumb_path = thumbs_dir / thumb_name
+            thumbnail_url = f"/api/v1/datasets/{name}/thumbnails/{img_path.name}" if (has_thumbnails and thumb_path.exists()) else f"/api/v1/datasets/{name}/images/{img_path.name}"
+
             images.append({
                 "filename": img_path.name,
                 "path": f"/api/v1/datasets/{name}/images/{img_path.name}",
-                "thumbnail": f"/api/v1/datasets/{name}/thumbnails/{img_path.name}",
+                "thumbnail": thumbnail_url,
                 "width": width,
                 "height": height,
                 "size": img_path.stat().st_size,
@@ -914,7 +1119,7 @@ async def get_dataset_image(name: str, filename: str):
 
     # 使用 dataset_service 获取正确的数据集路径（支持嵌套结构）
     dataset_path = dataset_service._get_dataset_path(name)
-    images_dir = dataset_path / "images"
+    images_dir = dataset_path / "images" if (dataset_path / "images").exists() else dataset_path / "image"
 
     # 先尝试直接路径
     image_path = images_dir / filename

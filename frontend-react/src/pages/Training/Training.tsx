@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardHeader, Button, Input, StatCard } from '../../components/common';
 import { datasetApi, trainingApi, modelApi, projectApi } from '../../services/api';
 import type { Dataset, TrainingConfig, Model, Project } from '../../types';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
 
 // 工作流程步骤
 type Step = 'project' | 'configure' | 'train' | 'monitor' | 'export';
@@ -27,6 +30,43 @@ interface PretrainedModel {
   installed: boolean;
   path?: string;
 }
+
+interface ChartData {
+  epochs: number[];
+  losses: {
+    box_loss: number[];
+    cls_loss: number[];
+    dfl_loss: number[];
+  };
+  metrics_history: Array<{
+    epoch: number;
+    'metrics/mAP50(B)': number;
+    'metrics/mAP50-95(B)': number;
+    'metrics/precision(B)': number;
+    'metrics/recall(B)': number;
+  }>;
+  best_metrics: {
+    mAP50: number;
+    mAP50_95: number;
+    precision: number;
+    recall: number;
+  };
+}
+
+interface SystemInfo {
+  gpu_available: boolean;
+  gpu_name?: string;
+  gpu_memory_total?: number;
+  gpu_memory_used?: number;
+  gpu_utilization?: number;
+  cpu_percent?: number;
+  memory_total?: number;
+  memory_used?: number;
+  memory_percent?: number;
+}
+
+type MonitorTab = 'overview' | 'charts' | 'console' | 'system';
+type ChartTabType = 'loss' | 'metrics';
 
 export const Training: React.FC = () => {
   const navigate = useNavigate();
@@ -58,16 +98,28 @@ export const Training: React.FC = () => {
   const [taskId, setTaskId] = useState('');
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
 
+  // 训练历史
+  const [history, setHistory] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   // Monitor 阶段
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [currentEpoch, setCurrentEpoch] = useState(0);
   const [totalEpochs, setTotalEpochs] = useState(0);
+  const [monitorTab, setMonitorTab] = useState<MonitorTab>('overview');
+  const [chartTab, setChartTab] = useState<ChartTabType>('loss');
+  const [chartData, setChartData] = useState<ChartData | null>(null);
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [monitorMetrics, setMonitorMetrics] = useState<{loss?: number; mAP50?: number; precision?: number; recall?: number; status?: string}>({});
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadDatasets();
     loadPretrainedModels();
     loadTrainedModels();
     loadProjects();
+    loadHistory();
   }, []);
 
   const loadProjects = async () => {
@@ -93,24 +145,67 @@ export const Training: React.FC = () => {
     }
   }, [searchParams]);
 
+  // 系统信息轮询（仅在 system tab 激活时）
+  useEffect(() => {
+    if (monitorTab !== 'system') return;
+    const loadSys = async () => {
+      try {
+        const res = await trainingApi.getSystemInfo();
+        if (res.data?.data) setSystemInfo(res.data.data);
+      } catch (e) { console.error(e); }
+    };
+    loadSys();
+    const interval = setInterval(loadSys, 3000);
+    return () => clearInterval(interval);
+  }, [monitorTab]);
+
+  // 日志自动滚动
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
   // 定期检查训练状态
   useEffect(() => {
     if (!currentTaskId) return;
 
+    let lastEpoch = -1;
+
     const interval = setInterval(async () => {
       try {
-        const res = await trainingApi.status(currentTaskId);
-        const data = res.data?.data || res.data;
+        const [statusRes, chartRes] = await Promise.all([
+          trainingApi.status(currentTaskId),
+          trainingApi.getChartData(currentTaskId).catch(() => null),
+        ]);
+        const data = (statusRes.data as any)?.data || statusRes.data as any;
         if (data) {
           setTrainingProgress(data.progress || 0);
           setCurrentEpoch(data.current_epoch || 0);
           setTotalEpochs(data.total_epochs || 0);
+          setMonitorMetrics({
+            loss: data.metrics?.losses?.box_loss,
+            mAP50: data.metrics?.latest?.['metrics/mAP50(B)'],
+            precision: data.metrics?.latest?.['metrics/precision(B)'],
+            recall: data.metrics?.latest?.['metrics/recall(B)'],
+            status: data.status,
+          });
+
+          if (chartRes?.data?.data) {
+            setChartData(chartRes.data.data);
+          }
+
+          const epoch = data.current_epoch || 0;
+          if (epoch !== lastEpoch && data.status === 'running') {
+            lastEpoch = epoch;
+            const mAP = data.metrics?.latest?.['metrics/mAP50(B)'];
+            const loss = data.metrics?.losses?.box_loss;
+            setLogs(prev => [...prev.slice(-100), `[${new Date().toLocaleTimeString()}] Epoch ${epoch}/${data.total_epochs || epochs} - Loss: ${loss?.toFixed(4) ?? '-'} - mAP50: ${mAP ? (mAP * 100).toFixed(1) + '%' : '-'}`]);
+          }
 
           const status = data.status;
           if (status === 'completed' || status === 'failed' || status === 'cancelled') {
             setTraining(false);
             if (status === 'completed') {
-              setCurrentStep('monitor');
+              setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 训练完成！`]);
             }
           }
         }
@@ -125,7 +220,7 @@ export const Training: React.FC = () => {
   const loadDatasets = async () => {
     try {
       const res = await datasetApi.list();
-      const datasets = res.data?.datasets || res.data?.data?.datasets || [];
+      const datasets = (res.data as any)?.datasets || (res.data as any)?.data?.datasets || [];
       setDatasets(datasets);
     } catch (error) {
       console.error('Failed to load datasets:', error);
@@ -135,7 +230,7 @@ export const Training: React.FC = () => {
   const loadPretrainedModels = async () => {
     try {
       const res = await modelApi.getPretrainedModels();
-      const models = res.data?.models || res.data?.data?.models || [];
+      const models = (res.data as any)?.models || (res.data as any)?.data?.models || [];
       setPretrainedModels(models);
       const installed = models.find((m: PretrainedModel) => m.installed);
       if (installed) {
@@ -149,10 +244,23 @@ export const Training: React.FC = () => {
   const loadTrainedModels = async () => {
     try {
       const res = await modelApi.list();
-      const models = res.data || res.data?.models || res.data?.data?.models || [];
+      const models: Model[] = (res.data as any)?.models || (res.data as any)?.data?.models || (res.data as any) || [];
       setTrainedModels(models);
     } catch (error) {
       console.error('Failed to load trained models:', error);
+    }
+  };
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await trainingApi.getHistory();
+      const list = (res.data as any)?.experiments || (res.data as any)?.data?.experiments || (res.data as any) || [];
+      setHistory(Array.isArray(list) ? list : []);
+    } catch (error) {
+      console.error('Failed to load history:', error);
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -163,8 +271,8 @@ export const Training: React.FC = () => {
         return projectName.trim().length > 0 || currentProject !== null;
       case 'configure':
         return selectedDataset.length > 0 &&
-          ((modelSource === 'pretrained' && selectedPretrainedModel) ||
-           (modelSource === 'trained' && selectedTrainedModel));
+          ((modelSource === 'pretrained' && !!selectedPretrainedModel) ||
+           (modelSource === 'trained' && !!selectedTrainedModel));
       case 'train':
         return !training;
       case 'monitor':
@@ -192,7 +300,7 @@ export const Training: React.FC = () => {
           default_img_size: imageSize,
         },
       });
-      const project = res.data?.project || res.data?.data;
+      const project = (res.data as any)?.project || (res.data as any)?.data;
       if (project) {
         setCurrentProject(project);
         setProjects(prev => [project, ...prev]);
@@ -250,13 +358,13 @@ export const Training: React.FC = () => {
         lr0: learningRate,
       };
       const res = await trainingApi.start(config);
-      const newTaskId = res.data?.data?.task_id || res.data?.task_id || '';
+      const newTaskId = (res.data as any)?.data?.task_id || (res.data as any)?.task_id || '';
       setTaskId(newTaskId);
       setCurrentTaskId(newTaskId);
       setTotalEpochs(epochs);
-
-      // 跳转到监控页面，同时传递当前任务ID
-      navigate(`/training-monitor?taskId=${newTaskId}`);
+      setLogs([`[${new Date().toLocaleTimeString()}] 训练任务已启动，Task ID: ${newTaskId}`]);
+      setCurrentStep('monitor');
+      setMonitorTab('overview');
     } catch (error) {
       console.error(error);
       setTraining(false);
@@ -530,7 +638,7 @@ export const Training: React.FC = () => {
                     <option value="">请选择模型</option>
                     {trainedModels.map((model) => (
                       <option key={model.name} value={model.name}>
-                        {model.name} {model.mAP50 ? `(mAP: ${(model.mAP50 * 100).toFixed(1)}%)` : ''}
+                        {model.name} {(model as any).mAP50 ? `(mAP: ${((model as any).mAP50 * 100).toFixed(1)}%)` : ''}
                       </option>
                     ))}
                   </select>
@@ -584,7 +692,7 @@ export const Training: React.FC = () => {
                       Epoch {currentEpoch}/{totalEpochs} - {trainingProgress.toFixed(1)}%
                     </p>
                   </div>
-                  <Button variant="danger" size="lg" onClick={handleStopTraining}>
+                  <Button variant="secondary" size="lg" onClick={handleStopTraining}>
                     停止训练
                   </Button>
                 </div>
@@ -595,56 +703,198 @@ export const Training: React.FC = () => {
 
       case 'monitor':
         return (
-          <Card>
-            <CardHeader icon="📈" title="训练监控" />
-            <div style={{ padding: 'var(--space-4)' }}>
-              {training ? (
-                <div>
+          <div>
+            {/* 进度条 */}
+            {training && (
+              <Card style={{ marginBottom: 'var(--space-4)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontWeight: 600 }}>{projectName || taskId}</span>
+                  <span style={{ color: '#f59e0b', fontWeight: 500 }}>训练中</span>
+                </div>
+                <div style={{ height: 20, background: '#f1f5f9', borderRadius: 10, overflow: 'hidden', marginBottom: 8 }}>
                   <div style={{
-                    width: '100%',
-                    height: 24,
-                    background: 'var(--color-bg-secondary)',
-                    borderRadius: 12,
-                    overflow: 'hidden',
-                    marginBottom: 'var(--space-4)'
+                    width: `${trainingProgress}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
+                    transition: 'width 0.5s ease',
+                    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 6
                   }}>
-                    <div style={{
-                      width: `${trainingProgress}%`,
-                      height: '100%',
-                      background: 'linear-gradient(90deg, #3b82f6, #10b981)',
-                      transition: 'width 0.3s ease'
-                    }} />
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
-                    <StatCard value={currentEpoch} label="当前 Epoch" />
-                    <StatCard value={totalEpochs} label="总 Epochs" />
-                    <StatCard value={`${trainingProgress.toFixed(1)}%`} label="进度" variant="accent" />
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <Button variant="secondary" onClick={() => navigate(`/training-monitor?taskId=${currentTaskId || taskId}`)}>
-                      打开详细监控页面
-                    </Button>
+                    {trainingProgress > 10 && <span style={{ color: '#fff', fontSize: 11, fontWeight: 600 }}>{trainingProgress.toFixed(1)}%</span>}
                   </div>
                 </div>
-              ) : (
-                <div style={{ textAlign: 'center', padding: 'var(--space-6)' }}>
-                  <div style={{ fontSize: 48, marginBottom: 'var(--space-4)' }}>✅</div>
-                  <h3>训练已完成</h3>
-                  <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-                    模型已保存到 /data/models/{projectName}
-                  </p>
-                  <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
-                    <Button variant="secondary" onClick={() => navigate(`/training-monitor?taskId=${taskId}`)}>
-                      查看训练详情
-                    </Button>
-                    <Button variant="primary" onClick={() => setCurrentStep('export')}>
-                      导出模型
-                    </Button>
-                  </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>Epoch {currentEpoch} / {totalEpochs}</span>
+                  <Button variant="secondary" size="sm" onClick={handleStopTraining}>⏹ 停止训练</Button>
                 </div>
-              )}
+              </Card>
+            )}
+
+            {/* 统计卡片 */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-3)', marginBottom: 'var(--space-4)' }}>
+              <StatCard value={training ? '训练中' : (monitorMetrics.status === 'completed' ? '已完成' : '已停止')} label="状态" variant={monitorMetrics.status === 'completed' ? 'success' : 'default'} />
+              <StatCard value={`${currentEpoch}/${totalEpochs || epochs}`} label="Epoch" />
+              <StatCard value={monitorMetrics.mAP50 ? `${(monitorMetrics.mAP50 * 100).toFixed(1)}%` : '-'} label="mAP@0.5" variant="accent" />
+              <StatCard value={monitorMetrics.loss?.toFixed(4) || '-'} label="Box Loss" />
             </div>
-          </Card>
+
+            {/* Tab 栏 */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 'var(--space-4)', borderBottom: '1px solid #e2e8f0', paddingBottom: 0 }}>
+              {(['overview', 'charts', 'console', 'system'] as MonitorTab[]).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setMonitorTab(tab)}
+                  style={{
+                    padding: '8px 20px',
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    fontWeight: monitorTab === tab ? 600 : 400,
+                    color: monitorTab === tab ? 'var(--color-primary)' : '#6b7280',
+                    borderBottom: monitorTab === tab ? '2px solid var(--color-primary)' : '2px solid transparent',
+                    marginBottom: -1,
+                    fontSize: 14,
+                  }}
+                >
+                  {{ overview: '概览', charts: '图表', console: '日志', system: '系统' }[tab]}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab 内容 */}
+            {monitorTab === 'overview' && (
+              <Card>
+                <CardHeader icon="📋" title="训练信息" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+                  {[
+                    ['项目', projectName || '-'],
+                    ['任务 ID', taskId || '-'],
+                    ['数据集', selectedDataset || '-'],
+                    ['基础模型', modelSource === 'pretrained' ? selectedPretrainedModel : selectedTrainedModel],
+                    ['Epochs', epochs],
+                    ['Batch Size', batchSize],
+                    ['图像尺寸', imageSize],
+                    ['学习率', learningRate],
+                  ].map(([k, v]) => (
+                    <div key={String(k)} style={{ padding: '10px 12px', background: '#f8fafc', borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>{k}</div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                {!training && monitorMetrics.status === 'completed' && (
+                  <div style={{ marginTop: 'var(--space-4)', textAlign: 'center' }}>
+                    <Button variant="primary" onClick={() => setCurrentStep('export')}>📦 导出模型</Button>
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {monitorTab === 'charts' && (
+              <Card>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 'var(--space-4)' }}>
+                  {(['loss', 'metrics'] as ChartTabType[]).map(t => (
+                    <Button key={t} variant={chartTab === t ? 'primary' : 'secondary'} size="sm" onClick={() => setChartTab(t)}>
+                      {t === 'loss' ? 'Loss 曲线' : '指标曲线'}
+                    </Button>
+                  ))}
+                </div>
+                {!chartData ? (
+                  <div style={{ textAlign: 'center', padding: 'var(--space-8)', color: '#6b7280' }}>暂无图表数据，训练进行中...</div>
+                ) : chartTab === 'loss' ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={chartData.epochs.map((ep, i) => ({
+                      epoch: ep,
+                      box_loss: chartData.losses.box_loss[i] || 0,
+                      cls_loss: chartData.losses.cls_loss[i] || 0,
+                      dfl_loss: chartData.losses.dfl_loss[i] || 0,
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="epoch" label={{ value: 'Epoch', position: 'insideBottom', offset: -5 }} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="box_loss" stroke="#3b82f6" dot={false} name="Box Loss" />
+                      <Line type="monotone" dataKey="cls_loss" stroke="#f59e0b" dot={false} name="Cls Loss" />
+                      <Line type="monotone" dataKey="dfl_loss" stroke="#10b981" dot={false} name="DFL Loss" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={chartData.metrics_history.map(m => ({
+                      epoch: m.epoch,
+                      mAP50: (m['metrics/mAP50(B)'] || 0) * 100,
+                      mAP50_95: (m['metrics/mAP50-95(B)'] || 0) * 100,
+                      precision: (m['metrics/precision(B)'] || 0) * 100,
+                      recall: (m['metrics/recall(B)'] || 0) * 100,
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="epoch" />
+                      <YAxis unit="%" />
+                      <Tooltip formatter={(v: any) => (typeof v === 'number' ? v.toFixed(1) : v) + '%'} />
+                      <Legend />
+                      <Line type="monotone" dataKey="mAP50" stroke="#3b82f6" dot={false} name="mAP@0.5" />
+                      <Line type="monotone" dataKey="mAP50_95" stroke="#8b5cf6" dot={false} name="mAP@0.5:0.95" />
+                      <Line type="monotone" dataKey="precision" stroke="#10b981" dot={false} name="Precision" />
+                      <Line type="monotone" dataKey="recall" stroke="#f59e0b" dot={false} name="Recall" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </Card>
+            )}
+
+            {monitorTab === 'console' && (
+              <Card>
+                <CardHeader icon="📟" title="训练日志" />
+                <div style={{
+                  background: '#0f172a', borderRadius: 8, padding: 16,
+                  height: 320, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12
+                }}>
+                  {logs.length === 0 ? (
+                    <span style={{ color: '#64748b' }}>等待训练开始...</span>
+                  ) : (
+                    logs.map((log, i) => (
+                      <div key={i} style={{ color: '#94a3b8', marginBottom: 2 }}>{log}</div>
+                    ))
+                  )}
+                  <div ref={logsEndRef} />
+                </div>
+              </Card>
+            )}
+
+            {monitorTab === 'system' && (
+              <Card>
+                <CardHeader icon="🖥️" title="系统资源" />
+                {!systemInfo ? (
+                  <div style={{ textAlign: 'center', padding: 'var(--space-6)', color: '#6b7280' }}>加载中...</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-3)' }}>
+                    <div style={{ padding: 16, background: '#f8fafc', borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>GPU</div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>{systemInfo.gpu_available ? (systemInfo.gpu_name || 'Available') : 'N/A'}</div>
+                      {systemInfo.gpu_available && <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>利用率: {systemInfo.gpu_utilization?.toFixed(1) ?? '-'}%</div>}
+                    </div>
+                    <div style={{ padding: 16, background: '#f8fafc', borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>GPU 显存</div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>
+                        {systemInfo.gpu_available ? `${((systemInfo.gpu_memory_used || 0) / 1024).toFixed(1)} / ${((systemInfo.gpu_memory_total || 0) / 1024).toFixed(1)} GB` : 'N/A'}
+                      </div>
+                    </div>
+                    <div style={{ padding: 16, background: '#f8fafc', borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>CPU</div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>{systemInfo.cpu_percent?.toFixed(1) ?? '-'}%</div>
+                    </div>
+                    <div style={{ padding: 16, background: '#f8fafc', borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>内存</div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>
+                        {`${((systemInfo.memory_used || 0) / 1024).toFixed(1)} / ${((systemInfo.memory_total || 0) / 1024).toFixed(1)} GB`}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>使用率: {systemInfo.memory_percent?.toFixed(1) ?? '-'}%</div>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            )}
+          </div>
         );
 
       case 'export':
@@ -685,9 +935,6 @@ export const Training: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
         <h1 style={{ fontFamily: 'DM Sans', fontWeight: 700, margin: 0 }}>模型训练</h1>
-        <Button variant="secondary" onClick={() => navigate('/training-monitor')}>
-          📈 训练监控
-        </Button>
       </div>
 
       {/* 统计卡片 */}
@@ -695,7 +942,7 @@ export const Training: React.FC = () => {
         <StatCard value={datasets.length} label="可用数据集" />
         <StatCard value={pretrainedModels.filter(m => m.installed).length} label="已安装模型" variant="accent" />
         <StatCard value={trainedModels.length} label="训练完成" variant="success" />
-        <StatCard value={training ? '训练中' : '空闲'} label="训练状态" variant={training ? 'warning' : 'default'} />
+        <StatCard value={training ? '训练中' : '空闲'} label="训练状态" variant={training ? 'accent' : 'default'} />
       </div>
 
       {/* 步骤指示器 */}
@@ -720,6 +967,63 @@ export const Training: React.FC = () => {
           </Button>
         )}
       </div>
+
+      {/* 训练历史 */}
+      <Card style={{ marginTop: 'var(--space-8)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+          <CardHeader icon="📋" title="训练历史" />
+          <Button variant="secondary" size="sm" onClick={loadHistory}>刷新</Button>
+        </div>
+        {historyLoading ? (
+          <p style={{ color: 'var(--text-secondary)' }}>加载中...</p>
+        ) : history.length === 0 ? (
+          <p style={{ color: 'var(--text-secondary)' }}>暂无训练记录</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {['项目名', '状态', 'Epochs', 'mAP@0.5', '数据集', '操作'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-secondary)', fontWeight: 500 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((item: any) => {
+                  const statusColor = item.status === 'completed' ? '#10b981' : item.status === 'running' ? '#f59e0b' : '#ef4444';
+                  const statusLabel = item.status === 'completed' ? '已完成' : item.status === 'running' ? '训练中' : item.status === 'failed' ? '失败' : item.status;
+                  const mAP = item.best_metrics?.mAP50 ?? item.metrics?.mAP50;
+                  return (
+                    <tr key={item.task_id || item.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '10px 12px', fontWeight: 500 }}>{item.project_name || item.name || '-'}</td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <span style={{ color: statusColor, fontWeight: 600 }}>{statusLabel}</span>
+                      </td>
+                      <td style={{ padding: '10px 12px' }}>{item.config?.epochs ?? item.epochs ?? '-'}</td>
+                      <td style={{ padding: '10px 12px' }}>{mAP != null ? `${(mAP * 100).toFixed(1)}%` : '-'}</td>
+                      <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{item.config?.dataset_path || item.dataset || '-'}</td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setCurrentTaskId(item.task_id || item.id);
+                            setTaskId(item.task_id || item.id);
+                            setProjectName(item.project_name || item.name || '');
+                            setCurrentStep('monitor');
+                          }}
+                        >
+                          查看
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </div>
   );
 };

@@ -101,7 +101,7 @@ export const TrainingMonitor: React.FC = () => {
       try {
         const [statusRes, chartRes] = await Promise.all([
           trainingApi.status(selectedTask),
-          chartTab === 'charts' ? trainingApi.getChartData(selectedTask) : Promise.resolve(null)
+          activeTab === 'charts' ? trainingApi.getChartData(selectedTask) : Promise.resolve(null)
         ]);
 
         const data = (statusRes.data as any)?.data || statusRes.data;
