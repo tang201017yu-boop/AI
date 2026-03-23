@@ -56,7 +56,7 @@ export const Datasets: React.FC = () => {
   const [totalImages, setTotalImages] = useState(0);
 
   // 视图和筛选状态
-  const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [splitFilter, setSplitFilter] = useState<string>('');
   const [labeledFilter, setLabeledFilter] = useState<string>('');
   const [sortBy, setSortBy] = useState<SortOption>('name_asc');
@@ -484,6 +484,10 @@ export const Datasets: React.FC = () => {
 
         {/* 右侧导出 */}
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '4px', background: 'var(--bg-secondary)', padding: '2px', borderRadius: 'var(--radius-md)' }}>
+            <button onClick={() => setViewMode('grid')} style={{ padding: '4px 10px', border: 'none', borderRadius: 'var(--radius-sm)', background: viewMode === 'grid' ? 'var(--primary-500)' : 'transparent', color: viewMode === 'grid' ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '12px' }}>网格</button>
+            <button onClick={() => setViewMode('compact')} style={{ padding: '4px 10px', border: 'none', borderRadius: 'var(--radius-sm)', background: viewMode === 'compact' ? 'var(--primary-500)' : 'transparent', color: viewMode === 'compact' ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '12px' }}>紧凑</button>
+          </div>
           <Button variant="secondary" size="sm" onClick={() => setShowExportModal(true)}>
             📥 导出
           </Button>

@@ -136,11 +136,19 @@ class ProxyAPIMiddleware(BaseHTTPMiddleware):
                         content=body,
                         params=request.query_params
                     )
-                    # 尝试解析JSON响应
+                    content_type = remote_response.headers.get("content-type", "")
+                    # 非JSON响应（图片、文件等）直接返回二进制
+                    if "application/json" not in content_type:
+                        from starlette.responses import Response
+                        return Response(
+                            content=remote_response.content,
+                            status_code=remote_response.status_code,
+                            media_type=content_type or "application/octet-stream"
+                        )
+                    # JSON响应
                     try:
                         response_data = remote_response.json()
                     except json_mod.JSONDecodeError:
-                        # 如果不是JSON，返回原始文本
                         response_data = {"success": False, "message": "远程服务器返回非JSON响应", "raw_response": remote_response.text[:500]}
                     return JSONResponse(
                         content=response_data,
