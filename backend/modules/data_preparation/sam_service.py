@@ -12,6 +12,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
+import urllib.request
 
 # 创建日志记录器
 logger = logging.getLogger(__name__)
@@ -81,15 +82,28 @@ class SAMService:
 
             model_path = model_paths.get(model_type, model_paths["vit_b"])
 
-            # 检查模型文件是否存在
-            if not Path(model_path).exists():
-                error_msg = f"模型文件不存在: {model_path}"
-                logger.error(f"[SAM] {error_msg}")
-                return {
-                    "success": False,
-                    "message": error_msg,
-                    "download_url": "https://github.com/facebookresearch/segment-anything#model-checkpoints"
+            # 检查模型文件是否存在，不存在则自动下载
+            model_path_obj = Path(model_path)
+            if not model_path_obj.exists():
+                logger.info(f"[SAM] 模型文件不存在，开始自动下载: {model_path}")
+                model_path_obj.parent.mkdir(parents=True, exist_ok=True)
+                download_urls = {
+                    "vit_b": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
+                    "vit_l": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth",
+                    "vit_h": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
                 }
+                download_url = download_urls.get(model_type, download_urls["vit_b"])
+                try:
+                    urllib.request.urlretrieve(download_url, model_path)
+                    logger.info(f"[SAM] 模型下载完成: {model_path}")
+                except Exception as e:
+                    error_msg = f"模型下载失败: {str(e)}"
+                    logger.error(f"[SAM] {error_msg}")
+                    return {
+                        "success": False,
+                        "message": error_msg,
+                        "download_url": download_url
+                    }
 
             # 加载模型
             logger.info(f"[SAM] 加载 SAM 模型: {model_path}")
