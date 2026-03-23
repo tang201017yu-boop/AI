@@ -114,6 +114,47 @@ export const Training: React.FC = () => {
   const [monitorMetrics, setMonitorMetrics] = useState<{loss?: number; mAP50?: number; precision?: number; recall?: number; status?: string}>({});
   const logsEndRef = useRef<HTMLDivElement>(null);
 
+  // Export 阶段
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
+
+  const handleExport = async (format: string) => {
+    if (!taskId && !currentTaskId) {
+      setExportMessage('请先完成训练');
+      return;
+    }
+    const id = taskId || currentTaskId || '';
+    setExportLoading(true);
+    setExportMessage('');
+    try {
+      const res = await trainingApi.exportExperimentModel(id, format);
+      const result = res.data;
+      if (result?.success && result?.data?.export_path) {
+        const filePath = result.data.export_path;
+        const filename = filePath.split('/').pop() || `${id}.${format}`;
+        // 根据路径选择静态服务前缀
+        const prefix = filePath.includes('YOLO-') ? '/yolo-models' : '/models';
+        // 提取相对于挂载目录的路径
+        const relativePath = filePath.includes('YOLO-')
+          ? filePath.replace('/root/wuyu/YOLO-/data/models/', '')
+          : filename;
+        const link = document.createElement('a');
+        link.href = `${prefix}/${relativePath}`;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setExportMessage(`${format.toUpperCase()} 导出成功！`);
+      } else {
+        setExportMessage(result?.data?.message || result?.message || '导出失败');
+      }
+    } catch (e: any) {
+      setExportMessage(e?.response?.data?.detail || e?.message || '导出请求失败');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadDatasets();
     loadPretrainedModels();
@@ -903,16 +944,21 @@ export const Training: React.FC = () => {
             <CardHeader icon="📦" title="导出模型" />
             <div style={{ padding: 'var(--space-4)' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
-                <Button variant="secondary" onClick={() => alert('导出为 ONNX 格式')}>
+                <Button variant="secondary" disabled={exportLoading} onClick={() => handleExport('onnx')}>
                   📦 ONNX
                 </Button>
-                <Button variant="secondary" onClick={() => alert('导出为 TensorRT 格式')}>
+                <Button variant="secondary" disabled={exportLoading} onClick={() => handleExport('tensorrt')}>
                   ⚡ TensorRT
                 </Button>
-                <Button variant="secondary" onClick={() => alert('导出为 TFLite 格式')}>
+                <Button variant="secondary" disabled={exportLoading} onClick={() => handleExport('tflite')}>
                   📱 TFLite
                 </Button>
               </div>
+              {exportMessage && (
+                <div style={{ textAlign: 'center', padding: 'var(--space-3)', color: exportMessage.includes('成功') ? '#10b981' : '#ef4444', fontWeight: 500 }}>
+                  {exportMessage}
+                </div>
+              )}
               <div style={{ textAlign: 'center' }}>
                 <Button variant="primary" onClick={() => {
                   setCurrentStep('project');

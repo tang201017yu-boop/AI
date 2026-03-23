@@ -537,9 +537,11 @@ class SAMService:
         """
         logger.info(f"[SAM] 批量标注类别: {class_name}, 图片: {image_path}")
 
-        # 检查 SAM 模型是否加载
+        # 检查 SAM 模型是否加载，未加载则自动加载
         if not self.model_loaded:
-            return {"success": False, "message": "SAM 模型未加载，请先加载模型"}
+            load_result = self.load_model()
+            if not load_result.get("success"):
+                return {"success": False, "message": f"SAM 模型加载失败: {load_result.get('message')}"}
 
         # 设置图片
         set_result = self.set_image(image_path)

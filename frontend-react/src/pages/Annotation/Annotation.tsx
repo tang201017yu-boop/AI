@@ -907,24 +907,6 @@ export const Annotation: React.FC = () => {
         )}
       </Card>
 
-      {/* 功能说明 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)' }}>
-        {[
-          { icon: '🎯', title: 'YOLO 预标注', desc: '使用 YOLO 模型自动检测目标，一键生成检测框和类别标签' },
-          { icon: '✏️', title: '手动修正', desc: '在自动标注基础上手动修正，添加、删除或调整检测框' },
-          { icon: '📦', title: '一键导出', desc: '导出为 YOLO 格式训练数据，直接用于模型训练' },
-        ].map(({ icon, title, desc }) => (
-          <div key={title} style={{
-            padding: 'var(--space-4)', borderRadius: 'var(--radius-lg)',
-            border: '1px solid var(--border-color)', background: 'var(--bg-primary)',
-            boxShadow: 'var(--shadow-sm)',
-          }}>
-            <div style={{ fontSize: '28px', marginBottom: '10px' }}>{icon}</div>
-            <h4 style={{ fontWeight: 600, marginBottom: '6px' }}>{title}</h4>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>{desc}</p>
-          </div>
-        ))}
-      </div>
     </div>
   );
 };

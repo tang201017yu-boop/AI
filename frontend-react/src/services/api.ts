@@ -69,7 +69,10 @@ export const modelApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
   get: (id: string) => api.get<ApiResponse<Model>>(`/models/${id}`),
-  delete: (id: string) => api.delete(`/training/models/${id}`),
+  delete: (id: string, project?: string, path?: string) =>
+    api.delete(`/training/models/${id}`, {
+      params: project ? { project, path } : undefined,
+    }),
   // 获取已加载到内存的模型列表
   getLoadedModels: () => api.get<ApiResponse<{ models: any[]; total: number }>>('/models/loaded'),
   // 预加载模型到内存（默认自动检测GPU）

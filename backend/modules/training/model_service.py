@@ -388,22 +388,77 @@ class ModelManagementService:
         all_models = uploaded_models + training_models
         return {"success": True, "models": all_models, "total": len(all_models)}
 
-    def delete_model(self, model_id: str) -> Dict[str, Any]:
-        """删除模型"""
-        index = self._load_index()
+    def delete_model(self, model_id: str, project: str = None, source: str = None) -> Dict[str, Any]:
+        """删除模型（支持上传模型和训练模型）"""
+        logger.info(f"[model_service] delete_model: model_id='{model_id}', project='{project}', source='{source}'")
 
+        # 1. 优先从上传模型索引中删除
+        index = self._load_index()
         for i, model in enumerate(index):
             if model["id"] == model_id:
-                # 删除文件
                 model_path = Path(model["path"])
                 if model_path.exists():
                     model_path.unlink()
-
-                # 移除索引
+                    logger.info(f"[model_service] 已删除索引模型文件: {model_path}")
                 index.pop(i)
                 self._save_index(index)
-
                 return {"success": True, "message": "模型已删除"}
+
+        # 2. 尝试 {project_name}_{stem} 格式
+        if "_" in model_id:
+            search_dirs = [settings.MODELS_DIR]
+            projects_dir = settings.MODELS_DIR / "projects"
+            if projects_dir.exists():
+                search_dirs.append(projects_dir)
+            for models_base_dir in search_dirs:
+                if not models_base_dir.exists():
+                    continue
+                for project_dir in models_base_dir.iterdir():
+                    if not project_dir.is_dir():
+                        continue
+                    prefix = project_dir.name + "_"
+                    if model_id.startswith(prefix):
+                        stem = model_id[len(prefix):]
+                        weights_dir = project_dir / "train" / "weights"
+                        if weights_dir.exists():
+                            wf = weights_dir / f"{stem}.pt"
+                            if wf.exists():
+                                wf.unlink()
+                                logger.info(f"[model_service] 已删除: {wf}")
+                                return {"success": True, "message": "训练模型已删除"}
+                        models_dir = project_dir / "models"
+                        if models_dir.exists():
+                            wf = models_dir / f"{stem}.pt"
+                            if wf.exists():
+                                wf.unlink()
+                                logger.info(f"[model_service] 已删除: {wf}")
+                                return {"success": True, "message": "项目模型已删除"}
+
+        # 3. 直接按文件名搜索（如 model_id="last" 匹配 last.pt）
+        search_dirs = [settings.MODELS_DIR]
+        projects_dir = settings.MODELS_DIR / "projects"
+        if projects_dir.exists():
+            search_dirs.append(projects_dir)
+        for models_base_dir in search_dirs:
+            if not models_base_dir.exists():
+                continue
+            for project_dir in models_base_dir.iterdir():
+                if not project_dir.is_dir() or project_dir.name.startswith('.'):
+                    continue
+                weights_dir = project_dir / "train" / "weights"
+                if weights_dir.exists():
+                    for wf in weights_dir.glob("*.pt"):
+                        if wf.stem == model_id or wf.name == model_id:
+                            wf.unlink()
+                            logger.info(f"[model_service] 直接匹配已删除: {wf}")
+                            return {"success": True, "message": "训练模型已删除"}
+                models_dir = project_dir / "models"
+                if models_dir.exists():
+                    for wf in models_dir.glob("*.pt"):
+                        if wf.stem == model_id or wf.name == model_id:
+                            wf.unlink()
+                            logger.info(f"[model_service] 直接匹配已删除: {wf}")
+                            return {"success": True, "message": "项目模型已删除"}
 
         return {"success": False, "message": "模型不存在"}
 

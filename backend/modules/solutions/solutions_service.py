@@ -120,16 +120,15 @@ class SolutionsService:
             raise ImportError("Ultralytics YOLO is not installed")
 
         self.models: Dict[str, YOLO] = {}
-        # 检查 GPU 兼容性（RTX 5080 sm_120 需要 PyTorch 2.7+）
+        # 检查 GPU 兼容性（实际测试而非版本号判断）
         import torch
         if torch.cuda.is_available():
-            cap = torch.cuda.get_device_capability()
-            # sm_120+ (Blackwell) 需要 PyTorch 2.7+
-            if cap[0] >= 12:
-                self.default_device = "cpu"
-                logger.warning(f"[解决方案] GPU sm_{cap[0]}{cap[1]} 与当前 PyTorch 不兼容，使用 CPU")
-            else:
+            try:
+                torch.zeros(1).cuda()
                 self.default_device = "0"
+            except Exception:
+                self.default_device = "cpu"
+                logger.warning("[解决方案] GPU 不兼容当前 PyTorch，使用 CPU")
         else:
             self.default_device = "cpu"
         logger.info(f"[解决方案] 默认设备: {self.default_device}")

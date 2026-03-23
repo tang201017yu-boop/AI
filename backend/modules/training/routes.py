@@ -1668,19 +1668,44 @@ async def get_model(model_id: str):
 
 
 @router.delete("/models/{model_id}")
-async def delete_model(model_id: str):
+async def delete_model(
+    model_id: str,
+    project: Optional[str] = None,
+    source: Optional[str] = None,
+    path: Optional[str] = None
+):
     """
     删除模型接口
 
     Args:
         model_id: 模型 ID
+        project: 项目名称（用于区分同名模型）
+        source: 模型来源（uploaded/training/project_model）
+        path: 模型文件完整路径（可选，更精确的删除方式）
 
     Returns:
         删除结果
     """
-    logger.info(f"[训练] 删除模型: {model_id}")
+    logger.info(f"[训练] 删除模型: model_id='{model_id}', project='{project}', source='{source}', path='{path}'")
 
-    result = model_service.delete_model(model_id)
+    # 如果提供了 path，直接删除该文件（安全验证：必须是 models 目录下的 .pt 文件）
+    if path:
+        from pathlib import Path
+        import re
+        model_path = Path(path)
+        # 安全检查：只允许删除 models 目录下的 .pt 文件
+        if not str(model_path).endswith('.pt'):
+            raise HTTPException(status_code=400, detail="只能删除 .pt 文件")
+        if not re.search(r'/models[/\\]', str(model_path)):
+            raise HTTPException(status_code=400, detail="非法路径，只能删除 models 目录下的文件")
+        if model_path.exists():
+            model_path.unlink()
+            logger.info(f"[训练] 已删除文件: {model_path}")
+            return {"success": True, "message": "模型文件已删除"}
+        else:
+            raise HTTPException(status_code=404, detail="文件不存在")
+
+    result = model_service.delete_model(model_id, project=project, source=source)
     if result["success"]:
         logger.info(f"[训练] 模型已删除: {model_id}")
         return result

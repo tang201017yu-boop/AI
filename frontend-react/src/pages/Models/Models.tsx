@@ -156,7 +156,7 @@ export const Models: React.FC = () => {
     }
     setDeletingId(model.id);
     try {
-      await modelApi.delete(model.id);
+      await modelApi.delete(model.id, model.project, model.path);
       setModels(models.filter(m => m.id !== model.id));
       alert('模型删除成功');
     } catch (error) {

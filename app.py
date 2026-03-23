@@ -191,6 +191,12 @@ models_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/models", StaticFiles(directory=str(models_dir)), name="models")
 logger.info(f"模型文件服务: /models -> {models_dir}")
 
+# 挂载 YOLO- 训练输出目录
+yolo_models_dir = Path("/root/wuyu/YOLO-/data/models")
+if yolo_models_dir.exists():
+    app.mount("/yolo-models", StaticFiles(directory=str(yolo_models_dir)), name="yolo_models")
+    logger.info(f"YOLO训练模型服务: /yolo-models -> {yolo_models_dir}")
+
 # ============================================================================
 # 路由注册
 # ============================================================================

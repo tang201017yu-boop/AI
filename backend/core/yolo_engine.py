@@ -99,8 +99,17 @@ class YOLOEngine:
             thread_name_prefix="yolo-train"
         )
 
-        # 默认使用 GPU（如果可用）
-        self.default_device = "0" if torch.cuda.is_available() else "cpu"
+        # 默认使用 GPU（如果可用，且兼容当前 PyTorch）
+        if torch.cuda.is_available():
+            try:
+                # 测试 GPU 是否真正可用（sm_120 需要 PyTorch 2.7+）
+                torch.zeros(1).cuda()
+                self.default_device = "0"
+            except Exception:
+                self.default_device = "cpu"
+                logger.warning("[YOLO引擎] GPU 不兼容当前 PyTorch，使用 CPU")
+        else:
+            self.default_device = "cpu"
         logger.info(f"[YOLO引擎] 默认设备: {self.default_device}")
 
         # 清空 CUDA 缓存
