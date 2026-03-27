@@ -97,10 +97,13 @@ class AnnotationService:
         images_dir.mkdir(exist_ok=True)
 
         added_count = 0
+        # 记录原文件名 -> 实际保存文件名的映射
+        name_map = {}
         for file in files:
             if file.filename:
                 unique_name = get_unique_filename(str(images_dir), file.filename)
                 save_uploaded_file(file, str(images_dir / unique_name))
+                name_map[file.filename] = unique_name
                 added_count += 1
 
         # 更新项目
@@ -118,7 +121,8 @@ class AnnotationService:
         return {
             "success": True,
             "message": f"添加了 {added_count} 张图片",
-            "images_dir": str(images_dir)
+            "images_dir": str(images_dir),
+            "name_map": name_map,
         }
 
     def save_annotation(

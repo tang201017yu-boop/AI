@@ -23,6 +23,21 @@ export const Annotation: React.FC = () => {
   const [confidence, setConfidence] = useState(0.25);
   const [, setShowAutoLabel] = useState(false);
 
+  // 批量标注状态
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batchTargetProject, setBatchTargetProject] = useState<string>('');
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  const [batchResults, setBatchResults] = useState<{ success: number; failed: number; total_detections: number } | null>(null);
+
+  // 项目批量标注状态
+  const [projectBatchTarget, setProjectBatchTarget] = useState<string | null>(null);
+  const [projectBatchModel, setProjectBatchModel] = useState('yolo11n.pt');
+  const [projectBatchConf, setProjectBatchConf] = useState(0.25);
+  const [projectBatchLoading, setProjectBatchLoading] = useState(false);
+  const [projectBatchProgress, setProjectBatchProgress] = useState({ current: 0, total: 0 });
+  const [projectBatchDone, setProjectBatchDone] = useState<{ success: number; failed: number } | null>(null);
+
   // ============ SAM 标注功能状态 ============
   const [activeTab, setActiveTab] = useState<'yolo' | 'sam'>('yolo');
   const [samImage, setSamImage] = useState<string | null>(null);
@@ -470,18 +485,103 @@ export const Annotation: React.FC = () => {
     }
   };
 
+  // 点击已标注图片缩略图，加载到编辑区
+  const handleThumbnailClick = async (img: { name: string; url: string }) => {
+    if (!selectedProject) return;
+    setSamLoading(true);
+    try {
+      // 从 URL 加载图片
+      const resp = await fetch(img.url);
+      const blob = await resp.blob();
+      const file = new File([blob], img.name, { type: blob.type || 'image/jpeg' });
+      const imageUrl = URL.createObjectURL(blob);
+
+      // 清除旧状态
+      setSamPoints([]);
+      setSamBoxes([]);
+      setSamMasks([]);
+      setSamAnnotations([]);
+      setSamSelectedId(null);
+      setSamHistory([]);
+      setSamHistoryIndex(-1);
+
+      setSamImage(imageUrl);
+      setSamImagePath(img.name);
+      setSamFile(file);
+
+      // 获取图片尺寸
+      const imgEl = new Image();
+      imgEl.onload = () => setImgSize({ width: imgEl.width, height: imgEl.height });
+      imgEl.src = imageUrl;
+
+      // 加载已有标注
+      const projectId = selectedProject.id || selectedProject.name;
+      const annRes = await annotationApi.getAnnotations(projectId, img.name);
+      const annData = annRes.data?.annotations || annRes.data?.data?.annotations || [];
+
+      if (annData.length > 0) {
+        const newBoxes: AnnotationBox[] = [];
+        const newAnnotations: SAMAnnotation[] = [];
+        let newPoints: AnnotationPoint[] = [];
+        const extraClasses: string[] = [];
+
+        annData.forEach((ann: any) => {
+          if (ann.bbox && ann.bbox.length === 4) {
+            newBoxes.push({ x1: ann.bbox[0], y1: ann.bbox[1], x2: ann.bbox[2], y2: ann.bbox[3] });
+          }
+          if (ann.points && ann.points.length > 0) {
+            newPoints = [...newPoints, ...ann.points.map((p: number[]) => ({ x: p[0], y: p[1], label: 1 }))];
+          }
+          const clsName = ann.class || ann.class_name || 'unknown';
+          if (!samClasses.includes(clsName) && !extraClasses.includes(clsName)) {
+            extraClasses.push(clsName);
+          }
+          const clsIdx = samClasses.indexOf(clsName);
+          newAnnotations.push({
+            class: clsName,
+            class_id: clsIdx >= 0 ? clsIdx : (ann.class_id ?? 0),
+            bbox: ann.bbox || [],
+            segmentation: '',
+            confidence: ann.confidence ?? 1,
+          });
+        });
+
+        // 直接设置状态，无需历史记录
+        setSamBoxes(newBoxes);
+        setSamMasks([]);
+        setSamAnnotations(newAnnotations);
+        setSamPoints(newPoints);
+        if (extraClasses.length > 0) {
+          setSamClasses(prev => [...prev, ...extraClasses]);
+        }
+      }
+    } catch (e) {
+      console.error('加载图片失败:', e);
+    } finally {
+      setSamLoading(false);
+    }
+  };
+
   // 处理文件选择并自动标注
   const handleFileSelect = async (files: File[]) => {
     if (files.length === 0) return;
 
-    const file = files[0];
-    const imageUrl = URL.createObjectURL(file);
-    setSelectedImage(imageUrl);
-    setAutoLabelResult(null);
-    setShowAutoLabel(true);
-
-    // 自动触发智能标注
-    await handleAutoLabel(file);
+    if (files.length === 1) {
+      // 单张：保持原有预览行为
+      const file = files[0];
+      const imageUrl = URL.createObjectURL(file);
+      setSelectedImage(imageUrl);
+      setAutoLabelResult(null);
+      setShowAutoLabel(true);
+      setBatchFiles([]);
+      await handleAutoLabel(file);
+    } else {
+      // 多张：批量模式
+      setSelectedImage(null);
+      setAutoLabelResult(null);
+      setBatchFiles(files);
+      setBatchResults(null);
+    }
   };
 
   // 智能标注
@@ -514,6 +614,112 @@ export const Annotation: React.FC = () => {
       });
     } finally {
       setAutoLabelLoading(false);
+    }
+  };
+
+  // 批量标注（上传多张图片）
+  const handleBatchAutoLabel = async () => {
+    if (batchFiles.length === 0 || !batchTargetProject) return;
+
+    setBatchLoading(true);
+    setBatchProgress({ current: 0, total: batchFiles.length });
+    setBatchResults(null);
+
+    let success = 0;
+    let failed = 0;
+    let total_detections = 0;
+
+    // 分批上传图片，获取实际保存的文件名映射
+    const uploadRes = await annotationApi.addImages(batchTargetProject, batchFiles);
+    const nameMap: Record<string, string> =
+      (uploadRes.data?.data?.name_map || uploadRes.data?.name_map || {}) as Record<string, string>;
+
+    for (let i = 0; i < batchFiles.length; i++) {
+      const file = batchFiles[i];
+      setBatchProgress({ current: i + 1, total: batchFiles.length });
+      // 让出主线程，使进度 UI 得以更新
+      await new Promise(resolve => setTimeout(resolve, 0));
+      try {
+        // 推理
+        const res = await inferenceApi.image(file, selectedModel, confidence);
+        const result = res.data?.data || res.data as any;
+        const detections = result?.detections || [];
+
+        // 用实际保存的文件名保存标注
+        const savedName = nameMap[file.name] || file.name;
+        if (detections.length > 0) {
+          const annotations = detections.map((det: any) => ({
+            class: det.class_name,
+            class_id: det.class_id ?? 0,
+            bbox: [det.x1, det.y1, det.x2, det.y2],
+            confidence: det.confidence,
+          }));
+          await annotationApi.saveAnnotations(batchTargetProject, savedName, annotations);
+        }
+
+        total_detections += detections.length;
+        success++;
+      } catch (e) {
+        console.error(`批量标注失败 [${file.name}]:`, e);
+        failed++;
+      }
+    }
+
+    setBatchResults({ success, failed, total_detections });
+    setBatchLoading(false);
+  };
+
+  // 对项目内已有图片批量标注
+  const handleProjectBatchLabel = async (project: AnnotationProject) => {
+    setProjectBatchLoading(true);
+    setProjectBatchProgress({ current: 0, total: 0 });
+    setProjectBatchDone(null);
+
+    try {
+      const projectId = project.id || project.name;
+      const res = await annotationApi.getImages(projectId);
+      const images: { name: string; url: string }[] = res.data?.images || res.data?.data?.images || [];
+
+      setProjectBatchProgress({ current: 0, total: images.length });
+
+      let success = 0;
+      let failed = 0;
+
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        setProjectBatchProgress({ current: i + 1, total: images.length });
+        // 让出主线程，使进度 UI 得以更新
+        await new Promise(resolve => setTimeout(resolve, 0));
+        try {
+          // 通过 URL 获取图片 Blob
+          const blob = await fetch(img.url).then(r => r.blob());
+          const file = new File([blob], img.name, { type: blob.type || 'image/jpeg' });
+
+          const inferRes = await inferenceApi.image(file, projectBatchModel, projectBatchConf);
+          const result = inferRes.data?.data || inferRes.data as any;
+          const detections = result?.detections || [];
+
+          if (detections.length > 0) {
+            const annotations = detections.map((det: any) => ({
+              class: det.class_name,
+              class_id: det.class_id ?? 0,
+              bbox: [det.x1, det.y1, det.x2, det.y2],
+              confidence: det.confidence,
+            }));
+            await annotationApi.saveAnnotations(projectId, img.name, annotations);
+          }
+          success++;
+        } catch (e) {
+          console.error(`项目批量标注失败 [${img.name}]:`, e);
+          failed++;
+        }
+      }
+
+      setProjectBatchDone({ success, failed });
+    } catch (e) {
+      console.error('项目批量标注异常:', e);
+    } finally {
+      setProjectBatchLoading(false);
     }
   };
 
@@ -601,7 +807,7 @@ export const Annotation: React.FC = () => {
             borderRadius: 'var(--radius-full)', fontWeight: 600
           }}>自动检测</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
           <div>
             <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500, fontSize: '13px', color: 'var(--text-secondary)' }}>
               检测模型
@@ -638,7 +844,28 @@ export const Annotation: React.FC = () => {
           />
           <div>
             <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500, fontSize: '13px', color: 'var(--text-secondary)' }}>
-              上传图片
+              保存到项目（批量时必选）
+            </label>
+            <select
+              value={batchTargetProject}
+              onChange={(e) => setBatchTargetProject(e.target.value)}
+              style={{
+                width: '100%', padding: '8px 12px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+                fontSize: '14px', outline: 'none',
+              }}
+            >
+              <option value="">— 不保存 —</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id || p.name}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500, fontSize: '13px', color: 'var(--text-secondary)' }}>
+              上传图片（支持多选）
             </label>
             <label style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -651,14 +878,75 @@ export const Annotation: React.FC = () => {
               transition: 'all var(--transition-base)',
             }}>
               📁 选择图片或拖拽
-              <input type="file" accept="image/*"
+              <input type="file" accept="image/*" multiple
                 onChange={(e) => handleFileSelect(e.target.files ? Array.from(e.target.files) : [])}
                 style={{ display: 'none' }} />
             </label>
           </div>
         </div>
 
-        {selectedImage && (
+        {/* 批量模式：文件列表 + 启动按钮 */}
+        {batchFiles.length > 1 && (
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600 }}>已选择 {batchFiles.length} 张图片</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => { setBatchFiles([]); setBatchResults(null); }} style={{
+                  padding: '5px 12px', border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-md)', background: 'var(--bg-primary)',
+                  cursor: 'pointer', fontSize: '13px', color: 'var(--text-secondary)',
+                }}>清空</button>
+                <Button
+                  variant="primary" size="sm"
+                  onClick={handleBatchAutoLabel}
+                  disabled={batchLoading || !batchTargetProject}
+                >
+                  {batchLoading ? `处理中 ${batchProgress.current}/${batchProgress.total}...` : '开始批量标注'}
+                </Button>
+              </div>
+            </div>
+            {!batchTargetProject && (
+              <p style={{ fontSize: '12px', color: 'var(--warning)', marginBottom: '8px' }}>⚠️ 请先选择「保存到项目」</p>
+            )}
+            {batchLoading && (
+              <div style={{ marginBottom: '8px' }}>
+                <div style={{ height: '6px', background: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', background: 'var(--primary-500)', borderRadius: '3px',
+                    width: `${batchProgress.total ? (batchProgress.current / batchProgress.total) * 100 : 0}%`,
+                    transition: 'width 0.3s ease',
+                  }} />
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  正在处理 {batchProgress.current}/{batchProgress.total}：{batchFiles[batchProgress.current - 1]?.name}
+                </p>
+              </div>
+            )}
+            {batchResults && (
+              <div style={{
+                padding: '10px 14px', borderRadius: 'var(--radius-md)',
+                background: 'var(--success-light)', border: '1px solid var(--success)',
+                fontSize: '13px', display: 'flex', gap: '20px',
+              }}>
+                <span>✅ 成功 <strong>{batchResults.success}</strong> 张</span>
+                {batchResults.failed > 0 && <span>❌ 失败 <strong>{batchResults.failed}</strong> 张</span>}
+                <span>共检测 <strong>{batchResults.total_detections}</strong> 个对象</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxHeight: '80px', overflowY: 'auto', marginTop: '8px' }}>
+              {batchFiles.map((f, i) => (
+                <div key={i} style={{
+                  padding: '3px 10px', borderRadius: 'var(--radius-full)',
+                  background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+                  fontSize: '12px', color: 'var(--text-secondary)',
+                }}>{f.name}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 单张预览模式 */}
+        {selectedImage && batchFiles.length <= 1 && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-5)' }}>
             <div>
               <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>原图</p>
@@ -757,38 +1045,112 @@ export const Annotation: React.FC = () => {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
             {projects.map((project) => (
-              <div key={project.id} onClick={() => handleSelectProject(project)} style={projectCardStyle(selectedProject?.id === project.id)}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{
-                      width: '36px', height: '36px', borderRadius: 'var(--radius-md)',
-                      background: selectedProject?.id === project.id ? 'var(--primary-500)' : 'var(--bg-tertiary)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px'
-                    }}>✏️</div>
-                    <h3 style={{ fontWeight: 600, fontSize: '15px' }}>{project.name}</h3>
+              <div key={project.id}>
+                <div onClick={() => handleSelectProject(project)} style={projectCardStyle(selectedProject?.id === project.id)}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{
+                        width: '36px', height: '36px', borderRadius: 'var(--radius-md)',
+                        background: selectedProject?.id === project.id ? 'var(--primary-500)' : 'var(--bg-tertiary)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px'
+                      }}>✏️</div>
+                      <h3 style={{ fontWeight: 600, fontSize: '15px' }}>{project.name}</h3>
+                    </div>
+                    <button onClick={(e) => handleDeleteProject(project.id!, e)} disabled={deletingId === project.id} style={{
+                      border: 'none', background: 'transparent',
+                      cursor: deletingId === project.id ? 'not-allowed' : 'pointer',
+                      padding: '4px', borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-muted)', fontSize: '15px',
+                    }}>
+                      {deletingId === project.id ? '⏳' : '🗑️'}
+                    </button>
                   </div>
-                  <button onClick={(e) => handleDeleteProject(project.id!, e)} disabled={deletingId === project.id} style={{
-                    border: 'none', background: 'transparent',
-                    cursor: deletingId === project.id ? 'not-allowed' : 'pointer',
-                    padding: '4px', borderRadius: 'var(--radius-sm)',
-                    color: 'var(--text-muted)', fontSize: '15px',
-                  }}>
-                    {deletingId === project.id ? '⏳' : '🗑️'}
-                  </button>
-                </div>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '12px', minHeight: '20px' }}>
-                  {project.description || '暂无描述'}
-                </p>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    {new Date(project.created_at).toLocaleDateString()}
-                    {project.classes && <span style={{ marginLeft: '8px' }}>· {project.classes.length} 类别</span>}
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '12px', minHeight: '20px' }}>
+                    {project.description || '暂无描述'}
+                  </p>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      {new Date(project.created_at).toLocaleDateString()}
+                      {project.classes && <span style={{ marginLeft: '8px' }}>· {project.classes.length} 类别</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <Button variant="secondary" size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setProjectBatchTarget(projectBatchTarget === (project.id || project.name) ? null : (project.id || project.name));
+                          setProjectBatchDone(null);
+                        }}>
+                        批量标注
+                      </Button>
+                      <Button variant={selectedProject?.id === project.id ? "primary" : "secondary"} size="sm"
+                        onClick={(e) => { e.stopPropagation(); handleSelectProject(project); }}>
+                        {selectedProject?.id === project.id ? '✓ 已选中' : '开始标注'}
+                      </Button>
+                    </div>
                   </div>
-                  <Button variant={selectedProject?.id === project.id ? "primary" : "secondary"} size="sm"
-                    onClick={(e) => { e.stopPropagation(); handleSelectProject(project); }}>
-                    {selectedProject?.id === project.id ? '✓ 已选中' : '开始标注'}
-                  </Button>
                 </div>
+
+                {/* 项目批量标注面板 */}
+                {projectBatchTarget === (project.id || project.name) && (
+                  <div style={{
+                    marginTop: '8px', padding: '14px 16px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--primary-200)',
+                    background: 'var(--primary-50)',
+                  }} onClick={(e) => e.stopPropagation()}>
+                    <p style={{ fontWeight: 600, fontSize: '13px', marginBottom: '10px' }}>对「{project.name}」内图片批量标注</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>模型</label>
+                        <select value={projectBatchModel} onChange={(e) => setProjectBatchModel(e.target.value)}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '13px', outline: 'none' }}>
+                          <option value="yolo11n.pt">YOLO11n</option>
+                          <option value="yolo11s.pt">YOLO11s</option>
+                          <option value="yolo11m.pt">YOLO11m</option>
+                          <option value="yolo26n.pt">YOLO26n</option>
+                          <option value="yolo26m.pt">YOLO26m</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>置信度</label>
+                        <input type="number" value={projectBatchConf}
+                          onChange={(e) => setProjectBatchConf(parseFloat(e.target.value))}
+                          min={0} max={1} step={0.05}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '13px', outline: 'none' }} />
+                      </div>
+                    </div>
+                    {projectBatchLoading && (
+                      <div style={{ marginBottom: '8px' }}>
+                        <div style={{ height: '6px', background: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
+                          <div style={{
+                            height: '100%', background: 'var(--primary-500)', borderRadius: '3px',
+                            width: `${projectBatchProgress.total ? (projectBatchProgress.current / projectBatchProgress.total) * 100 : 0}%`,
+                            transition: 'width 0.3s ease',
+                          }} />
+                        </div>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          处理中 {projectBatchProgress.current}/{projectBatchProgress.total}
+                        </p>
+                      </div>
+                    )}
+                    {projectBatchDone && (
+                      <div style={{ marginBottom: '8px', fontSize: '13px', color: 'var(--success)', fontWeight: 500 }}>
+                        ✅ 完成！成功 {projectBatchDone.success} 张{projectBatchDone.failed > 0 ? `，失败 ${projectBatchDone.failed} 张` : ''}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Button variant="primary" size="sm"
+                        onClick={() => handleProjectBatchLabel(project)}
+                        disabled={projectBatchLoading}>
+                        {projectBatchLoading ? '标注中...' : '开始'}
+                      </Button>
+                      <Button variant="secondary" size="sm"
+                        onClick={() => { setProjectBatchTarget(null); setProjectBatchDone(null); }}>
+                        关闭
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -832,13 +1194,15 @@ export const Annotation: React.FC = () => {
             {selectedProject && projectImages.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
                 <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px' }}>已标注图片</p>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxHeight: '100px', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxHeight: '400px', overflowY: 'auto' }}>
                   {projectImages.map((img, i) => (
-                    <div key={i} title={img.name} style={{
-                      width: '72px', height: '72px', borderRadius: 'var(--radius-md)',
-                      overflow: 'hidden', border: '2px solid var(--border-color)', cursor: 'pointer',
-                      transition: 'border-color var(--transition-base)',
-                    }}>
+                    <div key={i} title={img.name}
+                      onClick={() => handleThumbnailClick(img)}
+                      style={{
+                        width: '72px', height: '72px', borderRadius: 'var(--radius-md)',
+                        overflow: 'hidden', border: '2px solid var(--border-color)', cursor: 'pointer',
+                        transition: 'border-color var(--transition-base)',
+                      }}>
                       <img src={img.url} alt={img.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
                   ))}

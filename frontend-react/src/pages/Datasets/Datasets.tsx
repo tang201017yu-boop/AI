@@ -324,61 +324,100 @@ export const Datasets: React.FC = () => {
   };
 
   const renderImageGrid = () => {
-    const gridClass = viewMode === 'grid'
-      ? { gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 'var(--space-3)' }
-      : viewMode === 'compact'
-        ? { gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 'var(--space-2)' }
-        : {};
-
-    const imageStyle = viewMode === 'grid'
-      ? { height: '140px' }
-      : viewMode === 'compact'
-        ? { height: '80px' }
-        : {};
+    const isCompact = viewMode === 'compact';
 
     return (
-      <div style={gridClass as any}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isCompact
+          ? 'repeat(auto-fill, minmax(150px, 1fr))'
+          : 'repeat(auto-fill, minmax(220px, 1fr))',
+        gap: 'var(--space-4)'
+      }}>
         {images.map((img, idx) => (
           <div
             key={idx}
             onClick={() => setFullscreenImage(img)}
             style={{
               border: '1px solid var(--border)',
+              borderTop: '3px solid var(--primary-500)',
               borderRadius: 'var(--radius-md)',
               overflow: 'hidden',
               cursor: 'pointer',
               transition: 'transform 0.2s, box-shadow 0.2s',
-              background: 'var(--bg-card)'
+              background: 'var(--bg-card)',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)';
+              (e.currentTarget as HTMLElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.transform = 'translateY(0)';
+              (e.currentTarget as HTMLElement).style.boxShadow = 'none';
             }}
           >
-            <div style={{ position: 'relative' }}>
+            <div style={{
+              height: isCompact ? '120px' : '160px',
+              overflow: 'hidden',
+              background: 'var(--gray-100)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
               <img
                 src={img.thumbnail}
                 alt={img.filename}
-                style={{ width: '100%', height: imageStyle.height, objectFit: 'cover', display: 'block', imageRendering: pixelView ? 'pixelated' : 'auto' }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  imageRendering: pixelView ? 'pixelated' : 'auto'
+                }}
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23eee" width="100" height="100"/><text x="50" y="50" text-anchor="middle" dy=".3em" fill="%23999">无图片</text></svg>';
+                  (e.target as HTMLImageElement).style.display = 'none';
+                  (e.target as HTMLImageElement).parentElement!.innerHTML =
+                    '<div style="color:var(--text-muted);font-size:0.875rem">加载失败</div>';
                 }}
               />
-              {img.label_count > 0 && (
+            </div>
+            <div style={{ padding: 'var(--space-3)' }}>
+              <p style={{
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                marginBottom: 'var(--space-2)'
+              }}>{img.filename}</p>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '0.75rem',
+                color: 'var(--text-secondary)'
+              }}>
+                <span>{img.width}×{img.height}</span>
                 <span style={{
-                  position: 'absolute', top: 4, right: 4,
-                  background: 'rgba(0,0,0,0.6)', color: 'white',
-                  padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem'
+                  padding: '1px 6px',
+                  borderRadius: '4px',
+                  fontSize: '0.7rem',
+                  background: img.split === 'train' ? 'var(--primary-100)' : img.split === 'val' ? 'var(--accent-100)' : 'var(--success-100)',
+                  color: img.split === 'train' ? 'var(--primary-700)' : img.split === 'val' ? 'var(--accent-700)' : 'var(--success-700)'
+                }}>{img.split}</span>
+              </div>
+              {img.label_count > 0 && (
+                <div style={{
+                  marginTop: 'var(--space-2)',
+                  fontSize: '0.75rem',
+                  color: 'var(--success-600)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
                 }}>
-                  {img.label_count}
-                </span>
+                  <span style={{ color: 'var(--success-500)' }}>●</span>
+                  {img.label_count} 个标注
+                </div>
               )}
             </div>
-            {viewMode !== 'compact' && (
-              <div style={{ padding: 'var(--space-2)', fontSize: '0.75rem' }}>
-                <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img.filename}</p>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
-                  <span>{img.width}x{img.height}</span>
-                  <span>{img.split}</span>
-                </div>
-              </div>
-            )}
           </div>
         ))}
       </div>

@@ -9,6 +9,7 @@ interface TrainedModel {
   name: string;
   path: string;
   task?: string;
+  project?: string;
 }
 
 export const Inference: React.FC = () => {
@@ -34,9 +35,11 @@ export const Inference: React.FC = () => {
 
   const loadTrainedModels = async () => {
     try {
-      const res = await modelApi.list();
-      const models = res.data || [];
-      setTrainedModels(models);
+      const res = await modelApi.getUserModels();
+      const responseData = res.data as any;
+      const allModels = responseData?.models || [];
+      const userModels = allModels.filter((m: any) => m.source === 'uploaded' || m.source === 'training' || m.source === 'project_model');
+      setTrainedModels(userModels);
     } catch (error) {
       console.error('加载训练模型失败:', error);
     }
@@ -149,22 +152,20 @@ export const Inference: React.FC = () => {
               >
                 <option value="">请选择模型</option>
                 {trainedModels.length > 0 && (
-                  <optgroup label="训练模型">
+                  <optgroup label="── 用户模型 ──">
                     {trainedModels.map((model, idx) => (
                       <option key={`trained-${idx}`} value={model.path}>
-                        {model.name}
+                        {model.project ? `[${model.project}] ${model.name.includes('best') ? '最优权重' : model.name.includes('last') ? '最终权重' : model.name}` : model.name}
                       </option>
                     ))}
                   </optgroup>
                 )}
-                <optgroup label="YOLO26 (最新)">
+                <optgroup label="── 系统模型 ──">
                   <option value="yolo26n.pt">YOLO26n - 最新最快</option>
                   <option value="yolo26s.pt">YOLO26s - 轻量快速</option>
                   <option value="yolo26m.pt">YOLO26m - 平衡推荐</option>
                   <option value="yolo26l.pt">YOLO26l - 高精度</option>
                   <option value="yolo26x.pt">YOLO26x - 最高精度</option>
-                </optgroup>
-                <optgroup label="YOLO11 (经典)">
                   <option value="yolo11n.pt">YOLO11n</option>
                   <option value="yolo11s.pt">YOLO11s</option>
                   <option value="yolo11m.pt">YOLO11m</option>

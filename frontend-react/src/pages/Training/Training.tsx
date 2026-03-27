@@ -210,6 +210,7 @@ export const Training: React.FC = () => {
     if (!currentTaskId) return;
 
     let lastEpoch = -1;
+    let errorCount = 0;
 
     const interval = setInterval(async () => {
       try {
@@ -252,6 +253,13 @@ export const Training: React.FC = () => {
         }
       } catch (e) {
         console.error(e);
+        errorCount++;
+        if (errorCount >= 3) {
+          clearInterval(interval);
+          setTraining(false);
+          setCurrentTaskId(null);
+          setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 连接失败，训练任务可能已中断`]);
+        }
       }
     }, 3000);
 
@@ -284,8 +292,10 @@ export const Training: React.FC = () => {
 
   const loadTrainedModels = async () => {
     try {
-      const res = await modelApi.list();
-      const models: Model[] = (res.data as any)?.models || (res.data as any)?.data?.models || (res.data as any) || [];
+      const res = await modelApi.getUserModels();
+      const responseData = res.data as any;
+      const allModels = responseData?.models || [];
+      const models = allModels.filter((m: any) => m.source === 'uploaded' || m.source === 'training' || m.source === 'project_model');
       setTrainedModels(models);
     } catch (error) {
       console.error('Failed to load trained models:', error);
@@ -384,6 +394,7 @@ export const Training: React.FC = () => {
     if (!selectedDataset) return;
     if (modelSource === 'pretrained' && !selectedPretrainedModel) return;
     if (modelSource === 'trained' && !selectedTrainedModel) return;
+    if (training) return;
 
     setTraining(true);
     try {
@@ -495,6 +506,7 @@ export const Training: React.FC = () => {
               {projects.length > 0 && (
                 <div style={{ marginBottom: 'var(--space-4)' }}>
                   <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500 }}>选择已有项目</label>
+                  <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
                   <select
                     className="input"
                     value={currentProject?.id || ''}
@@ -507,9 +519,11 @@ export const Training: React.FC = () => {
                           setProjectName(project.name);
                           setProjectDescription(project.description || '');
                         }
+                      } else {
+                        setCurrentProject(null);
                       }
                     }}
-                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff' }}
+                    style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff' }}
                   >
                     <option value="">-- 选择已有项目 --</option>
                     {projects.map((project) => (
@@ -518,6 +532,27 @@ export const Training: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                  {currentProject && (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={async () => {
+                        if (!confirm(`确定删除项目 "${currentProject.name}" 吗？此操作不可恢复。`)) return;
+                        try {
+                          await projectApi.delete(currentProject.id);
+                          setProjects(prev => prev.filter(p => p.id !== currentProject.id));
+                          setCurrentProject(null);
+                          setProjectName('');
+                        } catch (e) {
+                          console.error(e);
+                          alert('删除项目失败');
+                        }
+                      }}
+                    >
+                      删除
+                    </Button>
+                  )}
+                  </div>
                 </div>
               )}
 
@@ -678,8 +713,8 @@ export const Training: React.FC = () => {
                   >
                     <option value="">请选择模型</option>
                     {trainedModels.map((model) => (
-                      <option key={model.name} value={model.name}>
-                        {model.name} {(model as any).mAP50 ? `(mAP: ${((model as any).mAP50 * 100).toFixed(1)}%)` : ''}
+                      <option key={(model as any).path || model.name} value={(model as any).path || model.name}>
+                        {(model as any).project ? `[${(model as any).project}] ${model.name.includes('best') ? '最优权重' : model.name.includes('last') ? '最终权重' : model.name}` : model.name}{(model as any).mAP50 ? ` (mAP: ${(((model as any).mAP50) * 100).toFixed(1)}%)` : ''}
                       </option>
                     ))}
                   </select>
@@ -772,7 +807,7 @@ export const Training: React.FC = () => {
 
             {/* 统计卡片 */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-3)', marginBottom: 'var(--space-4)' }}>
-              <StatCard value={training ? '训练中' : (monitorMetrics.status === 'completed' ? '已完成' : '已停止')} label="状态" variant={monitorMetrics.status === 'completed' ? 'success' : 'default'} />
+              <StatCard value={training || monitorMetrics.status === 'running' ? '训练中' : (monitorMetrics.status === 'completed' ? '已完成' : monitorMetrics.status === 'failed' ? '失败' : monitorMetrics.status ? '已停止' : '加载中')} label="状态" variant={monitorMetrics.status === 'completed' ? 'success' : training || monitorMetrics.status === 'running' ? 'accent' : 'default'} />
               <StatCard value={`${currentEpoch}/${totalEpochs || epochs}`} label="Epoch" />
               <StatCard value={monitorMetrics.mAP50 ? `${(monitorMetrics.mAP50 * 100).toFixed(1)}%` : '-'} label="mAP@0.5" variant="accent" />
               <StatCard value={monitorMetrics.loss?.toFixed(4) || '-'} label="Box Loss" />
@@ -1049,6 +1084,7 @@ export const Training: React.FC = () => {
                       <td style={{ padding: '10px 12px' }}>{mAP != null ? `${(mAP * 100).toFixed(1)}%` : '-'}</td>
                       <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{item.config?.dataset_path || item.dataset || '-'}</td>
                       <td style={{ padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
                         <Button
                           variant="secondary"
                           size="sm"
@@ -1061,6 +1097,22 @@ export const Training: React.FC = () => {
                         >
                           查看
                         </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={async () => {
+                            if (!confirm(`确定删除训练记录 "${item.project_name || item.name}" 吗？`)) return;
+                            try {
+                              await trainingApi.deleteExperiment(item.task_id || item.id);
+                              await loadHistory();
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                        >
+                          删除
+                        </Button>
+                        </div>
                       </td>
                     </tr>
                   );

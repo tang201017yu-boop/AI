@@ -102,12 +102,14 @@ class YOLOEngine:
         # 默认使用 GPU（如果可用，且兼容当前 PyTorch）
         if torch.cuda.is_available():
             try:
-                # 测试 GPU 是否真正可用（sm_120 需要 PyTorch 2.7+）
-                torch.zeros(1).cuda()
+                # 更严格的测试：执行矩阵运算，验证 sm_120 (RTX 5080) 兼容性
+                t = torch.zeros(16, 16).cuda()
+                _ = torch.mm(t, t)
+                torch.cuda.synchronize()
                 self.default_device = "0"
-            except Exception:
+            except Exception as e:
                 self.default_device = "cpu"
-                logger.warning("[YOLO引擎] GPU 不兼容当前 PyTorch，使用 CPU")
+                logger.warning(f"[YOLO引擎] GPU 不兼容当前 PyTorch，使用 CPU: {e}")
         else:
             self.default_device = "cpu"
         logger.info(f"[YOLO引擎] 默认设备: {self.default_device}")
@@ -641,7 +643,7 @@ class YOLOEngine:
             else:
                 # 加载基础模型
                 base_model_path = self._resolve_model_path(
-                    config.model_path or f"{model_type}.pt"
+                    config.model_path or (model_type if model_type.endswith('.pt') else f"{model_type}.pt")
                 )
                 model = YOLO(base_model_path)
 
@@ -842,7 +844,17 @@ class YOLOEngine:
             # 执行训练
             device = config.device
             if device == "auto":
-                device = "0" if torch.cuda.is_available() else "cpu"
+                if torch.cuda.is_available():
+                    try:
+                        t = torch.zeros(16, 16).cuda()
+                        _ = torch.mm(t, t)
+                        torch.cuda.synchronize()
+                        device = "0"
+                    except Exception:
+                        device = "cpu"
+                        logger.warning("[YOLO引擎] GPU 不兼容，训练使用 CPU")
+                else:
+                    device = "cpu"
 
             # 自动匹配优化器
             optimizer = config.optimizer
@@ -1130,12 +1142,24 @@ class TrainingStatus:
         Returns:
             Dict: 用于绘制图表的数据
         """
+        # Flatten metrics_history so each record has metric keys at the top level,
+        # matching the CSV-based format expected by the frontend.
+        flat_history = []
+        for i, record in enumerate(self.metrics_history):
+            flat = {"epoch": record.get("epoch", i + 1)}
+            flat.update(record.get("metrics", {}))
+            flat.update({
+                "train/box_loss": record.get("losses", {}).get("box_loss"),
+                "train/cls_loss": record.get("losses", {}).get("cls_loss"),
+                "train/dfl_loss": record.get("losses", {}).get("dfl_loss"),
+            })
+            flat_history.append(flat)
         return {
             "epochs": list(range(1, len(self.metrics_history) + 1)),
             "losses": {
                 name: list(values) for name, values in self.losses_history.items()
             },
-            "metrics_history": self.metrics_history,
+            "metrics_history": flat_history,
             "best_metrics": self.best_metrics
         }
 

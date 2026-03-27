@@ -21,6 +21,11 @@ export default defineConfig(({ mode }) => {
           target: backendUrl,
           changeOrigin: true,
           secure: false
+        },
+        '/annotation-images': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false
         }
       }
     }

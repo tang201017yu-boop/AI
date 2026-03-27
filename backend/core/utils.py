@@ -113,6 +113,35 @@ def list_files(directory: str, extensions: Optional[List[str]] = None) -> List[s
     return files
 
 
+def sanitize_filename(filename: str) -> str:
+    """
+    规范化文件名：去除重复点号、去除多余空格、保留合法字符
+    Args:
+        filename: 原文件名
+    Returns:
+        str: 规范化的文件名
+    """
+    import re
+    name = filename.strip()
+    # 折叠连续的点号为单点（处理 "abc..png" → "abc.png"）
+    while '..' in name:
+        name = name.replace('..', '.')
+    # 只保留字母、数字、中文、下划线、连字符、点号和扩展名
+    # 先分离扩展名
+    if '.' in name:
+        last_dot = name.rfind('.')
+        base = name[:last_dot]
+        ext = name[last_dot:]
+    else:
+        base = name
+        ext = ''
+    # 清理基础名：只保留合法字符
+    base = re.sub(r'[^\w\u4e00-\u9fff\-_ ]', '_', base)
+    # 折叠多余空格和连字符
+    base = re.sub(r'[-\s]+', '-', base).strip(' -')
+    return base + ext if base else ext.lstrip('.') or 'unnamed'
+
+
 def get_unique_filename(directory: str, filename: str) -> str:
     """
     生成唯一的文件名（避免覆盖已存在的文件）
@@ -122,9 +151,11 @@ def get_unique_filename(directory: str, filename: str) -> str:
     Returns:
         str: 唯一的文件名
     """
+    # 先规范化文件名
+    filename = sanitize_filename(filename)
     file_path = Path(directory) / filename
 
-    # 如果文件不存在，直接返回原文件名
+    # 如果文件不存在，直接返回规范后的文件名
     if not file_path.exists():
         logger.debug(f"[工具] 文件名无需修改: {filename}")
         return filename
