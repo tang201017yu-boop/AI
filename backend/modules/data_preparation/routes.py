@@ -227,16 +227,25 @@ async def get_project_images(project_name: str):
     return {"success": True, "images": images, "total": len(images)}
 
 
+@router.post("/annotation/projects/{project_name}/get-annotation")
+async def get_image_annotation_post(
+    project_name: str,
+    image_name: str = Form(...)
+):
+    """获取图片标注（POST版，支持长文件名）"""
+    return annotation_service.get_annotation(project_name, image_name)
+
+
 @router.get("/annotation/projects/{project_name}/image/{image_name}")
 async def get_image_annotation(project_name: str, image_name: str):
     """获取图片标注"""
     return annotation_service.get_annotation(project_name, image_name)
 
 
-@router.post("/annotation/projects/{project_name}/image/{image_name}")
+@router.post("/annotation/projects/{project_name}/save-annotation")
 async def save_image_annotation(
     project_name: str,
-    image_name: str,
+    image_name: str = Form(...),
     annotations: str = Form(...)
 ):
     """保存图片标注"""
@@ -451,7 +460,12 @@ async def get_project_statistics(project_name: str):
 @router.post("/sam/load")
 async def load_sam_model(model_type: str = "vit_b"):
     """加载 SAM 模型"""
-    return sam_service.load_model(model_type)
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[API] 加载 SAM 模型: {model_type}")
+    result = sam_service.load_model(model_type)
+    logger.info(f"[API] SAM 模型加载结果: {result}")
+    return result
 
 
 @router.get("/sam/status")
@@ -475,6 +489,14 @@ async def sam_predict(
     points_list = json.loads(points)
     labels_list = json.loads(labels)
     return sam_service.predict(points_list, labels_list)
+
+
+@router.post("/sam/predict-box")
+async def sam_predict_box(bbox: str = Form(...)):
+    """SAM 边界框预测"""
+    import json
+    bbox_list = json.loads(bbox)
+    return sam_service.predict_box(bbox_list)
 
 
 @router.post("/sam/auto-label")
@@ -567,6 +589,8 @@ async def batch_sam_label(
         with open(temp_path, 'wb') as f:
             f.write(content)
 
+        logger.info(f"[API] batch-sam-label 请求: class={class_name}, model={model_name}, conf={confidence}")
+
         # 调用 SAM 服务
         result = sam_service.batch_sam_label(
             image_path=temp_path,
@@ -574,6 +598,8 @@ async def batch_sam_label(
             model_name=model_name,
             confidence=confidence
         )
+
+        logger.info(f"[API] batch-sam-label 结果: success={result.get('success')}, message={result.get('message')}")
 
         # 清理临时文件
         try:

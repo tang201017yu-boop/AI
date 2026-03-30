@@ -13,10 +13,12 @@ interface Props {
   selectedId: string | null;
   onPointAdd: (point: AnnotationPoint) => void;
   onBoxAdd: (box: AnnotationBox) => void;
+  onMaskAdd?: (mask: AnnotationMask) => void;
   onBoxDrag?: (index: number, box: AnnotationBox) => void;
   onMaskSelect?: (index: string | number) => void;
   onAnnotationSelect?: (id: string) => void;
   showLabels?: boolean;
+  currentClass?: string;
 }
 
 const AnnotationCanvas: React.FC<Props> = ({
@@ -31,9 +33,11 @@ const AnnotationCanvas: React.FC<Props> = ({
   selectedId,
   onPointAdd,
   onBoxAdd,
+  onMaskAdd,
   onMaskSelect,
   onAnnotationSelect,
   showLabels = true,
+  currentClass = 'object',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -43,6 +47,7 @@ const AnnotationCanvas: React.FC<Props> = ({
   const [hoveredBox, setHoveredBox] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [polygonPoints, setPolygonPoints] = useState<{ x: number; y: number }[]>([]);
 
   // 颜色生成
   const getColorForClass = (className: string) => {
@@ -271,8 +276,36 @@ const AnnotationCanvas: React.FC<Props> = ({
         ctx.stroke();
         ctx.setLineDash([]);
       }
+
+      // 绘制多边形进行中的预览
+      if (tool === 'polygon' && polygonPoints.length > 0) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+        for (let i = 1; i < polygonPoints.length; i++) {
+          ctx.lineTo(polygonPoints[i].x, polygonPoints[i].y);
+        }
+        if (currentPoint) {
+          ctx.lineTo(currentPoint.x, currentPoint.y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 绘制已有顶点
+        polygonPoints.forEach((pt, i) => {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, i === 0 ? 7 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = i === 0 ? '#ef4444' : '#f59e0b';
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        });
+      }
     };
-  }, [image, width, height, points, boxes, masks, annotations, isDrawing, startPoint, currentPoint, hoveredPoint, hoveredBox, tool, selectedId, showLabels]);
+  }, [image, width, height, points, boxes, masks, annotations, isDrawing, startPoint, currentPoint, hoveredPoint, hoveredBox, tool, selectedId, showLabels, polygonPoints]);
 
   // 获取鼠标位置
   const getMousePos = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -416,15 +449,38 @@ const AnnotationCanvas: React.FC<Props> = ({
 
   // 处理点击
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (tool !== 'point') return;
-
     const pos = getMousePos(e);
     if (!pos) return;
 
-    // Shift+点击 = 负样本，否则 = 正样本
-    const label: 1 | 0 = e.shiftKey ? 0 : 1;
-    onPointAdd({ x: pos.x, y: pos.y, label });
-  }, [tool, getMousePos, onPointAdd]);
+    if (tool === 'point') {
+      const label: 1 | 0 = e.shiftKey ? 0 : 1;
+      onPointAdd({ x: pos.x, y: pos.y, label });
+      return;
+    }
+
+    if (tool === 'polygon') {
+      // 双击或点击第一个点 = 完成多边形
+      if (polygonPoints.length >= 3) {
+        const firstPt = polygonPoints[0];
+        const dist = Math.sqrt((pos.x - firstPt.x) ** 2 + (pos.y - firstPt.y) ** 2);
+        if (dist < 15 || e.detail === 2) {
+          // 完成多边形，转为归一化坐标
+          const flatCoords: number[] = [];
+          polygonPoints.forEach(pt => {
+            flatCoords.push(pt.x / width, pt.y / height);
+          });
+          if (onMaskAdd) {
+            const colors = ['#ef4444','#3b82f6','#22c55e','#f97316','#8b5cf6','#06b6d4'];
+            onMaskAdd({ polygons: flatCoords, color: colors[Math.floor(Math.random() * colors.length)] });
+          }
+          setPolygonPoints([]);
+          return;
+        }
+      }
+      // 添加新顶点
+      setPolygonPoints(prev => [...prev, pos]);
+    }
+  }, [tool, getMousePos, onPointAdd, polygonPoints, width, height, onMaskAdd]);
 
   // 鼠标离开
   const handleMouseLeave = useCallback(() => {
@@ -444,6 +500,17 @@ const AnnotationCanvas: React.FC<Props> = ({
     if (tool === 'polygon') return 'crosshair';
     return 'default';
   };
+
+  // Escape 取消多边形
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && tool === 'polygon' && polygonPoints.length > 0) {
+        setPolygonPoints([]);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [tool, polygonPoints]);
 
   return (
     <canvas

@@ -60,7 +60,7 @@ export const Annotation: React.FC = () => {
   // 类别建议（基于检测结果）
   const [classSuggestions, setClassSuggestions] = useState<ClassSuggestion[]>([]);
 
-  // 初始化加载 SAM 模型
+  // 初始化加载 SAM 模型（页面加载时自动加载）
   useEffect(() => {
     const initSAM = async () => {
       try {
@@ -70,10 +70,8 @@ export const Annotation: React.FC = () => {
         console.error('SAM init failed:', e);
       }
     };
-    if (activeTab === 'sam') {
-      initSAM();
-    }
-  }, [activeTab]);
+    initSAM();
+  }, []);
 
   // 保存历史记录
   const saveSamHistory = useCallback((newPoints: AnnotationPoint[], newBoxes: AnnotationBox[], newMasks: AnnotationMask[]) => {
@@ -195,6 +193,10 @@ export const Annotation: React.FC = () => {
             setSamClasses(prev => [...prev, cls]);
           }
         });
+
+        if ((result.annotations || []).length === 0) {
+          alert(`未检测到 "${samCurrentClass}" 类别的对象，共检测到 ${result.total_detections ?? 0} 个其他对象`);
+        }
       } else {
         alert(result?.message || '标注失败');
       }
@@ -227,7 +229,13 @@ export const Annotation: React.FC = () => {
   const handleSamDelete = (id: string) => {
     const idx = parseInt(id);
     const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
+    const newMasks = samMasks.filter((_, i) => i !== idx);
+    const newBoxes = samBoxes.filter((_, i) => i !== idx);
     setSamAnnotations(newAnnotations);
+    setSamMasks(newMasks);
+    setSamBoxes(newBoxes);
+    saveSamHistory(samPoints, newBoxes, newMasks);
+    if (samSelectedId === id) setSamSelectedId(null);
   };
 
   // 类别修改
@@ -262,7 +270,12 @@ export const Annotation: React.FC = () => {
     if (samSelectedId) {
       const idx = parseInt(samSelectedId);
       const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
+      const newMasks = samMasks.filter((_, i) => i !== idx);
+      const newBoxes = samBoxes.filter((_, i) => i !== idx);
       setSamAnnotations(newAnnotations);
+      setSamMasks(newMasks);
+      setSamBoxes(newBoxes);
+      saveSamHistory(samPoints, newBoxes, newMasks);
       setSamSelectedId(null);
     }
   };
@@ -519,6 +532,8 @@ export const Annotation: React.FC = () => {
       const annRes = await annotationApi.getAnnotations(projectId, img.name);
       const annData = annRes.data?.annotations || annRes.data?.data?.annotations || [];
 
+      console.log('加载标注:', { projectId, imgName: img.name, annData });
+
       if (annData.length > 0) {
         const newBoxes: AnnotationBox[] = [];
         const newAnnotations: SAMAnnotation[] = [];
@@ -633,6 +648,7 @@ export const Annotation: React.FC = () => {
     const uploadRes = await annotationApi.addImages(batchTargetProject, batchFiles);
     const nameMap: Record<string, string> =
       (uploadRes.data?.data?.name_map || uploadRes.data?.name_map || {}) as Record<string, string>;
+    console.log('nameMap:', nameMap);
 
     for (let i = 0; i < batchFiles.length; i++) {
       const file = batchFiles[i];
@@ -655,6 +671,7 @@ export const Annotation: React.FC = () => {
             confidence: det.confidence,
           }));
           await annotationApi.saveAnnotations(batchTargetProject, savedName, annotations);
+          console.log('保存标注:', { savedName, count: detections.length });
         }
 
         total_detections += detections.length;
@@ -667,6 +684,14 @@ export const Annotation: React.FC = () => {
 
     setBatchResults({ success, failed, total_detections });
     setBatchLoading(false);
+
+    // 重新加载项目图片，获取服务器上的实际文件名
+    if (selectedProject) {
+      const projectId = selectedProject.id || selectedProject.name;
+      const res = await annotationApi.getImages(projectId);
+      const data = res.data?.images || res.data?.data?.images || [];
+      setProjectImages(data);
+    }
   };
 
   // 对项目内已有图片批量标注
@@ -950,16 +975,31 @@ export const Annotation: React.FC = () => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-5)' }}>
             <div>
               <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>原图</p>
-              <div style={{ borderRadius: 'var(--radius-lg)', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--gray-900)' }}>
-                <img src={selectedImage} alt="Original" style={{ width: '100%', display: 'block' }} />
+              <div style={{
+                borderRadius: 'var(--radius-lg)', overflow: 'auto',
+                border: '1px solid var(--border-color)', background: 'var(--gray-900)',
+                maxHeight: '400px', display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                padding: 'var(--space-4)'
+              }}>
+                <img
+                  src={selectedImage}
+                  alt="Original"
+                  style={{
+                    maxWidth: '100%',
+                    height: 'auto',
+                    objectFit: 'scale-down',
+                    display: 'block'
+                  }}
+                />
               </div>
             </div>
             <div>
               <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>标注结果</p>
               <div style={{
-                borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+                borderRadius: 'var(--radius-lg)', overflow: 'auto',
                 border: '1px solid var(--border-color)', background: 'var(--gray-900)',
-                minHeight: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                maxHeight: '400px', display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                padding: 'var(--space-4)'
               }}>
                 {autoLabelLoading ? (
                   <div style={{ textAlign: 'center', color: '#fff', padding: 'var(--space-8)' }}>
@@ -967,7 +1007,16 @@ export const Annotation: React.FC = () => {
                     <p style={{ fontSize: '14px' }}>正在智能标注中...</p>
                   </div>
                 ) : autoLabelResult?.annotated_image ? (
-                  <img src={autoLabelResult.annotated_image} alt="Annotated" style={{ width: '100%', display: 'block' }} />
+                  <img
+                    src={autoLabelResult.annotated_image}
+                    alt="Annotated"
+                    style={{
+                      maxWidth: '100%',
+                      height: 'auto',
+                      objectFit: 'scale-down',
+                      display: 'block'
+                    }}
+                  />
                 ) : (
                   <div style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 'var(--space-8)' }}>
                     <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🎯</div>
@@ -1228,8 +1277,14 @@ export const Annotation: React.FC = () => {
                     points={samPoints} boxes={samBoxes} masks={samMasks}
                     annotations={samAnnotations} tool={samTool} selectedId={samSelectedId}
                     onPointAdd={handleSamPointAdd} onBoxAdd={handleSamBoxAdd}
+                    onMaskAdd={(mask) => {
+                      const newMasks = [...samMasks, mask];
+                      setSamMasks(newMasks);
+                      saveSamHistory(samPoints, samBoxes, newMasks);
+                    }}
                     onMaskSelect={(idx) => setSamSelectedId(String(idx))}
                     onAnnotationSelect={setSamSelectedId}
+                    currentClass={samCurrentClass}
                   />
                 ) : (
                   <label style={{

@@ -153,10 +153,21 @@ export const annotationApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  saveAnnotations: (projectId: string, imageId: string, annotations: unknown) =>
-    api.post(`/annotation/projects/${projectId}/images/${imageId}/annotations`, { annotations }),
-  getAnnotations: (projectId: string, imageId: string) =>
-    api.get(`/annotation/projects/${projectId}/image/${imageId}`),
+  saveAnnotations: (projectId: string, imageId: string, annotations: unknown) => {
+    const formData = new FormData();
+    formData.append('image_name', imageId);
+    formData.append('annotations', JSON.stringify(annotations));
+    return api.post(`/annotation/projects/${projectId}/save-annotation`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  getAnnotations: (projectId: string, imageId: string) => {
+    const formData = new FormData();
+    formData.append('image_name', imageId);
+    return api.post(`/annotation/projects/${projectId}/get-annotation`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   uploadVideo: (projectId: string, file: File, frameInterval = 30) => {
     const formData = new FormData();
     formData.append('file', file);

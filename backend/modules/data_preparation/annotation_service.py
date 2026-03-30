@@ -106,16 +106,16 @@ class AnnotationService:
                 name_map[file.filename] = unique_name
                 added_count += 1
 
-        # 更新项目
+        # 更新项目 - 使用原文件名
         project = self._load_project(project_name)
         if project:
             # 确保 images 键存在
             if "images" not in project:
                 project["images"] = []
-            for img_path in images_dir.iterdir():
-                if img_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
-                    if img_path.name not in project["images"]:
-                        project["images"].append(img_path.name)
+            # 用 name_map 中的原文件名添加到列表
+            for original_name in name_map.keys():
+                if original_name not in project["images"]:
+                    project["images"].append(original_name)
             self._save_project(project_name, project)
 
         return {
@@ -123,6 +123,7 @@ class AnnotationService:
             "message": f"添加了 {added_count} 张图片",
             "images_dir": str(images_dir),
             "name_map": name_map,
+            "files": [{"original": original, "saved": saved} for original, saved in name_map.items()]
         }
 
     def save_annotation(
@@ -132,6 +133,10 @@ class AnnotationService:
         annotations: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """保存标注"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[标注] save_annotation: project={project_name}, image={image_name}, annotations_count={len(annotations)}")
+
         project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
         if not project_dir.exists():
             return {"success": False, "message": "项目不存在"}
@@ -285,19 +290,48 @@ class AnnotationService:
 
     def get_project_images(self, project_name: str) -> List[Dict[str, str]]:
         """获取项目图片列表"""
+        project = self._load_project(project_name)
+        if not project:
+            return []
+
+        # 使用 project.json 中存储的原文件名
+        stored_images = project.get("images", [])
         project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
         images_dir = project_dir / "images"
 
         if not images_dir.exists():
             return []
 
-        images = []
+        # 构建磁盘文件名到 URL 的映射
+        disk_to_url = {}
+        disk_names_set = set()
         for f in images_dir.iterdir():
             if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
-                images.append({
-                    "name": f.name,
-                    "url": f"/annotation-images/{project_name}/images/{f.name}"
-                })
+                url = f"/annotation-images/{project_name}/images/{f.name}"
+                disk_to_url[f.name] = url
+                disk_names_set.add(f.name)
+
+        # 使用存储的原文件名，查找对应的 URL
+        images = []
+        for img_name in stored_images:
+            url = disk_to_url.get(img_name)
+            if url:
+                # 原文件名存在于磁盘上
+                images.append({"name": img_name, "url": url})
+            else:
+                # 原文件名不在磁盘上（可能被重命名了）
+                # 尝试模糊匹配：在 disk_names 中找包含原文件名的
+                matched = False
+                for disk_name in disk_names_set:
+                    if disk_name.startswith(img_name.rsplit('.', 1)[0]) or img_name.startswith(disk_name.rsplit('.', 1)[0]):
+                        images.append({"name": disk_name, "url": disk_to_url[disk_name]})
+                        matched = True
+                        break
+                if not matched:
+                    # 最后尝试：直接用原文件名作为 name，构造 URL
+                    # (服务器应该能处理这种情况)
+                    images.append({"name": img_name, "url": f"/annotation-images/{project_name}/images/{img_name}"})
+
         return images
 
     def get_annotation(self, project_name: str, image_name: str) -> Dict[str, Any]:
@@ -307,7 +341,20 @@ class AnnotationService:
             return {"success": False, "message": "项目不存在"}
 
         project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
-        label_path = project_dir / "labels" / Path(image_name).with_suffix('.txt').name
+        labels_dir = project_dir / "labels"
+
+        # 尝试精确匹配
+        label_path = labels_dir / Path(image_name).with_suffix('.txt').name
+        if not label_path.exists():
+            # 尝试模糊匹配：找 labels 目录中以 image_name 开头的 .txt 文件
+            name_prefix = image_name.rsplit('.', 1)[0]
+            for f in labels_dir.iterdir():
+                if f.suffix == '.txt' and (f.stem.startswith(name_prefix) or name_prefix.startswith(f.stem)):
+                    label_path = f
+                    break
+
+        print(f"[标注DEBUG] get_annotation: project={project_name}, image={image_name}, label_path={label_path}, exists={label_path.exists()}")
+
         if not label_path.exists():
             return {"success": True, "annotations": []}
 

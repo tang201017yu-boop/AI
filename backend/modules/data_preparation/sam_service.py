@@ -152,10 +152,14 @@ class SAMService:
         """
         logger.info(f"[SAM] 设置图片: {image_path}")
 
+        # 自动加载 SAM 模型（如果未加载）
         if not self.model_loaded:
-            error_msg = "SAM 模型未加载"
-            logger.warning(f"[SAM] {error_msg}")
-            return {"success": False, "message": error_msg}
+            logger.info("[SAM] SAM 模型未加载，自动加载中...")
+            load_result = self.load_model()
+            if not load_result.get("success"):
+                error_msg = f"SAM 模型加载失败: {load_result.get('message')}"
+                logger.error(f"[SAM] {error_msg}")
+                return {"success": False, "message": error_msg}
 
         try:
             # 读取图片
@@ -212,10 +216,12 @@ class SAMService:
         """
         logger.debug(f"[SAM] 预测分割: {len(points)} 个点")
 
+        # 自动加载 SAM 模型（如果未加载）
         if not self.model_loaded:
-            error_msg = "SAM 模型未加载"
-            logger.warning(f"[SAM] {error_msg}")
-            return {"success": False, "message": error_msg}
+            logger.info("[SAM] SAM 模型未加载，自动加载中...")
+            load_result = self.load_model()
+            if not load_result.get("success"):
+                return {"success": False, "message": f"SAM 模型加载失败: {load_result.get('message')}"}
 
         try:
             # 转换为 numpy 数组
@@ -275,8 +281,12 @@ class SAMService:
         """
         logger.debug(f"[SAM] 基于边界框分割: {bbox}")
 
+        # 自动加载 SAM 模型（如果未加载）
         if not self.model_loaded:
-            return {"success": False, "message": "SAM 模型未加载"}
+            logger.info("[SAM] SAM 模型未加载，自动加载中...")
+            load_result = self.load_model()
+            if not load_result.get("success"):
+                return {"success": False, "message": f"SAM 模型加载失败: {load_result.get('message')}"}
 
         try:
             # 从边界框生成点（使用四个角点）
@@ -411,8 +421,17 @@ class SAMService:
             # 导入 YOLO 引擎
             from backend.core.yolo_engine import yolo_engine
 
+            # 自动加载 SAM 模型（如果未加载）
+            if not self.model_loaded:
+                logger.info("[SAM] SAM 模型未加载，自动加载中...")
+                load_result = self.load_model("vit_b")
+                if not load_result.get("success"):
+                    return {"success": False, "message": f"SAM 模型加载失败: {load_result.get('message')}"}
+
             # 设置图片
-            self.set_image(image_path)
+            result = self.set_image(image_path)
+            if not result.get("success"):
+                return result
 
             # 使用 YOLO 进行检测
             logger.debug(f"[SAM] YOLO 检测: conf={confidence}")
