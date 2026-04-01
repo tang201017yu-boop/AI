@@ -139,12 +139,22 @@ export const Datasets: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('file', files[0]);
-      await datasetApi.upload(formData);
+      const res = await datasetApi.upload(formData);
+      if (res.data?.success === false) {
+        alert(`上传失败: ${res.data?.message || '未知错误'}`);
+        return;
+      }
       await loadDatasets();
-    } catch (error) {
+      // 上传后自动选中新数据集
+      const newName = res.data?.dataset?.name;
+      if (newName) setSelectedDataset(newName);
+    } catch (error: any) {
       console.error(error);
+      alert(`上传失败: ${error?.response?.data?.detail || error?.message || '网络错误'}`);
     } finally {
       setUploading(false);
+      // 清空文件输入，允许重复上传同名文件
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 

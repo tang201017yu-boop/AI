@@ -41,23 +41,37 @@ class DatasetService:
 
     def _get_dataset_path(self, name: str) -> Path:
         """
-        获取数据集路径
-        支持两种结构:
-        - DATASETS_DIR/name/images (标准结构)
-        - DATASETS_DIR/name/name/images (嵌套结构，如从 ZIP 解压)
+        获取数据集实际根目录，兼容多种解压结构：
+        1. DATASETS_DIR/name/images/           (标准平铺)
+        2. DATASETS_DIR/name/images/train/     (images 下拆分)
+        3. DATASETS_DIR/name/train/images/     (Roboflow 根级拆分)
+        4. DATASETS_DIR/name/name/images/      (ZIP 同名嵌套)
+        5. DATASETS_DIR/name/name/train/images (ZIP 同名嵌套 + Roboflow)
         """
         base_path = settings.DATASETS_DIR / name
+        nested_path = base_path / name
+        SPLITS = ['train', 'val', 'valid', 'test']
 
-        # 标准结构
-        if (base_path / "images").exists():
+        def _has_any(root: Path) -> bool:
+            """检查该目录是否有 images/ 或 split/images/ 结构"""
+            if (root / "images").exists():
+                return True
+            return any((root / sp / "images").exists() for sp in SPLITS)
+
+        # 优先检查基础路径
+        if _has_any(base_path):
             return base_path
 
-        # 嵌套结构
-        nested_path = base_path / name
-        if (nested_path / "images").exists():
+        # 再检查同名嵌套路径（ZIP 内含同名顶级文件夹）
+        if nested_path.exists() and _has_any(nested_path):
             return nested_path
 
-        # 如果都不存在，返回基础路径
+        # 兜底：扫描一级子目录，找第一个含 images 的
+        if base_path.exists():
+            for child in base_path.iterdir():
+                if child.is_dir() and _has_any(child):
+                    return child
+
         return base_path
 
     def upload_dataset(
@@ -669,125 +683,201 @@ class DatasetService:
         return None
 
     def _reorganize_dataset(self, dataset_dir: Path):
-        """重新组织数据集结构 - 支持各种目录结构"""
-        from pathlib import Path
+        """
+        重新组织数据集结构，兼容多种 YOLO 目录格式:
+        - 标准格式: images/train/, images/val/, labels/train/, labels/val/
+        - Roboflow 格式: train/images/, valid/images/, train/labels/, valid/labels/
+        - 平铺格式: images/*.jpg, labels/*.txt
+        - 嵌套格式: <root>/<dataset_name>/images/ ...
+
+        策略: 优先保留已有 images/ 结构；对于 Roboflow 格式，
+        将 train/images/ → images/train/，valid/images/ → images/val/ 等，
+        保持原始文件名不变，使标签匹配继续有效。
+        """
         import shutil
 
         images_dir = dataset_dir / "images"
         labels_dir = dataset_dir / "labels"
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
-        # 确保目标目录存在
+        # ---- 检测已有结构 ----
+        # 如果 images/ 下已经有图片（含子目录），直接使用，不移动
+        def _has_images(d: Path) -> bool:
+            if not d.exists():
+                return False
+            return any(
+                f.suffix.lower() in image_extensions
+                for f in d.rglob('*')
+                if f.is_file()
+            )
+
+        if _has_images(images_dir):
+            # images/ 已有图片，只需处理 data.yaml 位置
+            self._ensure_yaml_at_root(dataset_dir)
+            return
+
+        # ---- 检测 Roboflow / 标准 YOLO 分割结构 ----
+        # train/images/, valid/images/, test/images/ 等
+        SPLIT_MAP = {
+            'train': 'train',
+            'valid': 'val',   # Roboflow 用 valid，标准化为 val
+            'val':   'val',
+            'test':  'test',
+        }
+
+        split_found = {}  # canonical_name -> src_images_dir
+        label_split_found = {}  # canonical_name -> src_labels_dir
+        for src_name, canonical in SPLIT_MAP.items():
+            src_img = dataset_dir / src_name / "images"
+            src_lbl = dataset_dir / src_name / "labels"
+            if _has_images(src_img):
+                # 如果已有同名 canonical（valid/val 均映射 val），只取第一个
+                if canonical not in split_found:
+                    split_found[canonical] = src_img
+                    if src_lbl.exists():
+                        label_split_found[canonical] = src_lbl
+
+        if split_found:
+            # 将 train/images/ → images/train/，valid/images/ → images/val/ 等
+            images_dir.mkdir(parents=True, exist_ok=True)
+            labels_dir.mkdir(parents=True, exist_ok=True)
+
+            for canonical, src_img_dir in split_found.items():
+                dst_img_dir = images_dir / canonical
+                dst_img_dir.mkdir(parents=True, exist_ok=True)
+
+                for img_file in src_img_dir.rglob('*'):
+                    if img_file.is_file() and img_file.suffix.lower() in image_extensions:
+                        target = dst_img_dir / img_file.name
+                        counter = 1
+                        while target.exists():
+                            target = dst_img_dir / f"{img_file.stem}_{counter}{img_file.suffix}"
+                            counter += 1
+                        try:
+                            shutil.move(str(img_file), str(target))
+                        except Exception as e:
+                            print(f"Error moving image {img_file}: {e}")
+
+            for canonical, src_lbl_dir in label_split_found.items():
+                dst_lbl_dir = labels_dir / canonical
+                dst_lbl_dir.mkdir(parents=True, exist_ok=True)
+
+                for lbl_file in src_lbl_dir.rglob('*.txt'):
+                    target = dst_lbl_dir / lbl_file.name
+                    counter = 1
+                    while target.exists():
+                        target = dst_lbl_dir / f"{lbl_file.stem}_{counter}{lbl_file.suffix}"
+                        counter += 1
+                    try:
+                        shutil.move(str(lbl_file), str(target))
+                    except Exception as e:
+                        print(f"Error moving label {lbl_file}: {e}")
+
+            # 清理已空的源目录
+            for src_name in list(SPLIT_MAP.keys()):
+                src_dir = dataset_dir / src_name
+                if src_dir.exists():
+                    self._cleanup_empty_dirs(src_dir)
+                    try:
+                        if not any(src_dir.iterdir()):
+                            src_dir.rmdir()
+                    except Exception:
+                        pass
+
+            self._ensure_yaml_at_root(dataset_dir)
+            return
+
+        # ---- 回退：扫描全部子目录，把散落的图片收入 images/ ----
+        yaml_file = None
+        images_found = []
+        labels_found = []
+
+        for item in dataset_dir.rglob('*'):
+            if not item.is_file():
+                continue
+            if item.name.startswith('.') or item.name.startswith('_'):
+                continue
+            ext = item.suffix.lower()
+            # 已在目标目录内的跳过
+            try:
+                item.relative_to(images_dir)
+                continue
+            except ValueError:
+                pass
+            try:
+                item.relative_to(labels_dir)
+                continue
+            except ValueError:
+                pass
+
+            if ext in image_extensions:
+                images_found.append(item)
+            elif ext == '.txt':
+                labels_found.append(item)
+            elif ext in ('.yaml', '.yml') and item.name in ('data.yaml', 'dataset.yaml'):
+                yaml_file = item
+
         images_dir.mkdir(parents=True, exist_ok=True)
         labels_dir.mkdir(parents=True, exist_ok=True)
 
-        # 收集所有图片和标签文件
-        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
-        images_found = []
-        labels_found = []
-        yaml_file = None  # 存储 data.yaml 路径
-
-        # 遍历所有子目录查找文件
-        for item in dataset_dir.rglob('*'):
-            if item.is_file():
-                ext = item.suffix.lower()
-
-                # 跳过临时文件和隐藏文件
-                if item.name.startswith('.') or item.name.startswith('_'):
-                    continue
-
-                if ext in image_extensions:
-                    # 检查是否在目标目录本身（避免重复）
-                    if not str(item).startswith(str(images_dir)) and not str(item).startswith(str(labels_dir)):
-                        images_found.append(item)
-                elif ext == '.txt':
-                    # 跳过data.yaml等配置文件
-                    if item.name != 'data.yaml' and item.name != 'dataset.yaml':
-                        if not str(item).startswith(str(images_dir)) and not str(item).startswith(str(labels_dir)):
-                            labels_found.append(item)
-                elif ext in ['.yaml', '.yml']:
-                    # 找到 data.yaml 或 dataset.yaml
-                    if item.name in ['data.yaml', 'dataset.yaml']:
-                        yaml_file = item
-
-        # 移动图片到 images 目录
-        moved_images = 0
         for img_path in images_found:
+            target = images_dir / img_path.name
+            counter = 1
+            while target.exists():
+                target = images_dir / f"{img_path.stem}_{counter}{img_path.suffix}"
+                counter += 1
             try:
-                # 使用相对路径作为新文件名（避免重名）
-                rel_path = img_path.relative_to(dataset_dir)
-                new_name = str(rel_path).replace('/', '_').replace('\\', '_')
-                target_path = images_dir / new_name
-
-                # 如果目标文件已存在，添加序号
-                counter = 1
-                while target_path.exists():
-                    stem = new_name.rsplit('.', 1)[0]
-                    ext = new_name.rsplit('.', 1)[1] if '.' in new_name else ''
-                    new_name = f"{stem}_{counter}.{ext}"
-                    target_path = images_dir / new_name
-                    counter += 1
-
-                shutil.move(str(img_path), str(target_path))
-                moved_images += 1
-
+                shutil.move(str(img_path), str(target))
             except Exception as e:
                 print(f"Error moving image {img_path}: {e}")
 
-        # 移动标签到 labels 目录
-        moved_labels = 0
-        for label_path in labels_found:
+        for lbl_path in labels_found:
+            target = labels_dir / lbl_path.name
+            counter = 1
+            while target.exists():
+                target = labels_dir / f"{lbl_path.stem}_{counter}{lbl_path.suffix}"
+                counter += 1
             try:
-                rel_path = label_path.relative_to(dataset_dir)
-                new_name = str(rel_path).replace('/', '_').replace('\\', '_')
-                target_path = labels_dir / new_name
-
-                counter = 1
-                while target_path.exists():
-                    stem = new_name.rsplit('.', 1)[0]
-                    ext = new_name.rsplit('.', 1)[1] if '.' in new_name else ''
-                    new_name = f"{stem}_{counter}.{ext}"
-                    target_path = labels_dir / new_name
-                    counter += 1
-
-                shutil.move(str(label_path), str(target_path))
-                moved_labels += 1
-
+                shutil.move(str(lbl_path), str(target))
             except Exception as e:
-                print(f"Error moving label {label_path}: {e}")
+                print(f"Error moving label {lbl_path}: {e}")
 
-        # 处理 data.yaml 文件
         if yaml_file and yaml_file.exists():
-            try:
-                target_yaml = dataset_dir / "data.yaml"
-                # 如果目标文件已存在，先备份
-                if target_yaml.exists():
-                    target_yaml.rename(str(target_yaml) + ".backup")
-                # 移动并更新 YAML 内容
-                self._move_and_update_yaml(yaml_file, target_yaml, dataset_dir)
-                print(f"data.yaml 已移动到: {target_yaml}")
-            except Exception as e:
-                print(f"Error moving data.yaml: {e}")
+            self._ensure_yaml_at_root(dataset_dir, yaml_file)
 
-        # 清理空的子目录
-        for item in dataset_dir.iterdir():
-            if item.is_dir():
+        # 清理空目录
+        for item in list(dataset_dir.iterdir()):
+            if item.is_dir() and item.name not in ('images', 'labels', '.thumbnails'):
+                self._cleanup_empty_dirs(item)
                 try:
-                    # 只删除我们自己创建的空目录（不删除用户原有的结构）
-                    if item.name in ['images', 'labels', '.thumbnails']:
-                        # 如果是空目录，删除
-                        if not any(item.iterdir()):
-                            item.rmdir()
-                    elif item.name not in ['train', 'val', 'test', 'images', 'labels']:
-                        # 删除其他空目录
-                        if not any(item.iterdir()):
-                            item.rmdir()
-                        else:
-                            # 递归删除空子目录
-                            self._cleanup_empty_dirs(item)
-                            if not any(item.iterdir()):
-                                item.rmdir()
+                    if not any(item.iterdir()):
+                        item.rmdir()
                 except Exception:
                     pass
+
+    def _ensure_yaml_at_root(self, dataset_dir: Path, yaml_source: Path = None):
+        """确保 data.yaml 位于数据集根目录"""
+        import shutil
+        target_yaml = dataset_dir / "data.yaml"
+
+        if yaml_source and yaml_source.exists() and yaml_source != target_yaml:
+            try:
+                if target_yaml.exists():
+                    target_yaml.rename(str(target_yaml) + ".backup")
+                self._move_and_update_yaml(yaml_source, target_yaml, dataset_dir)
+            except Exception as e:
+                print(f"Error moving data.yaml: {e}")
+            return
+
+        # 在子目录中搜索 data.yaml
+        if not target_yaml.exists():
+            for found in dataset_dir.rglob("data.yaml"):
+                if found != target_yaml:
+                    try:
+                        self._move_and_update_yaml(found, target_yaml, dataset_dir)
+                        break
+                    except Exception as e:
+                        print(f"Error moving data.yaml: {e}")
 
     def _move_and_update_yaml(self, source_yaml: Path, target_yaml: Path, dataset_dir: Path):
         """
@@ -896,14 +986,23 @@ class DatasetService:
             if nested_labels_dir.exists():
                 labels_dir = nested_labels_dir
 
-        # 统计图片数量 - 支持 train/val 子目录
+        # 统计图片数量 - 支持 train/val 子目录及 Roboflow 结构
         image_count = 0
         class_counts: Dict[str, int] = {}
 
+        image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']
+
         if images_dir.exists():
-            for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
-                # 递归查找所有图片（包括子目录 train/val）
+            for ext in image_extensions:
                 image_count += len(list(images_dir.rglob(ext)))
+
+        # 兼容 Roboflow 结构: train/images/, valid/images/, test/images/
+        if image_count == 0:
+            for sp in ['train', 'val', 'valid', 'test']:
+                sp_dir = dataset_dir / sp / "images"
+                if sp_dir.exists():
+                    for ext in image_extensions:
+                        image_count += len(list(sp_dir.rglob(ext)))
 
         # 读取 YAML 配置获取类别
         yaml_path = dataset_dir / "data.yaml"

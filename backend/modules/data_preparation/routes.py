@@ -1023,12 +1023,10 @@ async def list_dataset_images(
     """
     列出数据集中的图片
 
-    支持:
-    - 按拆分筛选 (train/val/test)
-    - 不同视图 (grid/compact/table)
-    - 排序 (name_asc, name_desc, date_new, date_old, size_asc, size_desc, labels_asc, labels_desc)
-    - 标注筛选 (labeled, unlabeled)
-    - 分页加载
+    支持多种 YOLO 目录结构:
+    - images/ (平铺结构)
+    - images/train/, images/val/, images/test/ (images 下拆分)
+    - train/images/, valid/images/, test/images/ (Roboflow/标准 YOLO 格式)
     """
     from PIL import Image
 
@@ -1039,70 +1037,110 @@ async def list_dataset_images(
     if not dataset_path.exists():
         raise HTTPException(status_code=404, detail="数据集不存在")
 
-    # 支持 images/ 和 image/ 两种目录名
-    images_dir = dataset_path / "images" if (dataset_path / "images").exists() else dataset_path / "image"
-    labels_dir = dataset_path / "labels" if (dataset_path / "labels").exists() else dataset_path / "annotation"
+    IMAGE_EXTS = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']
+    SPLIT_DIRS = ['train', 'val', 'valid', 'test']
 
-    if not images_dir.exists():
+    # ---- 确定图片根目录及标签根目录（兼容多种 YOLO 目录结构）----
+    # 结构 A: dataset/images/  (平铺或含 train/val 子目录)
+    # 结构 B: dataset/train/images/, dataset/valid/images/ ... (Roboflow 标准格式)
+    root_images_dir = dataset_path / "images"
+    root_labels_dir = dataset_path / "labels" if (dataset_path / "labels").exists() else dataset_path / "annotation"
+
+    # 检测图片文件分布
+    # 先判断 images/ 下是否直接有图片（含递归）
+    has_root_images = root_images_dir.exists() and any(
+        True for ext in IMAGE_EXTS for _ in root_images_dir.rglob(ext)
+    ) if root_images_dir.exists() else False
+
+    # 判断是否存在 Roboflow 结构（train/images/, valid/images/ ...）
+    split_image_dirs: dict = {}  # split_name -> Path
+    split_label_dirs: dict = {}  # split_name -> Path
+    for sp in SPLIT_DIRS:
+        sp_images = dataset_path / sp / "images"
+        sp_labels = dataset_path / sp / "labels"
+        if sp_images.exists() and any(True for ext in IMAGE_EXTS for _ in sp_images.rglob(ext)):
+            canonical = 'val' if sp == 'valid' else sp
+            split_image_dirs[canonical] = sp_images
+            if sp_labels.exists():
+                split_label_dirs[canonical] = sp_labels
+
+    use_split_structure = not has_root_images and bool(split_image_dirs)
+
+    if not has_root_images and not use_split_structure:
         return {"success": True, "images": [], "total": 0}
 
-    # 获取所有图片
-    image_files = []
-    for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']:
-        image_files.extend(images_dir.rglob(ext))
+    # ---- 收集所有图片文件（带拆分信息）----
+    # item: (img_path, split_name, label_search_dir)
+    file_entries = []
 
-    # 解析标签获取信息
-    image_labels = {}
-    if labels_dir.exists():
-        for label_file in labels_dir.rglob("*.txt"):
-            # 匹配标签和图片
-            label_stem = label_file.stem
-            for img_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
-                img_path = images_dir / f"{label_stem}{img_ext}"
-                if img_path.exists():
-                    try:
-                        with open(label_file, 'r') as f:
-                            lines = f.readlines()
-                        labels = []
-                        for line in lines:
-                            parts = line.strip().split()
-                            if parts:
-                                labels.append({
-                                    "class_id": int(parts[0]),
-                                    "bbox": [float(x) for x in parts[1:]] if len(parts) > 1 else []
-                                })
-                        image_labels[str(img_path)] = labels
-                    except:
-                        pass
-                    break
+    if use_split_structure:
+        # Roboflow 格式: train/images/, valid/images/ ...
+        for sp_name, sp_dir in split_image_dirs.items():
+            if split and split != sp_name:
+                continue
+            for ext in IMAGE_EXTS:
+                for img_path in sp_dir.rglob(ext):
+                    file_entries.append((img_path, sp_name, split_label_dirs.get(sp_name)))
+    else:
+        # 标准格式: images/ (平铺或含子目录)
+        for ext in IMAGE_EXTS:
+            for img_path in root_images_dir.rglob(ext):
+                path_parts = img_path.parts
+                if 'train' in path_parts:
+                    sp_name = 'train'
+                elif 'val' in path_parts:
+                    sp_name = 'val'
+                elif 'test' in path_parts:
+                    sp_name = 'test'
+                else:
+                    sp_name = 'unknown'
+                if split and split != sp_name:
+                    continue
+                file_entries.append((img_path, sp_name, root_labels_dir if root_labels_dir.exists() else None))
+
+    # ---- 构建标签索引（stem -> labels），支持多个标签目录 ----
+    def _load_labels(label_dir: Path) -> dict:
+        """返回 stem -> labels 映射"""
+        result = {}
+        if not label_dir or not label_dir.exists():
+            return result
+        for label_file in label_dir.rglob("*.txt"):
+            try:
+                lines = label_file.read_text().splitlines()
+                labels = []
+                for line in lines:
+                    parts = line.strip().split()
+                    if parts:
+                        labels.append({
+                            "class_id": int(parts[0]),
+                            "bbox": [float(x) for x in parts[1:]] if len(parts) > 1 else []
+                        })
+                result[label_file.stem] = labels
+            except Exception:
+                pass
+        return result
+
+    # 缓存已加载的标签目录
+    _label_cache: dict = {}
+
+    def _get_labels(label_dir, img_stem: str) -> list:
+        key = str(label_dir)
+        if key not in _label_cache:
+            _label_cache[key] = _load_labels(label_dir)
+        return _label_cache[key].get(img_stem, [])
 
     # 检查缩略图目录是否存在
     thumbs_dir = dataset_path / ".thumbnails"
     has_thumbnails = thumbs_dir.exists()
 
-    # 构建图片列表
+    # ---- 构建图片列表 ----
     images = []
-    for img_path in sorted(image_files):
+    for img_path, split_name, label_dir in sorted(file_entries, key=lambda x: x[0].name):
         try:
             with Image.open(img_path) as img:
                 width, height = img.size
 
-            # 确定拆分（从路径推断或默认unknown）
-            path_parts = img_path.parts
-            if 'train' in path_parts:
-                split_name = 'train'
-            elif 'val' in path_parts:
-                split_name = 'val'
-            elif 'test' in path_parts:
-                split_name = 'test'
-            else:
-                split_name = 'unknown'
-
-            # 筛选
-            if split and split != split_name:
-                continue
-
-            labels = image_labels.get(str(img_path), [])
+            labels = _get_labels(label_dir, img_path.stem)
 
             # 标注筛选
             is_labeled = len(labels) > 0
@@ -1113,7 +1151,11 @@ async def list_dataset_images(
 
             thumb_name = f"{img_path.stem}_thumb{img_path.suffix}"
             thumb_path = thumbs_dir / thumb_name
-            thumbnail_url = f"/api/v1/datasets/{name}/thumbnails/{img_path.name}" if (has_thumbnails and thumb_path.exists()) else f"/api/v1/datasets/{name}/images/{img_path.name}"
+            thumbnail_url = (
+                f"/api/v1/datasets/{name}/thumbnails/{img_path.name}"
+                if (has_thumbnails and thumb_path.exists())
+                else f"/api/v1/datasets/{name}/images/{img_path.name}"
+            )
 
             images.append({
                 "filename": img_path.name,
