@@ -200,11 +200,22 @@ export const samApi = {
   setImage: (imagePath: string) =>
     api.post('/sam/set-image', { image_path: imagePath }),
   // 点点击分割预测
-  predict: (points: number[][], labels: number[]) =>
-    api.post('/sam/predict', { points, labels }),
+  predict: (points: number[][], labels: number[]) => {
+    const formData = new FormData();
+    formData.append('points', JSON.stringify(points));
+    formData.append('labels', JSON.stringify(labels));
+    return api.post('/sam/predict', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   // 边界框分割预测
-  predictBox: (bbox: number[]) =>
-    api.post('/sam/predict-box', { bbox }),
+  predictBox: (bbox: number[]) => {
+    const formData = new FormData();
+    formData.append('bbox', JSON.stringify(bbox));
+    return api.post('/sam/predict-box', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   // 自动标注 (YOLO检测 + SAM分割)
   autoLabel: (imagePath: string, classNames: string[], modelName: string = 'yolo11n.pt', confidence: number = 0.25) => {
     const formData = new FormData();
