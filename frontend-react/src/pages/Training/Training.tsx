@@ -211,13 +211,23 @@ export const Training: React.FC = () => {
 
     let lastEpoch = -1;
     let errorCount = 0;
+    let stopped = false;
+
+    const stop = (clearId: ReturnType<typeof setInterval>) => {
+      if (!stopped) {
+        stopped = true;
+        clearInterval(clearId);
+      }
+    };
 
     const interval = setInterval(async () => {
+      if (stopped) return;
       try {
         const [statusRes, chartRes] = await Promise.all([
           trainingApi.status(currentTaskId),
           trainingApi.getChartData(currentTaskId).catch(() => null),
         ]);
+        errorCount = 0; // 成功后重置错误计数
         const data = (statusRes.data as any)?.data || statusRes.data as any;
         if (data) {
           setTrainingProgress(data.progress || 0);
@@ -245,17 +255,25 @@ export const Training: React.FC = () => {
 
           const status = data.status;
           if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+            stop(interval);
             setTraining(false);
+            setCurrentTaskId(null);
             if (status === 'completed') {
               setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 训练完成！`]);
             }
           }
         }
-      } catch (e) {
-        console.error(e);
+      } catch (e: any) {
+        // 404 表示任务已不存在（服务器重启等情况），直接停止轮询
+        if (e?.response?.status === 404 || e?.status === 404) {
+          stop(interval);
+          setTraining(false);
+          setCurrentTaskId(null);
+          return;
+        }
         errorCount++;
         if (errorCount >= 3) {
-          clearInterval(interval);
+          stop(interval);
           setTraining(false);
           setCurrentTaskId(null);
           setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 连接失败，训练任务可能已中断`]);
@@ -263,7 +281,7 @@ export const Training: React.FC = () => {
       }
     }, 3000);
 
-    return () => clearInterval(interval);
+    return () => stop(interval);
   }, [currentTaskId]);
 
   const loadDatasets = async () => {
