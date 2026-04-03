@@ -21,11 +21,14 @@ from backend.core.config import settings
 from backend.models.schemas import (
     InferenceRequest, InferenceResponse, TrainingConfig,
     TrainingStatus, ModelInfo, DatasetInfo, ExportConfig,
-    SystemInfo
+    SystemInfo,
+    ObjectCountingRequest, HeatmapRequest, SpeedEstimationRequest,
+    DistanceCalculationRequest, ObjectBlurRequest, ObjectCropRequest,
+    QueueManagementRequest, SolutionResponse
 )
 from backend.services.yolo_service import yolo_service
 from backend.core.yolo_engine import yolo_engine
-from backend.services import annotation_service, dataset_service
+from backend.services import annotation_service, dataset_service, solutions_service
 from backend.services.supervision_service import supervision_service
 from backend.modules.training.training_service import training_service
 from backend.modules.training.project_service import project_service
@@ -819,6 +822,487 @@ async def visualize_annotations(project_id: str, image_name: str):
 
 
 
-# Solutions 路由已移至 backend/modules/solutions/routes.py
-# 以下路由已删除，避免与模块路由冲突
+# ==================== Ultralytics Solutions ====================
 
+@router.post("/solutions/object-counting", response_model=SolutionResponse)
+async def solution_object_counting(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    region_points: Optional[str] = Form(None),  # JSON string
+    show_in: bool = Form(True),
+    show_out: bool = Form(True),
+    classes: Optional[str] = Form(None),  # JSON string
+    conf: float = Form(0.25)
+):
+    """对象计数 - 统计进出区域的对象数量"""
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+    
+    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "mp4", "avi", "mov"]):
+        raise HTTPException(status_code=400, detail="Invalid file type")
+    
+    try:
+        import json
+        
+        # 保存上传文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+        
+        # 解析参数
+        region = None
+        if region_points:
+            try:
+                region = json.loads(region_points)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+
+        class_list = None
+        if classes:
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+        
+        # 设置输出路径
+        output_path = str(settings.UPLOADS_DIR / f"counted_{filename}")
+        
+        # 执行对象计数
+        result = solutions_service.object_counting(
+            source=str(file_path),
+            model_name=model_name,
+            region_points=region,
+            show_in=show_in,
+            show_out=show_out,
+            classes=class_list,
+            conf=conf,
+            output_path=output_path
+        )
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+        return SolutionResponse(**result)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/solutions/heatmap", response_model=SolutionResponse)
+async def solution_heatmap(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    colormap: str = Form("COLORMAP_JET"),
+    classes: Optional[str] = Form(None),
+    conf: float = Form(0.25)
+):
+    """热图生成 - 可视化检测密度"""
+    import cv2
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # 转换 colormap 名称为 OpenCV 整数常量
+    colormap_value = getattr(cv2, colormap, cv2.COLORMAP_JET)
+
+    logger.info(f"[heatmap] 收到请求: filename={file.filename}, model={model_name}, conf={conf}")
+
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+
+    # 扩展支持的文件类型（图片 + 视频），让 cv2 自行验证能否打开
+    IMAGE_EXTS = ["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "gif"]
+    VIDEO_EXTS = ["mp4", "avi", "mov", "mkv", "flv", "wmv", "m4v", "ts"]
+    ALLOWED_EXTS = IMAGE_EXTS + VIDEO_EXTS
+
+    fname = file.filename or ""
+    if fname and not allowed_file(fname, ALLOWED_EXTS):
+        logger.warning(f"[heatmap] 文件类型不支持: {fname}")
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {fname}，请上传图片或视频文件")
+
+    try:
+        import json
+
+        # 保存上传文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), fname or "upload.jpg")
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+
+        # 解析参数
+        class_list = None
+        if classes:
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # 设置输出路径
+        output_path = str(settings.UPLOADS_DIR / f"heatmap_{filename}")
+
+        # 生成热图
+        result = solutions_service.generate_heatmap(
+            source=str(file_path),
+            model_name=model_name,
+            colormap=colormap_value,
+            classes=class_list,
+            conf=conf,
+            output_path=output_path
+        )
+
+        logger.info(f"[heatmap] 处理结果: success={result.get('success')}")
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+        return SolutionResponse(**result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[heatmap] 处理异常: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/solutions/speed-estimation", response_model=SolutionResponse)
+async def solution_speed_estimation(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    region_points: Optional[str] = Form(None),
+    classes: Optional[str] = Form(None),
+    conf: float = Form(0.25),
+    pixel_to_meter: float = Form(10),
+    line_width: int = Form(2)
+):
+    """速度估算 - 计算对象移动速度"""
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+    
+    if not allowed_file(file.filename, ["mp4", "avi", "mov"]):
+        raise HTTPException(status_code=400, detail="Only video files are allowed")
+    
+    try:
+        import json
+        
+        # 保存上传文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+        
+        # 解析参数
+        region = None
+        if region_points:
+            try:
+                region = json.loads(region_points)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+
+        class_list = None
+        if classes:
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+        
+        # 设置输出路径
+        output_path = str(settings.UPLOADS_DIR / f"speed_{filename}")
+        
+        # 估算速度
+        result = solutions_service.estimate_speed(
+            source=str(file_path),
+            model_name=model_name,
+            region_points=region,
+            classes=class_list,
+            conf=conf,
+            pixel_to_meter=pixel_to_meter,
+            line_width=line_width,
+            output_path=output_path
+        )
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+        return SolutionResponse(**result)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/solutions/distance-calculation", response_model=SolutionResponse)
+async def solution_distance_calculation(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    classes: Optional[str] = Form(None),
+    conf: float = Form(0.25)
+):
+    """距离计算 - 测量对象之间的距离"""
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+    
+    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp"]):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+    
+    try:
+        import json
+        
+        # 保存上传文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+        
+        # 解析参数
+        class_list = None
+        if classes:
+            class_list = json.loads(classes)
+        
+        # 计算距离
+        result = solutions_service.calculate_distance(
+            image_path=str(file_path),
+            model_name=model_name,
+            classes=class_list,
+            conf=conf
+        )
+
+        # 转换为相对路径
+        output_image = result.get("output_image")
+        if output_image:
+            output_image = f"/uploads/{Path(output_image).name}"
+
+        return SolutionResponse(
+            success=result["success"],
+            message=result["message"],
+            results={"distances": result.get("distances", [])},
+            output_path=output_image
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/solutions/object-blur", response_model=SolutionResponse)
+async def solution_object_blur(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    classes: Optional[str] = Form(None),
+    conf: float = Form(0.25),
+    blur_ratio: float = Form(50)
+):
+    """对象模糊 - 隐私保护"""
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+    
+    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "mp4", "avi", "mov"]):
+        raise HTTPException(status_code=400, detail="Invalid file type")
+    
+    try:
+        import json
+        
+        # 保存上传文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+        
+        # 解析参数
+        class_list = None
+        if classes:
+            class_list = json.loads(classes)
+        
+        # 设置输出路径
+        output_path = str(settings.UPLOADS_DIR / f"blurred_{filename}")
+        
+        # 模糊对象
+        result = solutions_service.blur_objects(
+            source=str(file_path),
+            model_name=model_name,
+            classes=class_list,
+            conf=conf,
+            blur_ratio=blur_ratio,
+            output_path=output_path
+        )
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+        return SolutionResponse(**result)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/solutions/object-crop", response_model=SolutionResponse)
+async def solution_object_crop(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    classes: Optional[str] = Form(None),
+    conf: float = Form(0.25)
+):
+    """对象裁剪 - 提取检测到的对象"""
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+    
+    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp"]):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+    
+    try:
+        import json
+        
+        # 保存上传文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+        
+        # 解析参数
+        class_list = None
+        if classes:
+            class_list = json.loads(classes)
+        
+        # 裁剪对象
+        result = solutions_service.crop_objects(
+            image_path=str(file_path),
+            model_name=model_name,
+            classes=class_list,
+            conf=conf
+        )
+
+        # 更新裁剪图片路径为相对路径
+        cropped_images = result.get("cropped_images", [])
+        for img in cropped_images:
+            if img.get("crop_path"):
+                img["crop_path"] = f"/uploads/{Path(img['crop_path']).name}"
+
+        return SolutionResponse(
+            success=result["success"],
+            message=result["message"],
+            results={
+                "total_crops": result.get("total_crops", 0),
+                "cropped_images": cropped_images
+            },
+            output_path=f"/uploads/{Path(result.get('output_dir', '')).name}"
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/solutions/queue-management", response_model=SolutionResponse)
+async def solution_queue_management(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    region_points: Optional[str] = Form(None),
+    classes: Optional[str] = Form(None),
+    conf: float = Form(0.25)
+):
+    """队列管理 - 监控队列长度"""
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+    
+    if not allowed_file(file.filename, ["mp4", "avi", "mov"]):
+        raise HTTPException(status_code=400, detail="Only video files are allowed")
+    
+    try:
+        import json
+        
+        # 保存上传文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+        
+        # 解析参数
+        region = None
+        if region_points:
+            try:
+                region = json.loads(region_points)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+
+        class_list = None
+        if classes:
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 忽略无效的JSON
+        
+        # 设置输出路径
+        output_path = str(settings.UPLOADS_DIR / f"queue_{filename}")
+        
+        # 队列管理
+        result = solutions_service.queue_management(
+            source=str(file_path),
+            model_name=model_name,
+            region_points=region,
+            classes=class_list,
+            conf=conf,
+            output_path=output_path
+        )
+
+        # 转换为相对路径
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+        return SolutionResponse(**result)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/solutions/list")
+async def list_solutions():
+    """列出所有可用的 Solutions 功能"""
+    solutions_list = [
+        {
+            "name": "object-counting",
+            "title": "对象计数",
+            "description": "统计进出指定区域的对象数量，支持实时计数和分类统计",
+            "input_types": ["image", "video"],
+            "features": ["区域计数", "进出统计", "分类计数"]
+        },
+        {
+            "name": "heatmap",
+            "title": "热图生成",
+            "description": "可视化检测密度，显示对象出现的热点区域",
+            "input_types": ["image", "video"],
+            "features": ["密度可视化", "热点分析", "轨迹追踪"]
+        },
+        {
+            "name": "speed-estimation",
+            "title": "速度估算",
+            "description": "计算移动对象的速度，适用于交通监控等场景",
+            "input_types": ["video"],
+            "features": ["实时测速", "超速告警", "速度统计"]
+        },
+        {
+            "name": "distance-calculation",
+            "title": "距离计算",
+            "description": "测量检测对象之间的像素距离",
+            "input_types": ["image"],
+            "features": ["对象间距", "空间分析", "距离标注"]
+        },
+        {
+            "name": "object-blur",
+            "title": "对象模糊",
+            "description": "对检测到的对象进行模糊处理，保护隐私",
+            "input_types": ["image", "video"],
+            "features": ["隐私保护", "人脸模糊", "车牌模糊"]
+        },
+        {
+            "name": "object-crop",
+            "title": "对象裁剪",
+            "description": "自动裁剪检测到的对象，提取感兴趣区域",
+            "input_types": ["image"],
+            "features": ["自动裁剪", "批量提取", "对象分离"]
+        },
+        {
+            "name": "queue-management",
+            "title": "队列管理",
+            "description": "监控队列长度，分析排队情况",
+            "input_types": ["video"],
+            "features": ["队列计数", "等待时间", "流量分析"]
+        }
+    ]
+    
+    return {
+        "total": len(solutions_list),
+        "solutions": solutions_list
+    }

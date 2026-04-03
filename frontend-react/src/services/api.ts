@@ -21,8 +21,11 @@ api.interceptors.request.use(
 // 响应拦截器
 api.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<ApiResponse<unknown>>) => {
-    const message = error.response?.data?.message || error.message || '请求失败';
+  (error: AxiosError<any>) => {
+    const message = error.response?.data?.message
+      || error.response?.data?.detail
+      || error.message
+      || '请求失败';
     console.error('API Error:', message);
     return Promise.reject(new Error(message));
   }
