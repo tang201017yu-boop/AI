@@ -30,6 +30,10 @@ api.interceptors.response.use(
 
 export default api;
 
+// FormData 请求必须用此头，清除默认 Content-Type 让浏览器自动附加 boundary
+// 否则 python-multipart 因缺少 boundary 返回 400
+const multipartHeaders = { 'Content-Type': undefined as unknown as string };
+
 // ============ 系统 API ============
 export const systemApi = {
   getInfo: () => api.get<ApiResponse<SystemInfo>>('/system/info'),
@@ -42,7 +46,7 @@ export const datasetApi = {
   get: (id: string) => api.get<ApiResponse<Dataset>>(`/datasets/${id}`),
   upload: (formData: FormData) =>
     api.post<ApiResponse<DatasetUploadResponse>>('/datasets/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     }),
   delete: (id: string) => api.delete(`/datasets/${id}`),
   // 数据集统计
@@ -66,7 +70,7 @@ export const modelApi = {
   // 上传模型
   upload: (formData: FormData) =>
     api.post<ApiResponse<any>>('/training/models/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     }),
   get: (id: string) => api.get<ApiResponse<Model>>(`/models/${id}`),
   delete: (id: string, project?: string, path?: string) =>
@@ -127,7 +131,7 @@ export const inferenceApi = {
     formData.append('confidence', String(confidence));
     formData.append('iou_threshold', String(iou_threshold));
     return api.post<ApiResponse<InferenceResult>>('/inference/image', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   video: (request: InferenceRequest) =>
@@ -150,7 +154,7 @@ export const annotationApi = {
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
     return api.post(`/annotation/projects/${projectId}/images`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   saveAnnotations: (projectId: string, imageId: string, annotations: unknown) => {
@@ -158,14 +162,14 @@ export const annotationApi = {
     formData.append('image_name', imageId);
     formData.append('annotations', JSON.stringify(annotations));
     return api.post(`/annotation/projects/${projectId}/save-annotation`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   getAnnotations: (projectId: string, imageId: string) => {
     const formData = new FormData();
     formData.append('image_name', imageId);
     return api.post(`/annotation/projects/${projectId}/get-annotation`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   uploadVideo: (projectId: string, file: File, frameInterval = 30) => {
@@ -173,14 +177,14 @@ export const annotationApi = {
     formData.append('file', file);
     formData.append('frame_interval', String(frameInterval));
     return api.post(`/annotation/projects/${projectId}/upload-video`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   uploadArchive: (projectId: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);
     return api.post(`/annotation/projects/${projectId}/upload-archive`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   exportNdjson: (projectId: string) =>
@@ -205,7 +209,7 @@ export const samApi = {
     formData.append('points', JSON.stringify(points));
     formData.append('labels', JSON.stringify(labels));
     return api.post('/sam/predict', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   // 边界框分割预测
@@ -213,7 +217,7 @@ export const samApi = {
     const formData = new FormData();
     formData.append('bbox', JSON.stringify(bbox));
     return api.post('/sam/predict-box', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   // 自动标注 (YOLO检测 + SAM分割)
@@ -224,7 +228,7 @@ export const samApi = {
     formData.append('model_name', modelName);
     formData.append('confidence', String(confidence));
     return api.post('/sam/auto-label', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   // 批量自动标注
@@ -235,7 +239,7 @@ export const samApi = {
     formData.append('model_name', modelName);
     formData.append('confidence', String(confidence));
     return api.post('/sam/batch-auto-label', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   // 批量 SAM 标注 - 针对特定类别
@@ -246,7 +250,7 @@ export const samApi = {
     if (modelName) formData.append('model_name', modelName);
     formData.append('confidence', String(confidence || 0.25));
     return api.post('/sam/batch-sam-label', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   // 导出YOLO格式
@@ -256,7 +260,7 @@ export const samApi = {
     formData.append('output_dir', outputDir);
     formData.append('image_path', imagePath);
     return api.post('/sam/export-yolo', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   // 一键自动标注 - 检测所有类别
@@ -266,7 +270,7 @@ export const samApi = {
     formData.append('model_name', modelName);
     formData.append('confidence', String(confidence));
     return api.post('/sam/detect-all', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: multipartHeaders,
     });
   },
   // 获取支持的模型列表
@@ -322,35 +326,17 @@ export const projectApi = {
 export const solutionsApi = {
   list: () => api.get('/solutions/list'),
   objectCounting: (formData: FormData) =>
-    api.post('/solutions/object-counting', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
-  // 热力图（同步处理）
-  heatmap: async (formData: FormData) => {
-    // 直接提交任务，等待同步结果
-    const response = await api.post('/solutions/heatmap', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response;
-  },
+    api.post('/solutions/object-counting', formData, { headers: multipartHeaders }),
+  heatmap: (formData: FormData) =>
+    api.post('/solutions/heatmap', formData, { headers: multipartHeaders }),
   speedEstimation: (formData: FormData) =>
-    api.post('/solutions/speed-estimation', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+    api.post('/solutions/speed-estimation', formData, { headers: multipartHeaders }),
   distanceCalculation: (formData: FormData) =>
-    api.post('/solutions/distance-calculation', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+    api.post('/solutions/distance-calculation', formData, { headers: multipartHeaders }),
   objectBlur: (formData: FormData) =>
-    api.post('/solutions/object-blur', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+    api.post('/solutions/object-blur', formData, { headers: multipartHeaders }),
   objectCrop: (formData: FormData) =>
-    api.post('/solutions/object-crop', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+    api.post('/solutions/object-crop', formData, { headers: multipartHeaders }),
   queueManagement: (formData: FormData) =>
-    api.post('/solutions/queue-management', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+    api.post('/solutions/queue-management', formData, { headers: multipartHeaders }),
 };
