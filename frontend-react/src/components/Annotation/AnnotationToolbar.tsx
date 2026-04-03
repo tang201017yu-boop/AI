@@ -11,6 +11,7 @@ interface Props {
   onClassChange: (className: string) => void;
   onAddClass?: (className: string) => void;
   onAutoLabel: () => void;
+  onDetectAll?: () => void;
   onClear: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -31,6 +32,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
   onClassChange,
   onAddClass,
   onAutoLabel,
+  onDetectAll,
   onClear,
   onUndo,
   onRedo,
@@ -322,10 +324,32 @@ export const AnnotationToolbar: React.FC<Props> = ({
       {/* 分隔线 */}
       <div style={{ width: '1px', height: '28px', background: '#e2e8f0' }} />
 
-      {/* 自动标注按钮 */}
+      {/* 一键自动标注（所有类别）*/}
+      {onDetectAll && (
+        <button
+          onClick={onDetectAll}
+          disabled={loading}
+          title="用 YOLO 自动识别图中所有对象并添加标注"
+          style={{
+            padding: '8px 16px',
+            border: 'none',
+            borderRadius: '6px',
+            background: loading ? '#94a3b8' : '#f59e0b',
+            color: '#fff',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            fontSize: '13px',
+            fontWeight: 600,
+          }}
+        >
+          {loading ? '⏳ 识别中...' : '✨ 一键标注'}
+        </button>
+      )}
+
+      {/* 自动标注（指定类别）*/}
       <button
         onClick={onAutoLabel}
         disabled={loading}
+        title="对当前选中类别进行自动标注"
         style={{
           padding: '8px 16px',
           border: 'none',

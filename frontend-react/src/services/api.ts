@@ -248,6 +248,16 @@ export const samApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  // 一键自动标注 - 检测所有类别
+  detectAll: (file: File, modelName: string = 'yolo11n.pt', confidence: number = 0.25) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('model_name', modelName);
+    formData.append('confidence', String(confidence));
+    return api.post('/sam/detect-all', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   // 获取支持的模型列表
   getModels: () => api.get('/sam/models'),
 };

@@ -618,6 +618,63 @@ async def batch_sam_label(
         return {"success": False, "message": str(e)}
 
 
+@router.post("/sam/detect-all")
+async def detect_all(
+    file: UploadFile = File(...),
+    model_name: str = Form("yolo11n.pt"),
+    confidence: float = Form(0.25)
+):
+    """一键自动标注 - 检测图中所有对象，不限类别"""
+    import tempfile, os
+
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, file.filename or "upload.jpg")
+
+    try:
+        content = await file.read()
+        with open(temp_path, 'wb') as f:
+            f.write(content)
+
+        logger.info(f"[API] detect-all: model={model_name}, conf={confidence}")
+
+        from backend.core.yolo_engine import yolo_engine
+        result = yolo_engine.infer(
+            image_path=temp_path,
+            model_identifier=model_name,
+            confidence=confidence
+        )
+
+        if not result.get("success"):
+            return {"success": False, "message": result.get("message", "检测失败")}
+
+        detections = result.get("detections", [])
+        annotations = [
+            {
+                "class": d["class_name"],
+                "class_id": d["class_id"],
+                "bbox": d["bbox"],
+                "segmentation": "",
+                "confidence": d["confidence"],
+            }
+            for d in detections
+        ]
+
+        logger.info(f"[API] detect-all 结果: {len(annotations)} 个对象")
+        return {
+            "success": True,
+            "annotations": annotations,
+            "total_detections": len(annotations),
+        }
+    except Exception as e:
+        logger.error(f"[API] detect-all error: {e}")
+        return {"success": False, "message": str(e)}
+    finally:
+        try:
+            os.remove(temp_path)
+        except:
+            pass
+
+
 @router.post("/sam/export-yolo")
 async def export_yolo(
     annotations: str = Form(...),  # JSON string

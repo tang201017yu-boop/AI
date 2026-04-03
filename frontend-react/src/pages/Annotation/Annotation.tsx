@@ -158,7 +158,65 @@ export const Annotation: React.FC = () => {
     saveSamHistory([], [], []);
   }, [saveSamHistory]);
 
-  // 自动标注
+  // 一键自动标注（检测所有类别）
+  const handleDetectAll = useCallback(async () => {
+    if (!samFile) {
+      alert('请先选择图片');
+      return;
+    }
+    setSamLoading(true);
+    try {
+      const res = await samApi.detectAll(samFile, selectedModel, confidence);
+      const result = res.data?.data || res.data;
+
+      if (result?.success) {
+        const anns: SAMAnnotation[] = result.annotations || [];
+        if (anns.length === 0) {
+          alert('未检测到任何对象，请尝试降低置信度阈值');
+          return;
+        }
+
+        // 合并到现有标注
+        const merged = [...samAnnotations, ...anns];
+        setSamAnnotations(merged);
+
+        // 生成边界框显示
+        const newBoxes: AnnotationBox[] = anns.map((a: SAMAnnotation) => ({
+          x1: a.bbox[0], y1: a.bbox[1], x2: a.bbox[2], y2: a.bbox[3]
+        }));
+        const allBoxes = [...samBoxes, ...newBoxes];
+        setSamBoxes(allBoxes);
+
+        // 自动添加新检测到的类别
+        anns.forEach((a: SAMAnnotation) => {
+          if (!samClasses.includes(a.class)) {
+            setSamClasses(prev => [...prev, a.class]);
+          }
+        });
+
+        // 更新类别建议
+        const classCounts: Record<string, number> = {};
+        merged.forEach((a: SAMAnnotation) => {
+          classCounts[a.class] = (classCounts[a.class] || 0) + 1;
+        });
+        setClassSuggestions(Object.entries(classCounts).map(([name, count]) => ({
+          name, count, color: getRandomColor(),
+        })));
+
+        saveSamHistory(samPoints, allBoxes, samMasks);
+        alert(`自动标注完成，检测到 ${anns.length} 个对象`);
+      } else {
+        alert(result?.message || '自动标注失败');
+      }
+    } catch (e) {
+      console.error('detectAll failed:', e);
+      alert('自动标注失败，请重试');
+    } finally {
+      setSamLoading(false);
+    }
+  }, [samFile, samAnnotations, samBoxes, samMasks, samPoints, samClasses, selectedModel, confidence, saveSamHistory]);
+
+  // 自动标注（指定类别）
   const handleSamAutoLabel = useCallback(async () => {
     if (!samFile) return;
 
@@ -1273,7 +1331,7 @@ export const Annotation: React.FC = () => {
               tool={samTool} currentClass={samCurrentClass} classes={samClasses}
               suggestions={classSuggestions} onToolChange={setSamTool}
               onClassChange={setSamCurrentClass} onAddClass={handleAddClass}
-              onAutoLabel={handleSamAutoLabel} onClear={handleSamClear}
+              onAutoLabel={handleSamAutoLabel} onDetectAll={handleDetectAll} onClear={handleSamClear}
               onUndo={handleSamUndo} onRedo={handleSamRedo}
               onDeleteSelected={handleDeleteSelected} onSave={handleSave}
               loading={samLoading}
