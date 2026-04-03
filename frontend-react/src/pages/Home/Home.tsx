@@ -21,7 +21,7 @@ export const Home: React.FC = () => {
 
   useEffect(() => {
     systemApi.getInfo()
-      .then((res) => setSystemInfo(res.data?.data || res.data || null))
+      .then((res) => setSystemInfo(((res.data as any)?.data || res.data) as SystemInfo | null))
       .catch(console.error);
   }, []);
 

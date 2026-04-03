@@ -7,6 +7,8 @@ interface CardProps {
   className?: string;
   style?: React.CSSProperties;
   onClick?: () => void;
+  onMouseEnter?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  onMouseLeave?: (e: React.MouseEvent<HTMLDivElement>) => void;
 }
 
 interface CardHeaderProps {
@@ -15,11 +17,11 @@ interface CardHeaderProps {
   action?: React.ReactNode;
 }
 
-export const Card: React.FC<CardProps> = ({ children, variant = 'default', className = '', style, onClick }) => {
+export const Card: React.FC<CardProps> = ({ children, variant = 'default', className = '', style, onClick, onMouseEnter, onMouseLeave }) => {
   const classes = [styles.card, variant !== 'default' && styles[variant], className]
     .filter(Boolean)
     .join(' ');
-  return <div className={classes} style={style} onClick={onClick}>{children}</div>;
+  return <div className={classes} style={style} onClick={onClick} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>{children}</div>;
 };
 
 export const CardHeader: React.FC<CardHeaderProps> = ({ title, icon, action }) => (

@@ -53,3 +53,11 @@
 .success .value {
   color: var(--success);
 }
+
+.warning::before {
+  background: #f59e0b;
+}
+
+.warning .value {
+  color: #d97706;
+}

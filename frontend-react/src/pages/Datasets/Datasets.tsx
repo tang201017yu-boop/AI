@@ -88,7 +88,8 @@ export const Datasets: React.FC = () => {
   const loadDatasets = async () => {
     try {
       const res = await datasetApi.list();
-      const datasetsData = res.data?.datasets || res.data?.data?.datasets || [];
+      const rd = res.data as any;
+      const datasetsData = rd?.datasets || rd?.data?.datasets || [];
       setDatasets(datasetsData);
       if (datasetsData.length > 0 && !selectedDataset) {
         setSelectedDataset(datasetsData[0].name);
@@ -146,7 +147,7 @@ export const Datasets: React.FC = () => {
       }
       await loadDatasets();
       // 上传后自动选中新数据集
-      const newName = res.data?.dataset?.name;
+      const newName = (res.data as any)?.dataset?.name || (res.data as any)?.data?.name;
       if (newName) setSelectedDataset(newName);
     } catch (error: any) {
       console.error(error);
@@ -164,7 +165,8 @@ export const Datasets: React.FC = () => {
     try {
       await datasetApi.delete(selectedDataset);
       const res = await datasetApi.list();
-      const datasetsData = res.data?.datasets || res.data?.data?.datasets || [];
+      const rd2 = res.data as any;
+      const datasetsData = rd2?.datasets || rd2?.data?.datasets || [];
       setDatasets(datasetsData);
       setSelectedDataset(datasetsData.length > 0 ? datasetsData[0].name : null);
     } catch (error) {
@@ -451,7 +453,7 @@ export const Datasets: React.FC = () => {
           <tr
             key={idx}
             onClick={() => setFullscreenImage(img)}
-            style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', ':hover': { background: 'var(--bg-hover)' } }}
+            style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
           >
             <td style={{ padding: 'var(--space-2)' }}>
               <img

@@ -4,7 +4,7 @@ import styles from './StatCard.module.css';
 interface StatCardProps {
   value: string | number;
   label: string;
-  variant?: 'default' | 'accent' | 'success';
+  variant?: 'default' | 'accent' | 'success' | 'warning';
 }
 
 export const StatCard: React.FC<StatCardProps> = ({ value, label, variant = 'default' }) => {

@@ -44,16 +44,20 @@ export const Projects: React.FC = () => {
         projectApi.list(),
       ]);
 
-      setAnnotationProjects(annoRes.data?.data || annoRes.data || []);
-      const datasetsData = datasetRes.data?.datasets || datasetRes.data?.data?.datasets || [];
+      const annoData = annoRes.data as any;
+      setAnnotationProjects(annoData?.data || annoData || []);
+      const datasetRd = datasetRes.data as any;
+      const datasetsData = datasetRd?.datasets || datasetRd?.data?.datasets || [];
       setDatasets(datasetsData);
 
       // 加载训练项目
-      const tProjects = trainingProjRes.data?.projects || trainingProjRes.data?.data?.projects || [];
+      const tProjRd = trainingProjRes.data as any;
+      const tProjects = tProjRd?.projects || tProjRd?.data?.projects || [];
       setTrainingProjects(tProjects);
 
       // 从训练任务构建项目列表
-      const tasks = trainingRes.data?.tasks || trainingRes.data || [];
+      const trainingRd = trainingRes.data as any;
+      const tasks = trainingRd?.tasks || trainingRd || [];
       const projectMap = new Map();
 
       // 处理训练任务
@@ -75,7 +79,8 @@ export const Projects: React.FC = () => {
       }
 
       // 关联模型信息
-      const models = modelsRes.data || [];
+      const modelsRd = modelsRes.data as any;
+      const models: any[] = modelsRd?.models || modelsRd?.data?.models || modelsRd || [];
       for (const model of models) {
         const pathParts = model.path.split('/');
         const modelsIndex = pathParts.indexOf('models');
@@ -103,7 +108,7 @@ export const Projects: React.FC = () => {
       }
 
       // 处理标注项目
-      for (const p of (annoRes.data?.data || annoRes.data || [])) {
+      for (const p of (annoData?.data || annoData || [])) {
         projectMap.set(`anno_${p.id}`, {
           id: p.id,
           name: p.name,

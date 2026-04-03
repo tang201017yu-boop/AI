@@ -211,6 +211,7 @@ export const Training: React.FC = () => {
 
     let lastEpoch = -1;
     let errorCount = 0;
+    let chartErrorCount = 0;
     let stopped = false;
 
     const stop = (clearId: ReturnType<typeof setInterval>) => {
@@ -243,6 +244,16 @@ export const Training: React.FC = () => {
 
           if (chartRes?.data?.data) {
             setChartData(chartRes.data.data);
+            chartErrorCount = 0;
+          } else if (chartRes === null) {
+            // chart-data 返回 404，连续失败 5 次则停止轮询（任务已不存在）
+            chartErrorCount++;
+            if (chartErrorCount >= 5) {
+              stop(interval);
+              setTraining(false);
+              setCurrentTaskId(null);
+              return;
+            }
           }
 
           const epoch = data.current_epoch || 0;
