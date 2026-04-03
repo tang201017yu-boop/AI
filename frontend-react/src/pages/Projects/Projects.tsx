@@ -348,11 +348,11 @@ export const Projects: React.FC = () => {
                 cursor: 'pointer',
                 transition: 'transform 0.2s, box-shadow 0.2s',
               }}
-              onMouseEnter={(e) => {
+              onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => {
                 e.currentTarget.style.transform = 'translateY(-2px)';
                 e.currentTarget.style.boxShadow = '0 8px 25px rgba(0,0,0,0.1)';
               }}
-              onMouseLeave={(e) => {
+              onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
                 e.currentTarget.style.transform = 'translateY(0)';
                 e.currentTarget.style.boxShadow = '';
               }}
