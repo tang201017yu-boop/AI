@@ -20,7 +20,7 @@ export const Annotation: React.FC = () => {
   const [autoLabelLoading, setAutoLabelLoading] = useState(false);
   const [autoLabelResult, setAutoLabelResult] = useState<any>(null);
   const [selectedModel, setSelectedModel] = useState('yolo11n.pt');
-  const [confidence, setConfidence] = useState(0.25);
+  const [confidence, setConfidence] = useState(0.1);
   const [, setShowAutoLabel] = useState(false);
 
   // 批量标注状态
@@ -1332,6 +1332,8 @@ export const Annotation: React.FC = () => {
               suggestions={classSuggestions} onToolChange={setSamTool}
               onClassChange={setSamCurrentClass} onAddClass={handleAddClass}
               onAutoLabel={handleSamAutoLabel} onDetectAll={handleDetectAll} onClear={handleSamClear}
+              detectAllModel={selectedModel} detectAllConfidence={confidence}
+              onDetectAllModelChange={setSelectedModel} onDetectAllConfidenceChange={setConfidence}
               onUndo={handleSamUndo} onRedo={handleSamRedo}
               onDeleteSelected={handleDeleteSelected} onSave={handleSave}
               loading={samLoading}

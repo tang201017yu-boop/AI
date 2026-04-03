@@ -12,6 +12,11 @@ interface Props {
   onAddClass?: (className: string) => void;
   onAutoLabel: () => void;
   onDetectAll?: () => void;
+  detectAllModel?: string;
+  detectAllConfidence?: number;
+  onDetectAllModelChange?: (model: string) => void;
+  onDetectAllConfidenceChange?: (conf: number) => void;
+  availableModels?: string[];
   onClear: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -33,6 +38,11 @@ export const AnnotationToolbar: React.FC<Props> = ({
   onAddClass,
   onAutoLabel,
   onDetectAll,
+  detectAllModel = 'yolo11n.pt',
+  detectAllConfidence = 0.1,
+  onDetectAllModelChange,
+  onDetectAllConfidenceChange,
+  availableModels = ['yolo11n.pt', 'yolo11m.pt', 'yolo26n.pt', 'yolo26m.pt'],
   onClear,
   onUndo,
   onRedo,
@@ -326,23 +336,42 @@ export const AnnotationToolbar: React.FC<Props> = ({
 
       {/* 一键自动标注（所有类别）*/}
       {onDetectAll && (
-        <button
-          onClick={onDetectAll}
-          disabled={loading}
-          title="用 YOLO 自动识别图中所有对象并添加标注"
-          style={{
-            padding: '8px 16px',
-            border: 'none',
-            borderRadius: '6px',
-            background: loading ? '#94a3b8' : '#f59e0b',
-            color: '#fff',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            fontSize: '13px',
-            fontWeight: 600,
-          }}
-        >
-          {loading ? '⏳ 识别中...' : '✨ 一键标注'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+          <select
+            value={detectAllModel}
+            onChange={(e) => onDetectAllModelChange?.(e.target.value)}
+            disabled={loading}
+            style={{ padding: '5px 8px', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '12px', background: '#fff', maxWidth: '120px' }}
+            title="选择检测模型"
+          >
+            {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap' }}>
+              置信度: {detectAllConfidence.toFixed(2)}
+            </span>
+            <input
+              type="range" min="0.05" max="0.9" step="0.05"
+              value={detectAllConfidence}
+              onChange={(e) => onDetectAllConfidenceChange?.(parseFloat(e.target.value))}
+              disabled={loading}
+              style={{ width: '70px', cursor: 'pointer' }}
+            />
+          </div>
+          <button
+            onClick={onDetectAll}
+            disabled={loading}
+            title="用 YOLO 自动识别图中所有对象并添加标注"
+            style={{
+              padding: '8px 16px', border: 'none', borderRadius: '6px',
+              background: loading ? '#94a3b8' : '#f59e0b',
+              color: '#fff', cursor: loading ? 'not-allowed' : 'pointer',
+              fontSize: '13px', fontWeight: 600,
+            }}
+          >
+            {loading ? '⏳ 识别中...' : '✨ 一键标注'}
+          </button>
+        </div>
       )}
 
       {/* 自动标注（指定类别）*/}
