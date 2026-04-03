@@ -60,10 +60,20 @@ export const Annotation: React.FC = () => {
   // 类别建议（基于检测结果）
   const [classSuggestions, setClassSuggestions] = useState<ClassSuggestion[]>([]);
 
-  // 初始化加载 SAM 模型（页面加载时自动加载）
+  // 初始化加载 SAM 模型（页面加载时自动检查并加载）
   useEffect(() => {
     const initSAM = async () => {
       try {
+        // 先检查模型是否已加载
+        const statusRes = await samApi.getStatus();
+        const isLoaded = statusRes.data?.loaded || statusRes.data?.data?.loaded || false;
+        if (isLoaded) {
+          console.log('[SAM] 模型已加载');
+          setSamLoaded(true);
+          return;
+        }
+        // 未加载则自动加载
+        console.log('[SAM] 模型未加载，正在加载...');
         const res = await samApi.loadModel('vit_b');
         setSamLoaded(res.data?.success || res.data?.data?.success || false);
       } catch (e) {

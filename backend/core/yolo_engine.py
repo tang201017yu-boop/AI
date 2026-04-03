@@ -1142,25 +1142,35 @@ class TrainingStatus:
         Returns:
             Dict: 用于绘制图表的数据
         """
-        # Flatten metrics_history so each record has metric keys at the top level,
-        # matching the CSV-based format expected by the frontend.
+        import math
+
+        def safe_val(v):
+            """将 nan/inf 转为 None，避免 JSON 序列化失败"""
+            try:
+                f = float(v)
+                return None if (math.isnan(f) or math.isinf(f)) else f
+            except (TypeError, ValueError):
+                return None
+
         flat_history = []
         for i, record in enumerate(self.metrics_history):
             flat = {"epoch": record.get("epoch", i + 1)}
-            flat.update(record.get("metrics", {}))
+            flat.update({k: safe_val(v) for k, v in record.get("metrics", {}).items()})
             flat.update({
-                "train/box_loss": record.get("losses", {}).get("box_loss"),
-                "train/cls_loss": record.get("losses", {}).get("cls_loss"),
-                "train/dfl_loss": record.get("losses", {}).get("dfl_loss"),
+                "train/box_loss": safe_val(record.get("losses", {}).get("box_loss")),
+                "train/cls_loss": safe_val(record.get("losses", {}).get("cls_loss")),
+                "train/dfl_loss": safe_val(record.get("losses", {}).get("dfl_loss")),
             })
             flat_history.append(flat)
+
         return {
             "epochs": list(range(1, len(self.metrics_history) + 1)),
             "losses": {
-                name: list(values) for name, values in self.losses_history.items()
+                name: [safe_val(v) for v in values]
+                for name, values in self.losses_history.items()
             },
             "metrics_history": flat_history,
-            "best_metrics": self.best_metrics
+            "best_metrics": {k: safe_val(v) for k, v in self.best_metrics.items()}
         }
 
 

@@ -204,7 +204,11 @@ class AnnotationService:
 
             if task_type == "detect":
                 # 检测框: class_id x_center y_center width height (归一化)
-                x1, y1, x2, y2 = ann["bbox"]
+                bbox = ann.get("bbox", [0, 0, 0, 0])
+                if bbox is None or len(bbox) < 4 or any(v is None for v in bbox):
+                    print(f"[WARN] 跳过无效 bbox: {bbox}")
+                    continue
+                x1, y1, x2, y2 = bbox
                 img_w, img_h = ann.get("image_size", [640, 640])
                 x_center = (x1 + x2) / 2 / img_w
                 y_center = (y1 + y2) / 2 / img_h
@@ -222,7 +226,11 @@ class AnnotationService:
 
             elif task_type == "pose":
                 # 关键点: class_id x y visibility ...
-                x1, y1, x2, y2 = ann["bbox"]
+                bbox = ann.get("bbox", [0, 0, 0, 0])
+                if bbox is None or len(bbox) < 4 or any(v is None for v in bbox):
+                    print(f"[WARN] 跳过无效 bbox: {bbox}")
+                    continue
+                x1, y1, x2, y2 = bbox
                 img_w, img_h = ann.get("image_size", [640, 640])
                 x_center = (x1 + x2) / 2 / img_w
                 y_center = (y1 + y2) / 2 / img_h
