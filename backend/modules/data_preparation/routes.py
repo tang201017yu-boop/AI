@@ -1214,19 +1214,33 @@ async def get_dataset_image(name: str, filename: str):
 
     # 使用 dataset_service 获取正确的数据集路径（支持嵌套结构）
     dataset_path = dataset_service._get_dataset_path(name)
-    images_dir = dataset_path / "images" if (dataset_path / "images").exists() else dataset_path / "image"
 
-    # 先尝试直接路径
-    image_path = images_dir / filename
-    if not image_path.exists():
-        # 递归搜索子目录
-        found = False
-        for img_path in images_dir.rglob(filename):
-            image_path = img_path
-            found = True
+    # 按优先级搜索图片：images/ → train/images/ → valid/images/ → test/images/ → 全局递归
+    search_dirs = []
+    if (dataset_path / "images").exists():
+        search_dirs.append(dataset_path / "images")
+    for sp in ["train", "val", "valid", "test"]:
+        sp_dir = dataset_path / sp / "images"
+        if sp_dir.exists():
+            search_dirs.append(sp_dir)
+    if not search_dirs:
+        search_dirs = [dataset_path]
+
+    image_path = None
+    for search_dir in search_dirs:
+        candidate = search_dir / filename
+        if candidate.exists():
+            image_path = candidate
             break
-        if not found:
-            raise HTTPException(status_code=404, detail="图片不存在")
+        # 递归子目录搜索
+        for img_path in search_dir.rglob(filename):
+            image_path = img_path
+            break
+        if image_path:
+            break
+
+    if not image_path:
+        raise HTTPException(status_code=404, detail="图片不存在")
 
     # 确定图片类型
     ext = filename.lower().split('.')[-1]
