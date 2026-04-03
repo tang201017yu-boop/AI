@@ -90,22 +90,56 @@ class StatisticsService:
                 "error": str(e)
             }
 
+    def _resolve_dirs(self, dataset_path: Path):
+        """
+        解析数据集目录结构，兼容三种格式：
+        1. 平铺: images/ labels/
+        2. images 内拆分: images/train/ images/val/ labels/train/
+        3. Roboflow: train/images/ train/labels/ valid/images/ ...
+        返回 (all_image_dirs, all_label_dirs) 两个列表，每项为 Path
+        """
+        SPLITS = ["train", "val", "valid", "test"]
+        image_dirs: List[Path] = []
+        label_dirs: List[Path] = []
+
+        root_img = dataset_path / "images"
+        root_lbl = dataset_path / "labels"
+
+        if root_img.exists():
+            image_dirs.append(root_img)
+        if root_lbl.exists():
+            label_dirs.append(root_lbl)
+
+        # Roboflow 结构: train/images/, valid/images/ ...
+        for sp in SPLITS:
+            sp_img = dataset_path / sp / "images"
+            sp_lbl = dataset_path / sp / "labels"
+            if sp_img.exists():
+                image_dirs.append(sp_img)
+            if sp_lbl.exists():
+                label_dirs.append(sp_lbl)
+
+        # 兜底：没有任何 images 目录则用数据集根目录
+        if not image_dirs:
+            image_dirs = [dataset_path]
+
+        return image_dirs, label_dirs
+
     def _get_summary(self, dataset_path: Path) -> Dict[str, Any]:
         """获取数据集摘要"""
-        images_dir = dataset_path / "images"
-        labels_dir = dataset_path / "labels"
+        image_dirs, label_dirs = self._resolve_dirs(dataset_path)
 
-        # 图片数量
-        image_count = self._count_images(images_dir)
+        # 图片总数（跨所有目录）
+        image_count = sum(self._count_images(d) for d in image_dirs)
 
-        # 标注数量
-        annotation_count = self._count_annotations(labels_dir)
+        # 标注总数
+        annotation_count = sum(self._count_annotations(d) for d in label_dirs)
 
         # 类别列表
         classes = self._get_classes(dataset_path)
 
         # 文件大小统计
-        total_size = self._get_total_size(images_dir)
+        total_size = sum(self._get_total_size(d) for d in image_dirs)
 
         return {
             "total_images": image_count,
@@ -118,9 +152,9 @@ class StatisticsService:
 
     def _get_class_distribution(self, dataset_path: Path) -> Dict[str, Any]:
         """获取类别分布"""
-        labels_dir = dataset_path / "labels"
+        _, label_dirs = self._resolve_dirs(dataset_path)
 
-        if not labels_dir.exists():
+        if not label_dirs:
             return {
                 "success": True,
                 "labels": [],
@@ -131,14 +165,15 @@ class StatisticsService:
 
         class_counts = defaultdict(int)
 
-        # 解析所有标签文件
-        for label_file in labels_dir.rglob("*.txt"):
-            with open(label_file, 'r') as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if parts:
-                        class_id = int(parts[0])
-                        class_counts[class_id] += 1
+        # 解析所有标签文件（跨所有 labels 目录）
+        for labels_dir in label_dirs:
+            for label_file in labels_dir.rglob("*.txt"):
+                with open(label_file, 'r') as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if parts:
+                            class_id = int(parts[0])
+                            class_counts[class_id] += 1
 
         # 获取类别名称
         classes = self._get_classes(dataset_path)
@@ -180,10 +215,9 @@ class StatisticsService:
 
     def _get_spatial_distribution(self, dataset_path: Path) -> Dict[str, Any]:
         """获取位置热图数据"""
-        labels_dir = dataset_path / "labels"
-        images_dir = dataset_path / "images"
+        image_dirs, label_dirs = self._resolve_dirs(dataset_path)
 
-        if not labels_dir.exists() or not images_dir.exists():
+        if not label_dirs:
             return {
                 "success": True,
                 "heatmap_data": [],
@@ -195,21 +229,23 @@ class StatisticsService:
         center_points = []
         image_sizes = {}
 
-        # 获取图片尺寸
-        for img_path in images_dir.rglob("*.[jp][pn]g"):
-            try:
-                if PIL_AVAILABLE:
-                    img = Image.open(img_path)
-                    image_sizes[str(img_path)] = (img.width, img.height)
-            except:
-                pass
+        # 获取图片尺寸（跨所有 image 目录）
+        for images_dir in image_dirs:
+            for img_path in images_dir.rglob("*.[jp][pn]g"):
+                try:
+                    if PIL_AVAILABLE:
+                        img = Image.open(img_path)
+                        image_sizes[img_path.stem] = (img.width, img.height)
+                except:
+                    pass
 
-        # 解析标签
-        for label_file in labels_dir.rglob("*.txt"):
-            label_path = str(label_file)
-            img_path = label_path.replace("labels", "images").replace(".txt", ".jpg")
+        # 解析标签（跨所有 label 目录）
+        for labels_dir in label_dirs:
+            for label_file in labels_dir.rglob("*.txt"):
+                img_path = label_file.with_suffix(".jpg")
+                img_stem = label_file.stem
 
-            img_size = image_sizes.get(img_path, [640, 480])
+            img_size = image_sizes.get(img_stem, (640, 480))
             img_w, img_h = img_size
 
             with open(label_file, 'r') as f:
@@ -285,31 +321,23 @@ class StatisticsService:
 
     def _get_dimension_analysis(self, dataset_path: Path) -> Dict[str, Any]:
         """获取维度分析"""
-        images_dir = dataset_path / "images"
-
-        if not images_dir.exists():
-            return {
-                "success": True,
-                "widths": [],
-                "heights": [],
-                "aspect_ratios": [],
-                "statistics": {}
-            }
+        image_dirs, _ = self._resolve_dirs(dataset_path)
 
         widths = []
         heights = []
         aspect_ratios = []
 
-        # 分析图片尺寸
-        for img_path in images_dir.rglob("*.[jp][pn]g"):
-            try:
-                if PIL_AVAILABLE:
-                    img = Image.open(img_path)
-                    widths.append(img.width)
-                    heights.append(img.height)
-                    aspect_ratios.append(round(img.width / max(img.height, 1), 2))
-            except:
-                pass
+        # 分析图片尺寸（跨所有 image 目录）
+        for images_dir in image_dirs:
+            for img_path in images_dir.rglob("*.[jp][pn]g"):
+                try:
+                    if PIL_AVAILABLE:
+                        img = Image.open(img_path)
+                        widths.append(img.width)
+                        heights.append(img.height)
+                        aspect_ratios.append(round(img.width / max(img.height, 1), 2))
+                except:
+                    pass
 
         if not widths:
             return {
@@ -376,10 +404,8 @@ class StatisticsService:
         }
 
     def _get_split_details(self, dataset_path: Path) -> Dict[str, Any]:
-        """获取数据拆分详情"""
-        images_dir = dataset_path / "images"
-        labels_dir = dataset_path / "labels"
-
+        """获取数据拆分详情，兼容标准结构和 Roboflow 结构"""
+        SPLITS = ["train", "val", "test"]
         splits = {
             "train": {"images": 0, "annotations": 0},
             "val": {"images": 0, "annotations": 0},
@@ -387,29 +413,35 @@ class StatisticsService:
             "unlabeled": {"images": 0, "annotations": 0}
         }
 
-        # 检查标准结构 (train/val/test 文件夹)
-        for split in ["train", "val", "test"]:
-            split_images = images_dir / split
-            split_labels = labels_dir / split
+        images_dir = dataset_path / "images"
+        labels_dir = dataset_path / "labels"
 
-            if split_images.exists():
-                splits[split]["images"] = self._count_images(split_images)
+        # 结构一: images/train/, images/val/ (标准)
+        for split in SPLITS:
+            si = images_dir / split
+            sl = labels_dir / split
+            if si.exists():
+                splits[split]["images"] += self._count_images(si)
+            if sl.exists():
+                splits[split]["annotations"] += self._count_annotations(sl)
 
-            if split_labels.exists():
-                splits[split]["annotations"] = self._count_annotations(split_labels)
+        # 结构二: train/images/, valid/images/ (Roboflow)
+        for sp_dir, canonical in [("train","train"),("val","val"),("valid","val"),("test","test")]:
+            si = dataset_path / sp_dir / "images"
+            sl = dataset_path / sp_dir / "labels"
+            if si.exists():
+                splits[canonical]["images"] += self._count_images(si)
+            if sl.exists():
+                splits[canonical]["annotations"] += self._count_annotations(sl)
 
-        # 检查未分类图片
+        # 未分类图片（直接在 images/ 根目录下，不在子目录中）
         if images_dir.exists():
-            all_images = list(images_dir.glob("*.jpg")) + \
-                        list(images_dir.glob("*.jpeg")) + \
-                        list(images_dir.glob("*.png")) + \
-                        list(images_dir.glob("*.bmp"))
-
-            labeled_count = sum(
-                splits[s]["images"] for s in ["train", "val", "test"]
-            )
-
-            splits["unlabeled"]["images"] = len(all_images) - labeled_count
+            all_images = []
+            for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp"]:
+                all_images.extend(images_dir.glob(ext))
+            labeled_count = sum(splits[s]["images"] for s in SPLITS)
+            unlabeled = len(all_images) - labeled_count
+            splits["unlabeled"]["images"] = max(0, unlabeled)
 
         # 计算百分比
         total = sum(s["images"] for s in splits.values())
