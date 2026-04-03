@@ -101,74 +101,81 @@ async def solution_heatmap(
     classes: Optional[str] = Form(None),
     conf: float = Form(0.25)
 ):
-    # 转换 colormap 名称为 OpenCV 常量
-    import cv2
-    colormap_value = getattr(cv2, colormap, cv2.COLORMAP_JET)
     """热图生成（异步）"""
+    import cv2
     import uuid
+    import logging
+    import traceback
     from concurrent.futures import ThreadPoolExecutor
+    logger = logging.getLogger(__name__)
 
-    # 生成任务 ID
-    task_id = str(uuid.uuid4())[:8]
+    try:
+        # 转换 colormap 名称为 OpenCV 整数常量（修复：之前传字符串导致 cv2.applyColorMap 报错）
+        colormap_int = getattr(cv2, colormap, cv2.COLORMAP_JET)
 
-    # 保存上传的视频
-    filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
-    file_path = settings.UPLOADS_DIR / filename
-    save_uploaded_file(file, str(file_path))
+        # 生成任务 ID
+        task_id = str(uuid.uuid4())[:8]
 
-    output_path = str(settings.UPLOADS_DIR / f"heatmap_{task_id}_{filename}")
+        # 保存上传的文件
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename or "upload.mp4")
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
 
-    # 初始化任务状态
-    heatmap_tasks[task_id] = {
-        "status": "processing",
-        "progress": 0,
-        "message": "正在处理...",
-        "output_path": None
-    }
+        output_path = str(settings.UPLOADS_DIR / f"heatmap_{task_id}_{filename}")
 
-    class_list = None
-    if classes:
-        try:
-            class_list = json.loads(classes)
-        except (json.JSONDecodeError, ValueError):
-            pass
+        # 初始化任务状态
+        heatmap_tasks[task_id] = {
+            "status": "processing",
+            "progress": 0,
+            "message": "正在处理...",
+            "output_path": None
+        }
 
-    # 在后台线程中执行
-    def process_heatmap():
-        try:
-            # 定义进度回调函数
-            def update_progress(progress, message):
-                heatmap_tasks[task_id]["progress"] = progress
-                heatmap_tasks[task_id]["message"] = message
+        class_list = None
+        if classes:
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass
 
-            result = solutions_service.generate_heatmap(
-                source=str(file_path),
-                model_name=model_name,
-                colormap=colormap,
-                classes=class_list,
-                conf=conf,
-                output_path=output_path,
-                progress_callback=update_progress
-            )
-            heatmap_tasks[task_id]["status"] = "completed" if result.get("success") else "failed"
-            heatmap_tasks[task_id]["message"] = result.get("message", "")
-            heatmap_tasks[task_id]["progress"] = 100
-            if result.get("output_path"):
-                heatmap_tasks[task_id]["output_path"] = f"/uploads/{Path(result['output_path']).name}"
-        except Exception as e:
-            heatmap_tasks[task_id]["status"] = "failed"
-            heatmap_tasks[task_id]["message"] = str(e)
-            heatmap_tasks[task_id]["progress"] = 0
+        # 在后台线程中执行
+        def process_heatmap():
+            try:
+                def update_progress(progress, message):
+                    heatmap_tasks[task_id]["progress"] = progress
+                    heatmap_tasks[task_id]["message"] = message
 
-    # 提交到线程池执行
-    executor = ThreadPoolExecutor(max_workers=2)
-    executor.submit(process_heatmap)
+                result = solutions_service.generate_heatmap(
+                    source=str(file_path),
+                    model_name=model_name,
+                    colormap=colormap_int,   # 修复：传整数而非字符串
+                    classes=class_list,
+                    conf=conf,
+                    output_path=output_path,
+                    progress_callback=update_progress
+                )
+                heatmap_tasks[task_id]["status"] = "completed" if result.get("success") else "failed"
+                heatmap_tasks[task_id]["message"] = result.get("message", "")
+                heatmap_tasks[task_id]["progress"] = 100
+                if result.get("output_path"):
+                    heatmap_tasks[task_id]["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+            except Exception as e:
+                logger.error(f"[heatmap] 后台处理失败: {traceback.format_exc()}")
+                heatmap_tasks[task_id]["status"] = "failed"
+                heatmap_tasks[task_id]["message"] = str(e)
+                heatmap_tasks[task_id]["progress"] = 0
 
-    return {
-        "success": True,
-        "task_id": task_id,
-        "message": "任务已提交，请轮询获取进度"
-    }
+        executor = ThreadPoolExecutor(max_workers=2)
+        executor.submit(process_heatmap)
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "message": "任务已提交，请轮询获取进度"
+        }
+    except Exception as e:
+        logger.error(f"[heatmap] 请求处理失败: {traceback.format_exc()}")
+        return {"success": False, "message": f"请求处理失败: {str(e)}"}
 
 
 @router.get("/solutions/heatmap/status/{task_id}")
