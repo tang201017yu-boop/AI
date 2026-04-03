@@ -2,6 +2,7 @@
 API 路由定义
 """
 import sys
+import re
 import os
 import logging
 from pathlib import Path
@@ -103,12 +104,12 @@ async def infer_image(
         raise HTTPException(status_code=500, detail="YOLO service not available")
 
     # 验证文件类型
-    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp"]):
-        raise HTTPException(status_code=400, detail="Invalid file type")
+    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "mp4", "avi", "mov", "mkv", "flv", "wmv"]):
+        raise HTTPException(status_code=400, detail="不支持的文件类型，请上传图片或视频")
 
     try:
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
 
@@ -164,7 +165,7 @@ async def infer_batch(
             continue
         
         try:
-            filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+            filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
             file_path = settings.UPLOADS_DIR / filename
             save_uploaded_file(file, str(file_path))
             
@@ -838,14 +839,14 @@ async def solution_object_counting(
     if not solutions_service:
         raise HTTPException(status_code=500, detail="Solutions service not available")
     
-    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "mp4", "avi", "mov"]):
-        raise HTTPException(status_code=400, detail="Invalid file type")
+    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "mp4", "avi", "mov", "mkv", "flv", "wmv"]):
+        raise HTTPException(status_code=400, detail="不支持的文件类型，请上传图片或视频")
     
     try:
         import json
         
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
         
@@ -922,9 +923,17 @@ async def solution_heatmap(
 
     try:
         import json
+        import re
 
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), fname or "upload.jpg")
+        # 清理文件名，移除 = & , 等 URL 特殊字符，防止静态文件 URL 解析出错
+        def _sanitize(name):
+            ext = name.rsplit('.', 1)[-1].lower() if '.' in name else 'jpg'
+            safe = re.sub(r'[^A-Za-z0-9_\-]', '_', name.rsplit('.', 1)[0]) + '.' + ext
+            return safe[:80]
+        clean_fname = _sanitize(fname) if fname else 'upload.jpg'
+        logger.info(f"[heatmap] 文件名清理: {fname!r} -> {clean_fname!r}")
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), clean_fname)
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
 
@@ -977,15 +986,21 @@ async def solution_speed_estimation(
     """速度估算 - 计算对象移动速度"""
     if not solutions_service:
         raise HTTPException(status_code=500, detail="Solutions service not available")
-    
-    if not allowed_file(file.filename, ["mp4", "avi", "mov"]):
-        raise HTTPException(status_code=400, detail="Only video files are allowed")
+
+    # 速度估算：严格只允许 MP4 视频
+    # 如果浏览器上传的文件名没有扩展名（例如是 blob/空名），就用 content_type 做兜底判断。
+    file_name = file.filename or ""
+    content_type = file.content_type or ""
+    logger.info(f"[speed-estimation] 收到文件 filename='{file_name}', content_type='{content_type}'")
+    is_mp4 = file_name.lower().endswith(".mp4") or content_type == "video/mp4"
+    if not is_mp4:
+        raise HTTPException(status_code=400, detail="速度估算只支持 MP4 视频文件，请上传 .mp4 文件")
     
     try:
         import json
         
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
         
@@ -1047,7 +1062,7 @@ async def solution_distance_calculation(
         import json
         
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
         
@@ -1092,14 +1107,14 @@ async def solution_object_blur(
     if not solutions_service:
         raise HTTPException(status_code=500, detail="Solutions service not available")
     
-    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "mp4", "avi", "mov"]):
-        raise HTTPException(status_code=400, detail="Invalid file type")
+    if not allowed_file(file.filename, ["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "mp4", "avi", "mov", "mkv", "flv", "wmv"]):
+        raise HTTPException(status_code=400, detail="不支持的文件类型，请上传图片或视频")
     
     try:
         import json
         
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
         
@@ -1149,7 +1164,7 @@ async def solution_object_crop(
         import json
         
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
         
@@ -1197,15 +1212,20 @@ async def solution_queue_management(
     """队列管理 - 监控队列长度"""
     if not solutions_service:
         raise HTTPException(status_code=500, detail="Solutions service not available")
-    
-    if not allowed_file(file.filename, ["mp4", "avi", "mov"]):
-        raise HTTPException(status_code=400, detail="Only video files are allowed")
+
+    # 同 speed-estimation：content_type 兜底，避免文件名无扩展导致误判。
+    file_name = file.filename or ""
+    content_type = file.content_type or ""
+    logger.info(f"[queue-management] 收到文件 filename='{file_name}', content_type='{content_type}'")
+    is_image_or_video_by_type = content_type.startswith("image/") or content_type.startswith("video/")
+    if not allowed_file(file_name, ["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "mp4", "avi", "mov", "mkv", "flv", "wmv"]) and not is_image_or_video_by_type:
+        raise HTTPException(status_code=400, detail="不支持的文件类型，请上传图片或视频")
     
     try:
         import json
         
         # 保存上传文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
         
