@@ -11,6 +11,7 @@ interface Props {
   annotations?: SAMAnnotation[];
   tool: AnnotationTool;
   selectedId: string | null;
+  hoveredId?: string | null;
   onPointAdd: (point: AnnotationPoint) => void;
   onBoxAdd: (box: AnnotationBox) => void;
   onMaskAdd?: (mask: AnnotationMask) => void;
@@ -19,6 +20,8 @@ interface Props {
   onAnnotationSelect?: (id: string) => void;
   showLabels?: boolean;
   currentClass?: string;
+  smartMode?: boolean;
+  onCursorMove?: (x: number, y: number) => void;
 }
 
 const AnnotationCanvas: React.FC<Props> = ({
@@ -31,13 +34,17 @@ const AnnotationCanvas: React.FC<Props> = ({
   annotations = [],
   tool,
   selectedId,
+  hoveredId = null,
   onPointAdd,
   onBoxAdd,
   onMaskAdd,
+  onBoxDrag,
   onMaskSelect,
   onAnnotationSelect,
   showLabels = true,
   currentClass = 'object',
+  smartMode = false,
+  onCursorMove,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -155,15 +162,16 @@ const AnnotationCanvas: React.FC<Props> = ({
 
         const [x1, y1, x2, y2] = ann.bbox;
         const isSelected = selectedId === String(idx);
+        const isHovered = hoveredId === String(idx);
         const color = getColorForClass(ann.class);
 
         // 绘制框
-        ctx.strokeStyle = isSelected ? '#fff' : color;
-        ctx.lineWidth = isSelected ? 3 : 2;
+        ctx.strokeStyle = isSelected ? '#fff' : isHovered ? '#f59e0b' : color;
+        ctx.lineWidth = isSelected ? 3 : isHovered ? 3 : 2;
 
-        if (isSelected) {
+        if (isSelected || isHovered) {
           ctx.shadowColor = color;
-          ctx.shadowBlur = 10;
+          ctx.shadowBlur = isSelected ? 10 : 6;
         }
 
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
@@ -172,7 +180,8 @@ const AnnotationCanvas: React.FC<Props> = ({
         // 绘制标签背景
         if (showLabels) {
           ctx.fillStyle = color;
-          const label = `${ann.class} ${(ann.confidence * 100).toFixed(0)}%`;
+          const confPct = ann.confidence != null ? (ann.confidence * 100).toFixed(0) : '100';
+          const label = `${ann.class} ${confPct}%`;
           ctx.font = 'bold 12px Arial';
           const textWidth = ctx.measureText(label).width;
 
@@ -349,6 +358,10 @@ const AnnotationCanvas: React.FC<Props> = ({
     if (!pos) return;
 
     setCurrentPoint(pos);
+    onCursorMove?.(pos.x, pos.y);
+
+    // Smart 模式下关闭手动交互（仅保留悬停检测给上层自动标注）
+    if (smartMode) return;
 
     // 悬停检测
     if (tool === 'select') {
@@ -388,12 +401,19 @@ const AnnotationCanvas: React.FC<Props> = ({
       const dx = pos.x - dragStart.x;
       const dy = pos.y - dragStart.y;
 
-      // 移动标注框
+      // 拖拽移动标注框（与右侧列表联动）
       const idx = parseInt(selectedId);
       if (!isNaN(idx) && annotations[idx]?.bbox) {
         const bbox = annotations[idx].bbox;
         const newBbox = [bbox[0] + dx, bbox[1] + dy, bbox[2] + dx, bbox[3] + dy];
-        // 这里可以触发更新回调
+        if (onBoxDrag) {
+          onBoxDrag(idx, {
+            x1: newBbox[0],
+            y1: newBbox[1],
+            x2: newBbox[2],
+            y2: newBbox[3],
+          });
+        }
       }
       setDragStart(pos);
     }
@@ -402,10 +422,11 @@ const AnnotationCanvas: React.FC<Props> = ({
     if (isDrawing) {
       // 已经在handleMouseMove中更新currentPoint
     }
-  }, [tool, getMousePos, points, boxes, isDragging, dragStart, selectedId, annotations, findAnnotationAtPoint, onAnnotationSelect, isDrawing]);
+  }, [tool, getMousePos, points, boxes, isDragging, dragStart, selectedId, annotations, findAnnotationAtPoint, onAnnotationSelect, isDrawing, onBoxDrag, smartMode, onCursorMove]);
 
   // 处理鼠标按下
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (smartMode) return;
     const pos = getMousePos(e);
     if (!pos) return;
 
@@ -424,10 +445,11 @@ const AnnotationCanvas: React.FC<Props> = ({
         onAnnotationSelect('');
       }
     }
-  }, [tool, getMousePos, findAnnotationAtPoint, onAnnotationSelect]);
+  }, [tool, getMousePos, findAnnotationAtPoint, onAnnotationSelect, smartMode]);
 
   // 处理鼠标抬起
   const handleMouseUp = useCallback(() => {
+    if (smartMode) return;
     if (isDrawing && startPoint && currentPoint) {
       const x1 = Math.min(startPoint.x, currentPoint.x);
       const y1 = Math.min(startPoint.y, currentPoint.y);
@@ -445,10 +467,11 @@ const AnnotationCanvas: React.FC<Props> = ({
     setDragStart(null);
     setStartPoint(null);
     setCurrentPoint(null);
-  }, [isDrawing, startPoint, currentPoint, onBoxAdd]);
+  }, [isDrawing, startPoint, currentPoint, onBoxAdd, smartMode]);
 
   // 处理点击
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (smartMode) return;
     const pos = getMousePos(e);
     if (!pos) return;
 
@@ -480,7 +503,7 @@ const AnnotationCanvas: React.FC<Props> = ({
       // 添加新顶点
       setPolygonPoints(prev => [...prev, pos]);
     }
-  }, [tool, getMousePos, onPointAdd, polygonPoints, width, height, onMaskAdd]);
+  }, [tool, getMousePos, onPointAdd, polygonPoints, width, height, onMaskAdd, smartMode]);
 
   // 鼠标离开
   const handleMouseLeave = useCallback(() => {
@@ -494,6 +517,7 @@ const AnnotationCanvas: React.FC<Props> = ({
 
   // 获取光标样式
   const getCursor = () => {
+    if (smartMode) return 'crosshair';
     if (tool === 'point') return 'crosshair';
     if (tool === 'box') return isDrawing ? 'crosshair' : 'crosshair';
     if (tool === 'select') return 'default';
@@ -501,16 +525,25 @@ const AnnotationCanvas: React.FC<Props> = ({
     return 'default';
   };
 
-  // Escape 取消多边形
+  // 多边形绘制中：Esc 清空；Backspace 撤销上一顶点（捕获阶段，避免父页面把 Backspace 当成删标注）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && tool === 'polygon' && polygonPoints.length > 0) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (tool !== 'polygon' || polygonPoints.length === 0) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
         setPolygonPoints([]);
+        return;
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        e.stopPropagation();
+        setPolygonPoints((prev) => prev.slice(0, -1));
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tool, polygonPoints]);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [tool, polygonPoints.length]);
 
   return (
     <canvas
@@ -521,7 +554,9 @@ const AnnotationCanvas: React.FC<Props> = ({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
       style={{
-        width: '100%',
+        width: 'auto',
+        maxWidth: '100%',
+        maxHeight: '100%',
         height: 'auto',
         cursor: getCursor(),
         border: '1px solid #e2e8f0',

@@ -1267,6 +1267,65 @@ async def solution_queue_management(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/solutions/parking-management", response_model=SolutionResponse)
+async def solution_parking_management(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    parking_slots: Optional[str] = Form(None),  # JSON string: [[(x,y),...], ...]
+    classes: Optional[str] = Form(None),        # JSON string
+    conf: float = Form(0.25),
+    line_width: int = Form(2)
+):
+    """停车管理 - 统计车位占用/空闲"""
+    if not solutions_service:
+        raise HTTPException(status_code=500, detail="Solutions service not available")
+
+    file_name = file.filename or ""
+    content_type = file.content_type or ""
+    is_image_or_video_by_type = content_type.startswith("image/") or content_type.startswith("video/")
+    if not allowed_file(file_name, ["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "mp4", "avi", "mov", "mkv", "flv", "wmv"]) and not is_image_or_video_by_type:
+        raise HTTPException(status_code=400, detail="不支持的文件类型，请上传图片或视频")
+
+    try:
+        import json
+
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), re.sub(r"[^A-Za-z0-9_.-]", "_", (file.filename or "upload"))[:80])
+        file_path = settings.UPLOADS_DIR / filename
+        save_uploaded_file(file, str(file_path))
+
+        slots = None
+        if parking_slots:
+            try:
+                slots = json.loads(parking_slots)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        class_list = None
+        if classes:
+            try:
+                class_list = json.loads(classes)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        output_path = str(settings.UPLOADS_DIR / f"parking_{filename}")
+        result = solutions_service.parking_management(
+            source=str(file_path),
+            model_name=model_name,
+            parking_slots=slots,
+            classes=class_list,
+            conf=conf,
+            line_width=line_width,
+            output_path=output_path
+        )
+
+        if result.get("output_path"):
+            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+        return SolutionResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/solutions/list")
 async def list_solutions():
     """列出所有可用的 Solutions 功能"""

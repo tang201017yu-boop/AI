@@ -675,6 +675,141 @@ async def detect_all(
             pass
 
 
+def _bbox_iou_xyxy(a: list, b: list) -> float:
+    """计算两框 IoU，格式 [x1,y1,x2,y2]。"""
+    if len(a) < 4 or len(b) < 4:
+        return 0.0
+    ax1, ay1, ax2, ay2 = float(a[0]), float(a[1]), float(a[2]), float(a[3])
+    bx1, by1, bx2, by2 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return (inter / union) if union > 0 else 0.0
+
+
+@router.post("/sam/classify-bbox")
+async def classify_bbox(
+    file: UploadFile = File(...),
+    bbox: str = Form(...),
+    model_name: str = Form("yolo11n.pt"),
+    confidence: float = Form(0.25),
+):
+    """
+    根据用户框选区域推断 YOLO 类别（类似 Ultralytics Hub：画框后自动匹配检测类别）。
+    策略：全图检测后与框 IoU 最大者；若无足够重叠则对裁剪区域再检测，取置信度最高者。
+    """
+    import tempfile
+    import os
+
+    import cv2
+
+    temp_dir = tempfile.gettempdir()
+    safe_name = (file.filename or "upload.jpg").replace("/", "_").replace("\\", "_")[:120]
+    temp_path = os.path.join(temp_dir, f"classify_{safe_name}")
+
+    try:
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+
+        box_list = json.loads(bbox)
+        if not isinstance(box_list, list) or len(box_list) < 4:
+            return {"success": False, "message": "bbox 须为 [x1,y1,x2,y2]"}
+        ux1, uy1, ux2, uy2 = [float(box_list[i]) for i in range(4)]
+        ux1, ux2 = min(ux1, ux2), max(ux1, ux2)
+        uy1, uy2 = min(uy1, uy2), max(uy1, uy2)
+        user_box = [ux1, uy1, ux2, uy2]
+
+        from backend.core.yolo_engine import yolo_engine
+
+        result = yolo_engine.infer(
+            image_path=temp_path,
+            model_identifier=model_name,
+            confidence=max(0.05, min(confidence, 0.99)),
+        )
+        if not result.get("success"):
+            return {"success": False, "message": result.get("message", "检测失败")}
+
+        detections = result.get("detections", [])
+        best = None
+        best_iou = 0.0
+        for d in detections:
+            db = d.get("bbox") or []
+            if len(db) < 4:
+                continue
+            iou = _bbox_iou_xyxy(user_box, db)
+            if iou > best_iou:
+                best_iou = iou
+                best = d
+
+        if best is not None and best_iou >= 0.05:
+            return {
+                "success": True,
+                "class_name": best.get("class_name"),
+                "class_id": best.get("class_id"),
+                "confidence": best.get("confidence"),
+                "method": "iou",
+                "iou": best_iou,
+            }
+
+        # 裁剪区域再检测
+        img = cv2.imread(temp_path)
+        if img is None:
+            return {"success": False, "message": "无法读取图片"}
+        h, w = img.shape[:2]
+        pad = max(8, int(0.08 * max(ux2 - ux1, uy2 - uy1, 1)))
+        cx1 = max(0, int(ux1) - pad)
+        cy1 = max(0, int(uy1) - pad)
+        cx2 = min(w, int(ux2) + pad)
+        cy2 = min(h, int(uy2) + pad)
+        if cx2 <= cx1 + 2 or cy2 <= cy1 + 2:
+            return {"success": False, "message": "框选区域无效"}
+        crop = img[cy1:cy2, cx1:cx2]
+        crop_path = os.path.join(temp_dir, f"crop_{safe_name}")
+        cv2.imwrite(crop_path, crop)
+
+        try:
+            crop_res = yolo_engine.infer(
+                image_path=crop_path,
+                model_identifier=model_name,
+                confidence=max(0.05, min(confidence, 0.99)),
+            )
+        finally:
+            try:
+                os.remove(crop_path)
+            except Exception:
+                pass
+
+        if not crop_res.get("success"):
+            return {"success": False, "message": crop_res.get("message", "裁剪区域检测失败")}
+
+        cds = crop_res.get("detections", [])
+        if not cds:
+            return {"success": False, "message": "框内未识别到对象，可换模型或调低置信度"}
+
+        top = max(cds, key=lambda x: float(x.get("confidence") or 0))
+        return {
+            "success": True,
+            "class_name": top.get("class_name"),
+            "class_id": top.get("class_id"),
+            "confidence": top.get("confidence"),
+            "method": "crop",
+            "iou": best_iou,
+        }
+    except Exception as e:
+        logger.error(f"[API] classify-bbox error: {e}")
+        return {"success": False, "message": str(e)}
+    finally:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+
+
 @router.post("/sam/export-yolo")
 async def export_yolo(
     annotations: str = Form(...),  # JSON string

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, Button } from '../../components/common';
-import { solutionsApi, modelApi } from '../../services/api';
+import { solutionsApi, modelApi, inferenceApi } from '../../services/api';
 
 // 可用的检测模型列表
 const DETECTION_MODELS = [
@@ -139,6 +139,9 @@ const SOLUTIONS = {
     supportsVideo: true,
     params: [
       { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo26n.pt', options: DETECTION_MODELS },
+      { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05 },
+      { name: 'line_width', label: '线条宽度', type: 'number', default: 2, min: 1, max: 10 },
+      { name: 'parking_slots', label: '车位坐标(JSON)', type: 'text', placeholder: '如: [[[80,420],[260,420],[260,600],[80,600]],[[280,420],[460,420],[460,600],[280,600]]]' },
     ]
   },
   'vision-eye': {
@@ -156,12 +159,13 @@ const SOLUTIONS = {
   'workout-monitoring': {
     name: 'workout-monitoring',
     title: '健身监测',
-    description: '姿态估计，计数和动作纠正',
+    description: '人体/器械检测与计数（可选姿态模型）',
     icon: '🏋️',
     color: '#14b8a6',
     supportsVideo: true,
     params: [
-      { name: 'model_name', label: '姿态模型', type: 'select', default: 'yolo11n-pose.pt', options: ['yolo11n-pose.pt'] },
+      { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo11n.pt', options: DETECTION_MODELS },
+      { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05 },
     ]
   },
 };
@@ -227,6 +231,34 @@ export const SolutionRunner: React.FC = () => {
 
     setLoading(true);
     try {
+      // 健身监测：图片走快速推理；视频走方案接口，返回处理后视频
+      if (selectedSolution === 'workout-monitoring') {
+        if (file.type.startsWith('video')) {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('model_name', String(params.model_name || 'yolo11n.pt'));
+          const conf = Number(params.conf ?? 0.25);
+          formData.append('conf', String(conf));
+          const res = await solutionsApi.workoutMonitoring(formData);
+          const data: any = res.data?.data || res.data;
+          if (data?.output_path && !data?.output_image && !data?.result_image) {
+            data.result_image = data.output_path;
+          }
+          setResult(data);
+          return;
+        }
+        const modelName = String(params.model_name || 'yolo11n.pt');
+        const conf = Number(params.conf ?? 0.25);
+        const res = await inferenceApi.image(file, modelName, conf);
+        const data: any = res.data?.data || res.data;
+        // 统一结果字段，复用当前页面展示逻辑
+        if (data?.annotated_image && !data?.output_image) {
+          data.output_image = data.annotated_image;
+        }
+        setResult(data);
+        return;
+      }
+
       const formData = new FormData();
       formData.append('file', file);
 
@@ -234,6 +266,19 @@ export const SolutionRunner: React.FC = () => {
       Object.entries(params).forEach(([key, value]) => {
         formData.append(key, String(value));
       });
+
+      // 视觉安防：将 roi(x1,y1,x2,y2) 转为后端可识别的 region_points(JSON)
+      if (selectedSolution === 'vision-eye') {
+        const roiRaw = String(params.roi || '').trim();
+        if (roiRaw) {
+          const nums = roiRaw.split(',').map((n: string) => Number(n.trim())).filter((n: number) => !Number.isNaN(n));
+          if (nums.length === 4) {
+            const [x1, y1, x2, y2] = nums;
+            const region = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
+            formData.set('region_points', JSON.stringify(region));
+          }
+        }
+      }
 
       let apiFunc;
       switch (selectedSolution) {
@@ -258,6 +303,15 @@ export const SolutionRunner: React.FC = () => {
         case 'queue-management':
           apiFunc = solutionsApi.queueManagement;
           break;
+        case 'parking-management':
+          apiFunc = solutionsApi.parkingManagement;
+          break;
+        case 'vision-eye':
+          apiFunc = solutionsApi.visionEye;
+          break;
+        case 'workout-monitoring':
+          apiFunc = solutionsApi.workoutMonitoring;
+          break;
         default:
           alert('未实现的解决方案');
           return;
@@ -268,7 +322,8 @@ export const SolutionRunner: React.FC = () => {
       setResult(data);
     } catch (error) {
       console.error('处理失败:', error);
-      alert('处理失败，请重试');
+      const msg = error instanceof Error ? error.message : '处理失败，请重试';
+      alert(`处理失败: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -334,6 +389,25 @@ export const SolutionRunner: React.FC = () => {
 
   // 渲染解决方案详情
   if (!solution) return null;
+
+  // 统一提取媒体结果路径（兼容不同后端返回结构）
+  const resolveMediaPath = (data: any): string => {
+    if (!data) return '';
+    const candidate =
+      data.result_image ||
+      data.output_path ||
+      data.output_image ||
+      data.annotated_image ||
+      data?.results?.result_image ||
+      data?.results?.output_path ||
+      data?.results?.output_image ||
+      data?.results?.annotated_image ||
+      '';
+    if (!candidate) return '';
+    if (String(candidate).startsWith('data:')) return String(candidate);
+    if (String(candidate).startsWith('http')) return String(candidate);
+    return window.location.origin + String(candidate);
+  };
 
   return (
     <div>
@@ -422,35 +496,42 @@ export const SolutionRunner: React.FC = () => {
             <div style={{ marginTop: 'var(--space-6)' }}>
               <CardHeader icon="📊" title="处理结果" />
               {/* 处理图片/视频结果 */}
-              {(result.result_image || result.output_path || result.output_image) && (
-                (() => {
-                  // 获取视频/图片URL - 添加完整URL
-                  let mediaPath = result.result_image || result.output_path || result.output_image;
-                  // 如果是相对路径，添加域名
-                  if (mediaPath && !mediaPath.startsWith('http')) {
-                    mediaPath = window.location.origin + mediaPath;
-                  }
-                  const isVideo = mediaPath.endsWith('.mp4') || mediaPath.endsWith('.avi') || mediaPath.endsWith('.mov');
-                  return isVideo ? (
-                    <div>
-                      <video
-                        src={mediaPath + '?t=' + Date.now()}
-                        controls
-                        playsInline
-                        style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)', backgroundColor: '#000' }}
-                      />
-                      <a href={mediaPath + '?download=1'} download style={{ display: 'inline-block', marginTop: '8px', color: '#3b82f6', textDecoration: 'none' }}>
-                        下载视频
-                      </a>
-                    </div>
-                  ) : (
-                    <img
-                      src={mediaPath}
-                      alt="Result"
-                      style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)' }}
+              {(() => {
+                const mediaPath = resolveMediaPath(result);
+                if (!mediaPath) return null;
+                const lower = mediaPath.toLowerCase();
+                const isVideo = lower.endsWith('.mp4') || lower.endsWith('.avi') || lower.endsWith('.mov') || lower.endsWith('.mkv') || lower.endsWith('.webm');
+                return isVideo ? (
+                  <div>
+                    <video
+                      src={mediaPath + (mediaPath.includes('?') ? '&' : '?') + 't=' + Date.now()}
+                      controls
+                      playsInline
+                      style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)', backgroundColor: '#000' }}
                     />
-                  );
-                })()
+                    <a href={mediaPath + (mediaPath.includes('?') ? '&' : '?') + 'download=1'} download style={{ display: 'inline-block', marginTop: '8px', color: '#3b82f6', textDecoration: 'none' }}>
+                      下载视频
+                    </a>
+                  </div>
+                ) : (
+                  <img
+                    src={mediaPath}
+                    alt="Result"
+                    style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)' }}
+                  />
+                );
+              })()}
+
+              {/* 媒体无法内嵌时兜底链接 */}
+              {!resolveMediaPath(result) && (result.output_path || result?.results?.output_path) && (
+                <a
+                  href={window.location.origin + (result.output_path || result?.results?.output_path)}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ display: 'inline-block', marginBottom: 'var(--space-3)', color: '#3b82f6', textDecoration: 'none' }}
+                >
+                  打开处理结果文件
+                </a>
               )}
               {/* 处理计数结果 - 支持 results 或 counting */}
               {(result.results || result.counting) && (

@@ -112,6 +112,12 @@ class SolutionsService:
             "description": "监控队列长度和等待时间",
             "input_types": ["video"],
             "features": ["队列计数", "流量分析"]
+        },
+        "parking-management": {
+            "name": "停车管理",
+            "description": "统计停车位占用与空闲数量",
+            "input_types": ["image", "video"],
+            "features": ["车位占用", "空闲统计", "区域告警"]
         }
     }
 
@@ -685,6 +691,127 @@ class SolutionsService:
             }
         except Exception as e:
             return {"success": False, "message": f"队列管理失败: {str(e)}"}
+
+    # ==================== 停车管理 ====================
+    def parking_management(
+        self,
+        source: str,
+        model_name: str = None,
+        parking_slots: List[List[Tuple[int, int]]] = None,
+        classes: List[int] = None,
+        conf: float = 0.25,
+        line_width: int = 2,
+        output_path: str = None
+    ) -> Dict[str, Any]:
+        """停车管理：基于车位多边形统计占用情况（图片/视频）"""
+        try:
+            model = self.load_model(model_name)
+
+            if parking_slots is None:
+                parking_slots = [
+                    [(80, 420), (260, 420), (260, 600), (80, 600)],
+                    [(280, 420), (460, 420), (460, 600), (280, 600)],
+                    [(480, 420), (660, 420), (660, 600), (480, 600)],
+                ]
+
+            slot_polys = [np.array(slot, dtype=np.int32) for slot in parking_slots if len(slot) >= 3]
+            if not slot_polys:
+                return {"success": False, "message": "停车位区域为空，请提供 parking_slots"}
+
+            vehicle_centers_per_frame: List[List[Tuple[int, int]]] = []
+            occupied_per_frame: List[int] = []
+            total_frames = 0
+
+            def process_frame(frame: np.ndarray) -> np.ndarray:
+                nonlocal total_frames
+                total_frames += 1
+
+                results = model.predict(source=frame, conf=conf, classes=classes, verbose=False)
+                centers: List[Tuple[int, int]] = []
+                if len(results) > 0 and results[0].boxes is not None:
+                    boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+                    for x1, y1, x2, y2 in boxes:
+                        cx = int((x1 + x2) / 2)
+                        cy = int((y1 + y2) / 2)
+                        centers.append((cx, cy))
+                        cv2.circle(frame, (cx, cy), 3, (255, 255, 255), -1)
+
+                vehicle_centers_per_frame.append(centers)
+
+                occupied_flags: List[bool] = []
+                for i, poly in enumerate(slot_polys):
+                    occupied = any(cv2.pointPolygonTest(poly, c, False) >= 0 for c in centers)
+                    occupied_flags.append(occupied)
+                    color = (0, 0, 255) if occupied else (0, 200, 0)
+                    cv2.polylines(frame, [poly], True, color, line_width)
+                    x, y, w, h = cv2.boundingRect(poly)
+                    cv2.putText(frame, f"P{i+1}:{'OCC' if occupied else 'FREE'}", (x, max(18, y - 6)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+
+                occupied_count = int(sum(occupied_flags))
+                occupied_per_frame.append(occupied_count)
+                total_slots = len(slot_polys)
+                free_count = total_slots - occupied_count
+                cv2.putText(frame, f"Occupied: {occupied_count}/{total_slots}  Free: {free_count}",
+                            (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (30, 30, 30), 3)
+                cv2.putText(frame, f"Occupied: {occupied_count}/{total_slots}  Free: {free_count}",
+                            (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                return frame
+
+            ext = Path(source).suffix.lower()
+            is_video = ext in {".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".m4v", ".ts"}
+
+            if is_video:
+                cap = cv2.VideoCapture(source)
+                if not cap.isOpened():
+                    return {"success": False, "message": "无法打开视频文件"}
+
+                writer = None
+                if output_path:
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+
+                while cap.isOpened():
+                    ok, frame = cap.read()
+                    if not ok:
+                        break
+                    frame = process_frame(frame)
+                    if writer:
+                        writer.write(frame)
+
+                cap.release()
+                if writer:
+                    writer.release()
+            else:
+                frame = cv2.imread(source)
+                if frame is None:
+                    return {"success": False, "message": "无法读取图片文件"}
+                frame = process_frame(frame)
+                if output_path:
+                    cv2.imwrite(output_path, frame)
+
+            avg_occupied = (sum(occupied_per_frame) / len(occupied_per_frame)) if occupied_per_frame else 0.0
+            max_occupied = max(occupied_per_frame) if occupied_per_frame else 0
+            current_occupied = occupied_per_frame[-1] if occupied_per_frame else 0
+            total_slots = len(slot_polys)
+
+            return {
+                "success": True,
+                "message": "停车管理分析完成",
+                "results": {
+                    "total_slots": total_slots,
+                    "current_occupied": current_occupied,
+                    "current_free": total_slots - current_occupied,
+                    "avg_occupied": avg_occupied,
+                    "max_occupied": max_occupied,
+                    "total_frames": total_frames,
+                },
+                "output_path": output_path
+            }
+        except Exception as e:
+            return {"success": False, "message": f"停车管理失败: {str(e)}"}
 
 
 # 全局实例

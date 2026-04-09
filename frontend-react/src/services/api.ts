@@ -276,6 +276,17 @@ export const samApi = {
       headers: multipartHeaders,
     });
   },
+  /** 框选区域 YOLO 类别推断（全图 IoU 匹配 + 裁剪二次检测，对齐 Ultralytics Hub 画框识别体验） */
+  classifyBbox: (file: File, bbox: number[], modelName: string = 'yolo11n.pt', confidence: number = 0.25) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('bbox', JSON.stringify(bbox));
+    formData.append('model_name', modelName);
+    formData.append('confidence', String(confidence));
+    return api.post('/sam/classify-bbox', formData, {
+      headers: multipartHeaders,
+    });
+  },
   // 获取支持的模型列表
   getModels: () => api.get('/sam/models'),
 };
@@ -342,4 +353,23 @@ export const solutionsApi = {
     api.post('/solutions/object-crop', formData, { headers: multipartHeaders }),
   queueManagement: (formData: FormData) =>
     api.post('/solutions/queue-management', formData, { headers: multipartHeaders }),
+  // 视觉安防：先复用对象计数（支持区域监控）
+  visionEye: (formData: FormData) =>
+    api.post('/solutions/object-counting', formData, { headers: multipartHeaders }),
+  // 健身监测：先复用对象计数（人/器械计数与区域统计）
+  workoutMonitoring: (formData: FormData) =>
+    api.post('/solutions/object-counting', formData, { headers: multipartHeaders }),
+  parkingManagement: async (formData: FormData) => {
+    try {
+      return await api.post('/solutions/parking-management', formData, { headers: multipartHeaders });
+    } catch (error: any) {
+      // 兼容未升级后端：若新接口不存在，回退到队列管理接口，避免前端直接不可用
+      const msg = String(error?.message || '');
+      const status = error?.response?.status;
+      if (status === 404 || /not found/i.test(msg)) {
+        return api.post('/solutions/queue-management', formData, { headers: multipartHeaders });
+      }
+      throw error;
+    }
+  },
 };

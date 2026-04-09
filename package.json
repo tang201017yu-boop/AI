@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "dev": "npm run dev --prefix frontend-react",
+    "build": "npm run build --prefix frontend-react",
+    "preview": "npm run preview --prefix frontend-react"
+  },
   "devDependencies": {
     "@types/node": "^25.5.0"
   }

@@ -388,3 +388,50 @@ async def solution_queue_management(
         result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
 
     return result
+
+
+# ==================== 停车管理 ====================
+
+@router.post("/solutions/parking-management")
+async def solution_parking_management(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = Form(None),
+    parking_slots: Optional[str] = Form(None),
+    classes: Optional[str] = Form(None),
+    conf: float = Form(0.25),
+    line_width: int = Form(2)
+):
+    """停车管理：按车位多边形统计占用情况"""
+    filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename)
+    file_path = settings.UPLOADS_DIR / filename
+    save_uploaded_file(file, str(file_path))
+
+    slots = None
+    if parking_slots:
+        try:
+            slots = json.loads(parking_slots)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    class_list = None
+    if classes:
+        try:
+            class_list = json.loads(classes)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    output_path = str(settings.UPLOADS_DIR / f"parking_{filename}")
+    result = solutions_service.parking_management(
+        source=str(file_path),
+        model_name=model_name,
+        parking_slots=slots,
+        classes=class_list,
+        conf=conf,
+        line_width=line_width,
+        output_path=output_path
+    )
+
+    if result.get("output_path"):
+        result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
+
+    return result

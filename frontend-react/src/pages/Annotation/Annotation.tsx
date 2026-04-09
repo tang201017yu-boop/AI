@@ -1,10 +1,21 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardHeader, Button, Input } from '../../components/common';
-import { annotationApi, inferenceApi, samApi } from '../../services/api';
+import { annotationApi, inferenceApi, samApi, modelApi } from '../../services/api';
 import type { AnnotationProject, SAMAnnotation, AnnotationTool, AnnotationPoint, AnnotationBox, AnnotationMask, ClassSuggestion } from '../../types';
 import { AnnotationCanvas, AnnotationToolbar, AnnotationPanel } from '../../components/Annotation';
 
+/** 与推理页一致：训练/上传的权重，用于智能标注里选「自己的模型」 */
+interface UserYoloModelOption {
+  path: string;
+  label: string;
+}
+
+/** 与 AnnotationToolbar 中 SAM 档位一致，供 loadModel 映射 */
+type SamToolbarVersion = 'sam2_lite' | 'sam2_base' | 'sam2_large' | 'sam3';
+
 export const Annotation: React.FC = () => {
+  const samFileInputRef = useRef<HTMLInputElement | null>(null);
+  const projectUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [projects, setProjects] = useState<AnnotationProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -12,6 +23,8 @@ export const Annotation: React.FC = () => {
   const [newProjectDesc, setNewProjectDesc] = useState('');
   const [selectedProject, setSelectedProject] = useState<AnnotationProject | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [uploadingProjectId, setUploadingProjectId] = useState<string | null>(null);
+  const [projectUploadTargetId, setProjectUploadTargetId] = useState<string | null>(null);
   const [projectImages, setProjectImages] = useState<{ name: string; url: string }[]>([]);
   const [, setLoadingImages] = useState(false);
 
@@ -20,7 +33,10 @@ export const Annotation: React.FC = () => {
   const [autoLabelLoading, setAutoLabelLoading] = useState(false);
   const [autoLabelResult, setAutoLabelResult] = useState<any>(null);
   const [selectedModel, setSelectedModel] = useState('yolo11n.pt');
+  const [userYoloModels, setUserYoloModels] = useState<UserYoloModelOption[]>([]);
   const [confidence, setConfidence] = useState(0.1);
+  /** 框选后调用 YOLO 推断类别（对齐 Ultralytics Hub：画框即匹配检测类名） */
+  const [autoClassifyOnBox, setAutoClassifyOnBox] = useState(true);
   const [, setShowAutoLabel] = useState(false);
 
   // 批量标注状态
@@ -39,7 +55,8 @@ export const Annotation: React.FC = () => {
   const [projectBatchDone, setProjectBatchDone] = useState<{ success: number; failed: number } | null>(null);
 
   // ============ SAM 标注功能状态 ============
-  const [activeTab, setActiveTab] = useState<'yolo' | 'sam'>('yolo');
+  /** 与 Ultralytics Hub 一致：Draw=手绘优先布局；Smart=AI 辅助优先（功能相同） */
+  const [annotationMode, setAnnotationMode] = useState<'draw' | 'smart'>('draw');
   const [samImage, setSamImage] = useState<string | null>(null);
   const [samImagePath, setSamImagePath] = useState<string>('');
   const [samFile, setSamFile] = useState<File | null>(null);
@@ -51,14 +68,43 @@ export const Annotation: React.FC = () => {
   const [samMasks, setSamMasks] = useState<AnnotationMask[]>([]);
   const [samAnnotations, setSamAnnotations] = useState<SAMAnnotation[]>([]);
   const [samSelectedId, setSamSelectedId] = useState<string | null>(null);
+  const [samHoveredId, setSamHoveredId] = useState<string | null>(null);
+  const [samPanelSelectedIds, setSamPanelSelectedIds] = useState<string[]>([]);
+  const [smartCandidates, setSmartCandidates] = useState<SAMAnnotation[]>([]);
   const [samLoading, setSamLoading] = useState(false);
   const [samLoaded, setSamLoaded] = useState(false);
-  const [samHistory, setSamHistory] = useState<{ points: AnnotationPoint[]; boxes: AnnotationBox[]; masks: AnnotationMask[] }[]>([]);
+  const [samVersion, setSamVersion] = useState<SamToolbarVersion>('sam2_base');
+  /** 撤销栈须同时包含 annotations，否则多边形只写了 masks+列表时 Ctrl+Z 会只回滚 masks，列表与画布不一致、表现为「清不掉」 */
+  const [samHistory, setSamHistory] = useState<
+    { points: AnnotationPoint[]; boxes: AnnotationBox[]; masks: AnnotationMask[]; annotations: SAMAnnotation[] }[]
+  >([]);
   const [samHistoryIndex, setSamHistoryIndex] = useState(-1);
   const [imgSize, setImgSize] = useState({ width: 800, height: 600 });
 
+  useEffect(() => {
+    if (annotationMode === 'draw' && samTool === 'auto') {
+      setSamTool('box');
+    }
+  }, [annotationMode, samTool]);
+
   // 类别建议（基于检测结果）
   const [classSuggestions, setClassSuggestions] = useState<ClassSuggestion[]>([]);
+  const smartAddedRef = React.useRef<Set<string>>(new Set());
+  const smartLastMoveAtRef = React.useRef<number>(0);
+
+  // SAM 档位 → 后端 loadModel 参数（与 sam_service 中 vit_b / vit_l / vit_h 一致）
+  const mapSamToolbarToLoadModel = useCallback((version: SamToolbarVersion): string => {
+    switch (version) {
+      case 'sam3':
+        return 'vit_h';
+      case 'sam2_large':
+        return 'vit_l';
+      case 'sam2_lite':
+      case 'sam2_base':
+      default:
+        return 'vit_b';
+    }
+  }, []);
 
   // 初始化加载 SAM 模型（页面加载时自动检查并加载）
   useEffect(() => {
@@ -72,21 +118,47 @@ export const Annotation: React.FC = () => {
           setSamLoaded(true);
           return;
         }
-        // 未加载则自动加载
+        // 未加载则自动加载（按当前选择的 SAM 版本）
         console.log('[SAM] 模型未加载，正在加载...');
-        const res = await samApi.loadModel('vit_b');
+        const res = await samApi.loadModel(mapSamToolbarToLoadModel(samVersion));
         setSamLoaded(res.data?.success || res.data?.data?.success || false);
       } catch (e) {
         console.error('SAM init failed:', e);
       }
     };
     initSAM();
-  }, []);
+  }, [mapSamToolbarToLoadModel, samVersion]);
 
-  // 保存历史记录
-  const saveSamHistory = useCallback((newPoints: AnnotationPoint[], newBoxes: AnnotationBox[], newMasks: AnnotationMask[]) => {
+  // 切换 SAM 版本
+  const handleSamVersionChange = useCallback(async (version: SamToolbarVersion) => {
+    if (version === samVersion) return;
+    setSamVersion(version);
+    setSamLoading(true);
+    try {
+      const modelType = mapSamToolbarToLoadModel(version);
+      const res = await samApi.loadModel(modelType);
+      const ok = res.data?.success || res.data?.data?.success || false;
+      setSamLoaded(ok);
+      if (!ok) {
+        alert(`切换到 ${version} 失败，请检查后端模型环境`);
+      }
+    } catch (e) {
+      console.error('SAM version switch failed:', e);
+      alert(`切换到 ${version} 失败`);
+    } finally {
+      setSamLoading(false);
+    }
+  }, [mapSamToolbarToLoadModel, samVersion]);
+
+  // 保存历史记录（annotations 与 masks/boxes 索引对齐）
+  const saveSamHistory = useCallback((
+    newPoints: AnnotationPoint[],
+    newBoxes: AnnotationBox[],
+    newMasks: AnnotationMask[],
+    newAnnotations: SAMAnnotation[],
+  ) => {
     const newHistory = samHistory.slice(0, samHistoryIndex + 1);
-    newHistory.push({ points: newPoints, boxes: newBoxes, masks: newMasks });
+    newHistory.push({ points: newPoints, boxes: newBoxes, masks: newMasks, annotations: newAnnotations });
     setSamHistory(newHistory);
     setSamHistoryIndex(newHistory.length - 1);
   }, [samHistory, samHistoryIndex]);
@@ -98,6 +170,7 @@ export const Annotation: React.FC = () => {
       setSamPoints(prev.points);
       setSamBoxes(prev.boxes);
       setSamMasks(prev.masks);
+      setSamAnnotations(prev.annotations);
       setSamHistoryIndex(samHistoryIndex - 1);
     }
   }, [samHistory, samHistoryIndex]);
@@ -109,6 +182,7 @@ export const Annotation: React.FC = () => {
       setSamPoints(next.points);
       setSamBoxes(next.boxes);
       setSamMasks(next.masks);
+      setSamAnnotations(next.annotations);
       setSamHistoryIndex(samHistoryIndex + 1);
     }
   }, [samHistory, samHistoryIndex]);
@@ -117,37 +191,146 @@ export const Annotation: React.FC = () => {
   const handleSamPointAdd = useCallback((point: AnnotationPoint) => {
     const newPoints = [...samPoints, point];
     setSamPoints(newPoints);
-    saveSamHistory(newPoints, samBoxes, samMasks);
-  }, [samPoints, samBoxes, samMasks, saveSamHistory]);
+    saveSamHistory(newPoints, samBoxes, samMasks, samAnnotations);
+  }, [samPoints, samBoxes, samMasks, samAnnotations, saveSamHistory]);
 
-  // 添加框
+  // 添加框（手动框选必须同步写入 samAnnotations，右侧列表才能改类别/保存）
   const handleSamBoxAdd = useCallback(async (box: AnnotationBox) => {
     const newBoxes = [...samBoxes, box];
+    const cid = samClasses.indexOf(samCurrentClass);
+    const newAnn: SAMAnnotation = {
+      class: samCurrentClass,
+      class_id: cid >= 0 ? cid : 0,
+      bbox: [box.x1, box.y1, box.x2, box.y2],
+      segmentation: '',
+      confidence: 1,
+    };
+    const newAnnotations = [...samAnnotations, newAnn];
+    const annIdx = newAnnotations.length - 1;
     setSamBoxes(newBoxes);
+    setSamAnnotations(newAnnotations);
+    setSamSelectedId(String(annIdx));
 
-    // 调用 SAM 框选分割
+    const emptyMask = (): AnnotationMask => ({ polygons: [], color: getRandomColor() });
+    let newMasks = samMasks;
+
     if (samLoaded && samImagePath) {
       setSamLoading(true);
       try {
         const res = await samApi.predictBox([box.x1, box.y1, box.x2, box.y2]);
         const result = res.data?.data || res.data;
         if (result?.success && result.masks?.length > 0) {
-          const newMasks = [...samMasks, {
-            polygons: result.masks[0],
-            color: getRandomColor()
-          }];
-          setSamMasks(newMasks);
-          saveSamHistory(samPoints, newBoxes, newMasks);
+          newMasks = [...samMasks, { polygons: result.masks[0], color: getRandomColor() }];
+        } else {
+          newMasks = [...samMasks, emptyMask()];
         }
       } catch (e) {
         console.error('SAM predict failed:', e);
+        newMasks = [...samMasks, emptyMask()];
       } finally {
         setSamLoading(false);
       }
     } else {
-      saveSamHistory(samPoints, newBoxes, samMasks);
+      newMasks = [...samMasks, emptyMask()];
     }
-  }, [samBoxes, samMasks, samPoints, samLoaded, samImagePath, saveSamHistory]);
+
+    setSamMasks(newMasks);
+    saveSamHistory(samPoints, newBoxes, newMasks, newAnnotations);
+
+    if (autoClassifyOnBox && samFile && annIdx >= 0) {
+      try {
+        const res = await samApi.classifyBbox(
+          samFile,
+          [box.x1, box.y1, box.x2, box.y2],
+          selectedModel,
+          confidence
+        );
+        const r = res.data?.data ?? res.data;
+        if (r?.success && r.class_name) {
+          const clsName = String(r.class_name);
+          setSamClasses((prev) => {
+            const next = prev.includes(clsName) ? prev : [...prev, clsName];
+            const cid = next.indexOf(clsName);
+            setSamAnnotations((aprev) => {
+              const a = [...aprev];
+              if (annIdx >= 0 && annIdx < a.length) {
+                const confVal = typeof r.confidence === 'number' ? r.confidence : a[annIdx].confidence;
+                a[annIdx] = {
+                  ...a[annIdx],
+                  class: clsName,
+                  class_id: cid,
+                  confidence: confVal,
+                };
+              }
+              return a;
+            });
+            return next;
+          });
+          setSamCurrentClass(clsName);
+        }
+      } catch (e) {
+        console.warn('[classify-bbox]', e);
+      }
+    }
+  }, [samBoxes, samMasks, samPoints, samLoaded, samImagePath, saveSamHistory, samAnnotations, samClasses, samCurrentClass, autoClassifyOnBox, samFile, selectedModel, confidence]);
+
+  // Smart 模式：加载候选检测框（鼠标悬停自动采纳）
+  useEffect(() => {
+    const loadSmartCandidates = async () => {
+      if (annotationMode !== 'smart' || !samFile) {
+        setSmartCandidates([]);
+        smartAddedRef.current.clear();
+        return;
+      }
+      try {
+        const res = await samApi.detectAll(samFile, selectedModel, confidence);
+        const result = res.data?.data || res.data;
+        const anns: SAMAnnotation[] = result?.annotations || [];
+        setSmartCandidates(anns);
+      } catch {
+        setSmartCandidates([]);
+      }
+    };
+    loadSmartCandidates();
+  }, [annotationMode, samFile, selectedModel, confidence]);
+
+  const handleSmartCursorMove = useCallback((x: number, y: number) => {
+    if (annotationMode !== 'smart') return;
+    const now = Date.now();
+    if (now - smartLastMoveAtRef.current < 80) return;
+    smartLastMoveAtRef.current = now;
+
+    for (const c of smartCandidates) {
+      const b = c.bbox || [];
+      if (b.length < 4) continue;
+      const [x1, y1, x2, y2] = b;
+      if (x >= x1 && x <= x2 && y >= y1 && y <= y2) {
+        const key = `${c.class}|${Math.round(x1)}|${Math.round(y1)}|${Math.round(x2)}|${Math.round(y2)}`;
+        if (smartAddedRef.current.has(key)) return;
+        smartAddedRef.current.add(key);
+
+        const cid = samClasses.indexOf(c.class);
+        const ann: SAMAnnotation = {
+          class: c.class,
+          class_id: cid >= 0 ? cid : (c.class_id ?? 0),
+          bbox: [x1, y1, x2, y2],
+          segmentation: '',
+          confidence: c.confidence ?? 1,
+        };
+        setSamAnnotations((prev) => {
+          const next = [...prev, ann];
+          setSamSelectedId(String(next.length - 1));
+          return next;
+        });
+        setSamBoxes((prev) => [...prev, { x1, y1, x2, y2 }]);
+        setSamMasks((prev) => [...prev, { polygons: [], color: getRandomColor() }]);
+        if (!samClasses.includes(c.class)) {
+          setSamClasses((prev) => [...prev, c.class]);
+        }
+        return;
+      }
+    }
+  }, [annotationMode, smartCandidates, samClasses]);
 
   // 清除
   const handleSamClear = useCallback(() => {
@@ -155,7 +338,7 @@ export const Annotation: React.FC = () => {
     setSamBoxes([]);
     setSamMasks([]);
     setSamAnnotations([]);
-    saveSamHistory([], [], []);
+    saveSamHistory([], [], [], []);
   }, [saveSamHistory]);
 
   // 一键自动标注（检测所有类别）
@@ -187,6 +370,11 @@ export const Annotation: React.FC = () => {
         const allBoxes = [...samBoxes, ...newBoxes];
         setSamBoxes(allBoxes);
 
+        // 与 annotations 索引对齐（检测无分割掩码时用空 mask，避免删除时错位）
+        const newMaskPlaceholders = anns.map(() => ({ polygons: [] as number[], color: getRandomColor() }));
+        const allMasks = [...samMasks, ...newMaskPlaceholders];
+        setSamMasks(allMasks);
+
         // 自动添加新检测到的类别
         anns.forEach((a: SAMAnnotation) => {
           if (!samClasses.includes(a.class)) {
@@ -203,7 +391,7 @@ export const Annotation: React.FC = () => {
           name, count, color: getRandomColor(),
         })));
 
-        saveSamHistory(samPoints, allBoxes, samMasks);
+        saveSamHistory(samPoints, allBoxes, allMasks, merged);
         alert(`自动标注完成，检测到 ${anns.length} 个对象`);
       } else {
         alert(result?.message || '自动标注失败');
@@ -223,19 +411,20 @@ export const Annotation: React.FC = () => {
     setSamLoading(true);
     try {
       // 使用批量同类标注 - 传入文件对象
-      const res = await samApi.batchSamLabel(samFile, samCurrentClass);
+      const res = await samApi.batchSamLabel(samFile, samCurrentClass, selectedModel, confidence);
       const result = res.data?.data || res.data;
 
       if (result?.success) {
-        setSamAnnotations(result.annotations || []);
+        const nextAnns = result.annotations || [];
+        setSamAnnotations(nextAnns);
 
         // 生成掩码显示
-        const newMasks = (result.annotations || []).map((ann: SAMAnnotation) => ({
+        const newMasks = nextAnns.map((ann: SAMAnnotation) => ({
           polygons: ann.segmentation?.split(' ').map(Number) || [],
           color: getRandomColor(),
         }));
         setSamMasks(newMasks);
-        saveSamHistory(samPoints, samBoxes, newMasks);
+        saveSamHistory(samPoints, samBoxes, newMasks, nextAnns);
 
         // 更新类别建议
         const classCounts: Record<string, number> = {};
@@ -274,7 +463,7 @@ export const Annotation: React.FC = () => {
     } finally {
       setSamLoading(false);
     }
-  }, [samFile, samCurrentClass, samPoints, samBoxes, samClasses, saveSamHistory]);
+  }, [samFile, samCurrentClass, samPoints, samBoxes, samClasses, selectedModel, confidence, saveSamHistory]);
 
   // 处理 SAM 图片上传
   const handleSamFileSelect = async (files: File[]) => {
@@ -285,12 +474,38 @@ export const Annotation: React.FC = () => {
     setSamImagePath(file.name);
     setSamFile(file);
 
+    // 选中项目时，上传图片即加入项目（不必等保存标注）
+    if (selectedProject) {
+      try {
+        const projectId = selectedProject.id || selectedProject.name;
+        const uploadRes = await annotationApi.addImages(projectId, [file]);
+        const ok = uploadRes.data?.success || uploadRes.data?.data?.success;
+        if (!ok) {
+          console.warn('图片加入项目失败:', uploadRes.data);
+        } else {
+          const listRes = await annotationApi.getImages(projectId);
+          const data = listRes.data?.images || listRes.data?.data?.images || [];
+          setProjectImages(data);
+        }
+      } catch (e) {
+        console.error('加入项目失败:', e);
+      }
+    }
+
     // 获取图片尺寸
     const img = new Image();
     img.onload = () => {
-      setImgSize({ width: img.width, height: img.height });
+      setImgSize({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height });
     };
     img.src = imageUrl;
+  };
+
+  const triggerSamFilePick = () => {
+    if (samFileInputRef.current) {
+      // 重置 value，允许重复选择同一张图片也触发 onChange
+      samFileInputRef.current.value = '';
+      samFileInputRef.current.click();
+    }
   };
 
   // 删除标注
@@ -302,15 +517,48 @@ export const Annotation: React.FC = () => {
     setSamAnnotations(newAnnotations);
     setSamMasks(newMasks);
     setSamBoxes(newBoxes);
-    saveSamHistory(samPoints, newBoxes, newMasks);
+    saveSamHistory(samPoints, newBoxes, newMasks, newAnnotations);
     if (samSelectedId === id) setSamSelectedId(null);
   };
 
   // 类别修改
   const handleSamClassChange = (id: string, newClass: string) => {
     const idx = parseInt(id);
-    setSamAnnotations(samAnnotations.map((a, i) => i === idx ? { ...a, class: newClass } : a));
+    const cid = samClasses.indexOf(newClass);
+    setSamAnnotations(samAnnotations.map((a, i) => i === idx ? { ...a, class: newClass, class_id: cid >= 0 ? cid : a.class_id } : a));
   };
+
+  // 批量改类
+  const handleSamBulkClassChange = (ids: string[], newClass: string) => {
+    const idSet = new Set(ids);
+    const cid = samClasses.indexOf(newClass);
+    setSamAnnotations((prev) => prev.map((a, i) => (
+      idSet.has(String(i))
+        ? { ...a, class: newClass, class_id: cid >= 0 ? cid : a.class_id }
+        : a
+    )));
+  };
+
+  const handleSamBulkDelete = (ids: string[]) => {
+    const idSet = new Set(ids);
+    const newAnnotations = samAnnotations.filter((_, i) => !idSet.has(String(i)));
+    const newMasks = samMasks.filter((_, i) => !idSet.has(String(i)));
+    const newBoxes = samBoxes.filter((_, i) => !idSet.has(String(i)));
+    setSamAnnotations(newAnnotations);
+    setSamMasks(newMasks);
+    setSamBoxes(newBoxes);
+    setSamSelectedId(null);
+    setSamHoveredId(null);
+    saveSamHistory(samPoints, newBoxes, newMasks, newAnnotations);
+  };
+
+  // 拖拽移动标注框（对齐 Ultralytics 标注器：选中后可直接拖动）
+  const handleSamBoxDrag = useCallback((index: number, box: AnnotationBox) => {
+    setSamBoxes((prev) => prev.map((b, i) => i === index ? box : b));
+    setSamAnnotations((prev) => prev.map((a, i) => (
+      i === index ? { ...a, bbox: [box.x1, box.y1, box.x2, box.y2] } : a
+    )));
+  }, []);
 
   // 随机颜色
   const getRandomColor = () => {
@@ -343,10 +591,44 @@ export const Annotation: React.FC = () => {
       setSamAnnotations(newAnnotations);
       setSamMasks(newMasks);
       setSamBoxes(newBoxes);
-      saveSamHistory(samPoints, newBoxes, newMasks);
+      saveSamHistory(samPoints, newBoxes, newMasks, newAnnotations);
       setSamSelectedId(null);
     }
   };
+
+  /** 工具栏 🗑️：有选中则删该条标注；否则移除当前图片（含 blob URL 释放） */
+  const handleToolbarTrash = useCallback(() => {
+    if (samSelectedId) {
+      const idx = parseInt(samSelectedId, 10);
+      if (!Number.isNaN(idx)) {
+        const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
+        const newMasks = samMasks.filter((_, i) => i !== idx);
+        const newBoxes = samBoxes.filter((_, i) => i !== idx);
+        setSamAnnotations(newAnnotations);
+        setSamMasks(newMasks);
+        setSamBoxes(newBoxes);
+        saveSamHistory(samPoints, newBoxes, newMasks, newAnnotations);
+      }
+      setSamSelectedId(null);
+      return;
+    }
+    if (!samImage && !samFile) return;
+    if (!window.confirm('确定移除当前图片？未保存的标注将丢失。')) return;
+    if (samImage?.startsWith('blob:')) {
+      URL.revokeObjectURL(samImage);
+    }
+    setSamImage(null);
+    setSamImagePath('');
+    setSamFile(null);
+    setSamPoints([]);
+    setSamBoxes([]);
+    setSamMasks([]);
+    setSamAnnotations([]);
+    setSamSelectedId(null);
+    setSamHistory([]);
+    setSamHistoryIndex(-1);
+    saveSamHistory([], [], [], []);
+  }, [samSelectedId, samImage, samFile, samAnnotations, samMasks, samBoxes, samPoints, saveSamHistory]);
 
   // 保存标注
   const handleSave = async () => {
@@ -361,13 +643,17 @@ export const Annotation: React.FC = () => {
     }
 
     try {
-      // 1. 上传图片到项目
-      const uploadRes = await annotationApi.addImages(selectedProject.id || selectedProject.name, [samFile]);
-      console.log('图片上传结果:', uploadRes);
+      const projectId = selectedProject.id || selectedProject.name;
+      const alreadyInProject = projectImages.some((img) => img.name === samFile.name);
 
-      if (!uploadRes.data?.success && !uploadRes.data?.data?.success) {
-        alert('图片上传失败: ' + (uploadRes.data?.message || '未知错误'));
-        return;
+      // 1. 若当前图片尚未在项目中，先上传图片到项目
+      if (!alreadyInProject) {
+        const uploadRes = await annotationApi.addImages(projectId, [samFile]);
+        console.log('图片上传结果:', uploadRes);
+        if (!uploadRes.data?.success && !uploadRes.data?.data?.success) {
+          alert('图片上传失败: ' + (uploadRes.data?.message || '未知错误'));
+          return;
+        }
       }
 
       // 2. 保存标注
@@ -381,7 +667,7 @@ export const Annotation: React.FC = () => {
       }));
 
       const saveRes = await annotationApi.saveAnnotations(
-        selectedProject.id || selectedProject.name,
+        projectId,
         imageName,
         annotationsToSave
       );
@@ -391,7 +677,6 @@ export const Annotation: React.FC = () => {
       if (saveRes.data?.success || saveRes.data?.data?.success) {
         alert(`成功保存 ${samAnnotations.length} 个标注到项目 "${selectedProject.name}"`);
         // 刷新项目图片列表
-        const projectId = selectedProject.id || selectedProject.name;
         const res = await annotationApi.getImages(projectId);
         const data = res.data?.images || res.data?.data?.images || [];
         setProjectImages(data);
@@ -412,75 +697,142 @@ export const Annotation: React.FC = () => {
         return;
       }
 
-      // 快捷键处理
-      if (activeTab === 'sam') {
-        // Ctrl+Z: 撤销
-        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      // 画布标注快捷键（Draw / Smart 模式通用）
+      // Ctrl+Z: 撤销
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        handleSamUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault();
+        handleSamRedo();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // 多选优先：Delete 一次删所有选中项
+        if (samPanelSelectedIds.length > 1) {
           e.preventDefault();
-          handleSamUndo();
-        }
-        // Ctrl+Y: 重做
-        else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+          handleSamBulkDelete(samPanelSelectedIds);
+        } else if (samSelectedId) {
           e.preventDefault();
-          handleSamRedo();
+          handleDeleteSelected();
         }
-        // Delete: 删除选中
-        else if (e.key === 'Delete' || e.key === 'Backspace') {
-          if (samSelectedId) {
-            e.preventDefault();
-            handleDeleteSelected();
+      } else if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        setSamTool('point');
+      } else if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        setSamTool('box');
+      } else if (e.key === 's' || e.key === 'S') {
+        if (!e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          setSamTool('select');
+        }
+      } else if (e.key === 'a' || e.key === 'A') {
+        if (!e.ctrlKey && !e.metaKey && annotationMode === 'smart') {
+          e.preventDefault();
+          handleSamAutoLabel();
+        }
+      } else if (e.key === 'l' || e.key === 'L') {
+        e.preventDefault();
+        setSamTool('polygon');
+      } else if (e.key >= '1' && e.key <= '9') {
+        const idx = parseInt(e.key, 10) - 1;
+        if (idx < samClasses.length) {
+          e.preventDefault();
+          const nextClass = samClasses[idx];
+          setSamCurrentClass(nextClass);
+
+          // 有选中框时，数字键直接改类（对齐主流标注器：数字=赋类）
+          if (samSelectedId !== null) {
+            const selIdx = parseInt(samSelectedId, 10);
+            if (!Number.isNaN(selIdx)) {
+              setSamAnnotations((prev) => prev.map((a, i) => (
+                i === selIdx
+                  ? {
+                      ...a,
+                      class: nextClass,
+                      class_id: idx,
+                    }
+                  : a
+              )));
+            }
           }
         }
-        // P: 点标注
-        else if (e.key === 'p' || e.key === 'P') {
+      } else if (e.key === 'Enter') {
+        // 回车：确认当前项并切到下一项（连续标注节奏）
+        if (samAnnotations.length > 0) {
           e.preventDefault();
-          setSamTool('point');
+          setSamSelectedId((prev) => {
+            const cur = prev ? parseInt(prev, 10) : -1;
+            const next = Number.isNaN(cur) ? 0 : (cur + 1) % samAnnotations.length;
+            return String(next);
+          });
         }
-        // B: 框选
-        else if (e.key === 'b' || e.key === 'B') {
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setSamSelectedId((prev) => {
+          const total = samAnnotations.length;
+          if (total === 0) return null;
+          const cur = prev ? parseInt(prev, 10) : 0;
+          const next = Number.isNaN(cur) ? 0 : (cur - 1 + total) % total;
+          return String(next);
+        });
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        setSamSelectedId((prev) => {
+          const total = samAnnotations.length;
+          if (total === 0) return null;
+          const cur = prev ? parseInt(prev, 10) : -1;
+          const next = Number.isNaN(cur) ? 0 : (cur + 1) % total;
+          return String(next);
+        });
+      } else if (e.key === 'd' || e.key === 'D') {
+        if (!e.ctrlKey && !e.metaKey) {
           e.preventDefault();
-          setSamTool('box');
+          setAnnotationMode('draw');
         }
-        // S: 选择
-        else if (e.key === 's' || e.key === 'S') {
-          if (!e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            setSamTool('select');
-          }
-        }
-        // A: 自动标注
-        else if (e.key === 'a' || e.key === 'A') {
-          if (!e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            handleSamAutoLabel();
-          }
-        }
-        // L: 多边形
-        else if (e.key === 'l' || e.key === 'L') {
+      } else if (e.key === 'm' || e.key === 'M') {
+        if (!e.ctrlKey && !e.metaKey) {
           e.preventDefault();
-          setSamTool('polygon');
+          setAnnotationMode('smart');
         }
-        // 数字键 1-9: 快速选择类别
-        else if (e.key >= '1' && e.key <= '9') {
-          const idx = parseInt(e.key) - 1;
-          if (idx < samClasses.length) {
-            setSamCurrentClass(samClasses[idx]);
-          }
-        }
-        // Esc: 取消选择
-        else if (e.key === 'Escape') {
-          setSamSelectedId(null);
-        }
+      } else if (e.key === 'Escape') {
+        setSamSelectedId(null);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab, samSelectedId, samClasses, handleSamUndo, handleSamRedo, handleDeleteSelected, handleSamAutoLabel]);
+  }, [annotationMode, samSelectedId, samClasses, handleSamUndo, handleSamRedo, handleDeleteSelected, handleSamAutoLabel, samAnnotations.length, samPanelSelectedIds]);
 
   useEffect(() => {
     loadProjects();
+    loadUserYoloModels();
   }, []);
+
+  const loadUserYoloModels = async () => {
+    try {
+      const res = await modelApi.getUserModels();
+      const body = res.data as {
+        models?: Array<{ path?: string; file_path?: string; name?: string; project?: string; source?: string }>;
+        data?: { models?: Array<{ path?: string; file_path?: string; name?: string; project?: string; source?: string }> };
+      };
+      const allModels = body?.models ?? body?.data?.models ?? [];
+      const userModels = allModels.filter(
+        (m) => m.source === 'uploaded' || m.source === 'training' || m.source === 'project_model',
+      );
+      const options: UserYoloModelOption[] = userModels
+        .map((m) => {
+          const path = m.path || m.file_path || '';
+          const base = path ? path.split(/[/\\]/).pop() || path : '';
+          const short = m.name?.includes('best') ? '最优权重' : m.name?.includes('last') ? '最终权重' : (m.name || base);
+          const label = m.project ? `[${m.project}] ${short}` : (short || path);
+          return { path, label: label || path };
+        })
+        .filter((o) => o.path);
+      setUserYoloModels(options);
+    } catch (e) {
+      console.error('加载用户训练模型失败:', e);
+    }
+  };
 
   const loadProjects = async () => {
     try {
@@ -531,10 +883,47 @@ export const Annotation: React.FC = () => {
     }
   };
 
+  // 项目上传图片
+  const triggerProjectUpload = (projectId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setProjectUploadTargetId(projectId);
+    if (projectUploadInputRef.current) {
+      projectUploadInputRef.current.value = '';
+      projectUploadInputRef.current.click();
+    }
+  };
+
+  const handleProjectUploadSelect = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !projectUploadTargetId) return;
+    const list = Array.from(files);
+    setUploadingProjectId(projectUploadTargetId);
+    try {
+      const uploadRes = await annotationApi.addImages(projectUploadTargetId, list);
+      const ok = uploadRes.data?.success || uploadRes.data?.data?.success;
+      if (!ok) {
+        alert('上传图片失败: ' + (uploadRes.data?.message || '未知错误'));
+        return;
+      }
+      // 当前选中项目时，刷新右侧/工作台图片列表
+      if ((selectedProject?.id || selectedProject?.name) === projectUploadTargetId) {
+        const res = await annotationApi.getImages(projectUploadTargetId);
+        const data = res.data?.images || res.data?.data?.images || [];
+        setProjectImages(data);
+      }
+      alert(`上传成功：${list.length} 张图片`);
+    } catch (error) {
+      console.error('上传项目图片失败:', error);
+      alert('上传项目图片失败，请重试');
+    } finally {
+      setUploadingProjectId(null);
+      setProjectUploadTargetId(null);
+    }
+  };
+
   // 选择项目
   const handleSelectProject = async (project: AnnotationProject) => {
     setSelectedProject(project);
-    setActiveTab('sam');
+    setAnnotationMode('draw');
 
     // 如果项目有预定义类别，加载它们
     if (project.classes && project.classes.length > 0) {
@@ -592,7 +981,7 @@ export const Annotation: React.FC = () => {
 
       // 获取图片尺寸
       const imgEl = new Image();
-      imgEl.onload = () => setImgSize({ width: imgEl.width, height: imgEl.height });
+      imgEl.onload = () => setImgSize({ width: imgEl.naturalWidth || imgEl.width, height: imgEl.naturalHeight || imgEl.height });
       imgEl.src = imageUrl;
 
       // 加载已有标注
@@ -829,18 +1218,6 @@ export const Annotation: React.FC = () => {
     marginBottom: 'var(--space-5)',
   };
 
-  const tabBtnStyle = (active: boolean): React.CSSProperties => ({
-    padding: '8px 20px',
-    border: active ? '2px solid var(--primary-500)' : '2px solid var(--border-color)',
-    borderRadius: 'var(--radius-full)',
-    background: active ? 'var(--primary-500)' : 'transparent',
-    color: active ? '#fff' : 'var(--text-secondary)',
-    cursor: 'pointer',
-    fontWeight: 600,
-    fontSize: '13px',
-    transition: 'all var(--transition-base)',
-  });
-
   const projectCardStyle = (selected: boolean): React.CSSProperties => ({
     padding: '20px',
     borderRadius: 'var(--radius-lg)',
@@ -850,6 +1227,30 @@ export const Annotation: React.FC = () => {
     transition: 'all var(--transition-base)',
     boxShadow: selected ? 'var(--shadow-md)' : 'var(--shadow-sm)',
   });
+
+  /** Hub 顶栏 Draw / Smart 分段按钮（浅色） */
+  const hubTabBtn = (active: boolean): React.CSSProperties => ({
+    padding: '6px 14px',
+    borderRadius: '6px',
+    border: active ? 'none' : '1px solid var(--border-color)',
+    background: active ? '#3b82f6' : 'var(--bg-primary)',
+    color: active ? '#fff' : 'var(--text-secondary)',
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontSize: '12px',
+  });
+
+  const closeSamProjectContext = () => {
+    setSelectedProject(null);
+    setSamImage(null);
+    setSamImagePath('');
+    setSamFile(null);
+    setSamAnnotations([]);
+    setSamPoints([]);
+    setSamBoxes([]);
+    setSamMasks([]);
+    setSamSelectedId(null);
+  };
 
   return (
     <div style={pageStyle}>
@@ -916,6 +1317,13 @@ export const Annotation: React.FC = () => {
                 fontSize: '14px', outline: 'none',
               }}
             >
+              {userYoloModels.length > 0 && (
+                <optgroup label="我的模型（训练/上传）">
+                  {userYoloModels.map((m) => (
+                    <option key={m.path} value={m.path}>{m.label}</option>
+                  ))}
+                </optgroup>
+              )}
               <optgroup label="YOLO26 (最新)">
                 <option value="yolo26n.pt">YOLO26n - 速度最快</option>
                 <option value="yolo26s.pt">YOLO26s - 轻量快速</option>
@@ -1192,6 +1600,10 @@ export const Annotation: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
                       <Button variant="secondary" size="sm"
+                        onClick={(e) => triggerProjectUpload(project.id || project.name, e)}>
+                        {uploadingProjectId === (project.id || project.name) ? '上传中...' : '上传图片'}
+                      </Button>
+                      <Button variant="secondary" size="sm"
                         onClick={(e) => {
                           e.stopPropagation();
                           setProjectBatchTarget(projectBatchTarget === (project.id || project.name) ? null : (project.id || project.name));
@@ -1221,11 +1633,20 @@ export const Annotation: React.FC = () => {
                         <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>模型</label>
                         <select value={projectBatchModel} onChange={(e) => setProjectBatchModel(e.target.value)}
                           style={{ width: '100%', padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '13px', outline: 'none' }}>
-                          <option value="yolo11n.pt">YOLO11n</option>
-                          <option value="yolo11s.pt">YOLO11s</option>
-                          <option value="yolo11m.pt">YOLO11m</option>
-                          <option value="yolo26n.pt">YOLO26n</option>
-                          <option value="yolo26m.pt">YOLO26m</option>
+                          {userYoloModels.length > 0 && (
+                            <optgroup label="我的模型">
+                              {userYoloModels.map((m) => (
+                                <option key={`pb-${m.path}`} value={m.path}>{m.label}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          <optgroup label="预训练">
+                            <option value="yolo11n.pt">YOLO11n</option>
+                            <option value="yolo11s.pt">YOLO11s</option>
+                            <option value="yolo11m.pt">YOLO11m</option>
+                            <option value="yolo26n.pt">YOLO26n</option>
+                            <option value="yolo26m.pt">YOLO26m</option>
+                          </optgroup>
                         </select>
                       </div>
                       <div>
@@ -1274,124 +1695,361 @@ export const Annotation: React.FC = () => {
         )}
       </Card>
 
-      {/* SAM 分割标注 */}
+      <input
+        ref={projectUploadInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={(e) => handleProjectUploadSelect(e.target.files)}
+        style={{ display: 'none' }}
+      />
+
+      {/* SAM / Ultralytics Hub 风格三栏工作台 */}
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-5)' }}>
-          <CardHeader icon="✂️" title="SAM 分割标注" />
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <button onClick={() => setActiveTab('yolo')} style={tabBtnStyle(activeTab === 'yolo')}>YOLO 预标注</button>
-            <button onClick={() => setActiveTab('sam')} style={tabBtnStyle(activeTab === 'sam')}>SAM 分割</button>
-          </div>
+        <div style={{ marginBottom: 'var(--space-4)' }}>
+          <CardHeader icon="✂️" title="标注工作台" />
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0 0', lineHeight: 1.55 }}>
+            左栏图集 · 中栏画布与工具 · 右栏对象列表；交互习惯参考
+            {' '}
+            <a href="https://platform.ultralytics.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--primary-600)' }}>Ultralytics Platform</a>
+            公开文档。类别条、数字键 1–9、框选后 YOLO 识别与上方「检测模型 / 我的模型」一致。
+          </p>
         </div>
 
-        {activeTab === 'sam' && (
-          <div>
-            {selectedProject && (
-              <div style={{
-                padding: '12px 16px', borderRadius: 'var(--radius-md)', marginBottom: '16px',
-                background: 'var(--info-light)', border: '1px solid #bfdbfe',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '18px' }}>📂</span>
-                  <div>
-                    <span style={{ fontWeight: 600, color: 'var(--primary-700)' }}>{selectedProject.name}</span>
-                    <span style={{ marginLeft: '12px', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                      {projectImages.length} 张已标注图片
-                    </span>
-                  </div>
+        {(annotationMode === 'draw' || annotationMode === 'smart') && (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(196px, 220px) minmax(0, 1fr) minmax(280px, 320px)',
+              // 固定高度，确保左侧缩略图区域能正确计算高度并出现滚动条
+              height: 'min(85vh, 880px)',
+              maxHeight: '90vh',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-lg)',
+              overflow: 'hidden',
+              background: 'var(--bg-primary)',
+            }}
+          >
+            {/* 左：图集（Hub 左侧条带） */}
+            <aside
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                background: 'var(--bg-secondary)',
+                borderRight: '1px solid var(--border-color)',
+                minHeight: 0,
+              }}
+            >
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderBottom: '1px solid var(--border-color)',
+                  color: 'var(--text-primary)',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                }}
+              >
+                Images
+              </div>
+              {selectedProject && (
+                <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-color)' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Project</div>
+                  <div style={{ color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600, marginTop: '4px' }}>{selectedProject.name}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginTop: '4px' }}>{projectImages.length} 张</div>
+                  <button
+                    type="button"
+                    onClick={closeSamProjectContext}
+                    style={{
+                      marginTop: '10px',
+                      width: '100%',
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-primary)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                    }}
+                  >
+                    关闭项目
+                  </button>
                 </div>
-                <button onClick={() => { setSelectedProject(null); setSamImage(null); setSamImagePath(''); setSamFile(null); setSamAnnotations([]); }}
-                  style={{ padding: '5px 12px', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: 'var(--bg-primary)', cursor: 'pointer', fontSize: '13px' }}>
-                  关闭项目
+              )}
+              <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '8px', minHeight: 0 }}>
+                {selectedProject && projectImages.length > 0 ? (
+                  projectImages.map((img, i) => {
+                    const active = samImagePath === img.name || samFile?.name === img.name;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleThumbnailClick(img)}
+                        title={img.name}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          padding: '4px',
+                          marginBottom: '8px',
+                          border: active ? '2px solid #22c55e' : '2px solid transparent',
+                          borderRadius: '8px',
+                          background: active ? 'var(--bg-tertiary)' : 'transparent',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <img
+                          src={img.url}
+                          alt=""
+                          style={{
+                            width: '100%',
+                            aspectRatio: '1',
+                            objectFit: 'contain',
+                            background: 'var(--bg-primary)',
+                            borderRadius: '6px',
+                            display: 'block',
+                          }}
+                        />
+                        <div
+                          style={{
+                            fontSize: '10px',
+                            color: 'var(--text-muted)',
+                            marginTop: '4px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            textAlign: 'left',
+                          }}
+                        >
+                          {img.name}
+                        </div>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5, margin: '4px' }}>
+                    在下方「标注项目列表」中选择项目后，缩略图显示于此；或点击中栏「打开图片」上传单张标注。
+                  </p>
+                )}
+              </div>
+            </aside>
+
+            {/* 中：模式条 + 工具栏 + 画布 */}
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                minWidth: 0,
+                background: 'var(--bg-primary)',
+                minHeight: 0,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  flexWrap: 'wrap',
+                  padding: '8px 12px',
+                  borderBottom: '1px solid var(--border-color)',
+                  background: 'var(--bg-secondary)',
+                }}
+              >
+                <span style={{ color: 'var(--text-muted)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' }}>Mode</span>
+                <button type="button" onClick={() => setAnnotationMode('draw')} style={hubTabBtn(annotationMode === 'draw')}>
+                  Draw
+                </button>
+                <button type="button" onClick={() => setAnnotationMode('smart')} style={hubTabBtn(annotationMode === 'smart')}>
+                  Smart
+                </button>
+                <span style={{ flex: 1, minWidth: '8px' }} />
+                <button
+                  type="button"
+                  onClick={triggerSamFilePick}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                  }}
+                >
+                  打开图片
                 </button>
               </div>
-            )}
 
-            {selectedProject && projectImages.length > 0 && (
-              <div style={{ marginBottom: '16px' }}>
-                <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '8px' }}>已标注图片</p>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxHeight: '400px', overflowY: 'auto' }}>
-                  {projectImages.map((img, i) => (
-                    <div key={i} title={img.name}
-                      onClick={() => handleThumbnailClick(img)}
-                      style={{
-                        width: '72px', height: '72px', borderRadius: 'var(--radius-md)',
-                        overflow: 'hidden', border: '2px solid var(--border-color)', cursor: 'pointer',
-                        transition: 'border-color var(--transition-base)',
-                      }}>
-                      <img src={img.url} alt={img.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              <AnnotationToolbar
+                tool={samTool}
+                currentClass={samCurrentClass}
+                classes={samClasses}
+                suggestions={classSuggestions}
+                onToolChange={setSamTool}
+                onClassChange={setSamCurrentClass}
+                onAddClass={handleAddClass}
+                onAutoLabel={handleSamAutoLabel}
+                onDetectAll={handleDetectAll}
+                onClear={handleSamClear}
+                detectAllModel={selectedModel}
+                detectAllConfidence={confidence}
+                onDetectAllModelChange={setSelectedModel}
+                onDetectAllConfidenceChange={setConfidence}
+                userDetectModels={userYoloModels}
+                onUndo={handleSamUndo}
+                onRedo={handleSamRedo}
+                onDeleteSelected={handleToolbarTrash}
+                onSave={handleSave}
+                loading={samLoading}
+                autoClassifyOnBox={autoClassifyOnBox}
+                onAutoClassifyChange={setAutoClassifyOnBox}
+                workMode={annotationMode}
+                samVersion={samVersion}
+                onSamVersionChange={handleSamVersionChange}
+                variant="card"
+              />
 
-            <AnnotationToolbar
-              tool={samTool} currentClass={samCurrentClass} classes={samClasses}
-              suggestions={classSuggestions} onToolChange={setSamTool}
-              onClassChange={setSamCurrentClass} onAddClass={handleAddClass}
-              onAutoLabel={handleSamAutoLabel} onDetectAll={handleDetectAll} onClear={handleSamClear}
-              detectAllModel={selectedModel} detectAllConfidence={confidence}
-              onDetectAllModelChange={setSelectedModel} onDetectAllConfidenceChange={setConfidence}
-              onUndo={handleSamUndo} onRedo={handleSamRedo}
-              onDeleteSelected={handleDeleteSelected} onSave={handleSave}
-              loading={samLoading}
-            />
+              <input
+                ref={samFileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  handleSamFileSelect(e.target.files ? Array.from(e.target.files) : []);
+                  e.currentTarget.value = '';
+                }}
+                style={{ display: 'none' }}
+              />
 
-            <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
-              <div style={{ flex: 1 }}>
+              <div
+                style={{
+                  flex: 1,
+                  overflow: 'auto',
+                  padding: '16px',
+                  minHeight: '280px',
+                }}
+              >
                 {samImage ? (
-                  <AnnotationCanvas
-                    image={samImage} width={imgSize.width} height={imgSize.height}
-                    points={samPoints} boxes={samBoxes} masks={samMasks}
-                    annotations={samAnnotations} tool={samTool} selectedId={samSelectedId}
-                    onPointAdd={handleSamPointAdd} onBoxAdd={handleSamBoxAdd}
-                    onMaskAdd={(mask) => {
-                      const newMasks = [...samMasks, mask];
-                      setSamMasks(newMasks);
-                      saveSamHistory(samPoints, samBoxes, newMasks);
-                    }}
-                    onMaskSelect={(idx) => setSamSelectedId(String(idx))}
-                    onAnnotationSelect={setSamSelectedId}
-                    currentClass={samCurrentClass}
-                  />
+                  <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
+                    <AnnotationCanvas
+                      image={samImage}
+                      width={imgSize.width}
+                      height={imgSize.height}
+                      points={samPoints}
+                      boxes={samBoxes}
+                      masks={samMasks}
+                      annotations={samAnnotations}
+                      tool={samTool}
+                      selectedId={samSelectedId}
+                      hoveredId={samHoveredId}
+                      onPointAdd={handleSamPointAdd}
+                      onBoxAdd={handleSamBoxAdd}
+                      onBoxDrag={handleSamBoxDrag}
+                      smartMode={annotationMode === 'smart'}
+                      onCursorMove={handleSmartCursorMove}
+                      onMaskAdd={(mask) => {
+                        const poly = mask.polygons;
+                        let minXN = 1;
+                        let minYN = 1;
+                        let maxXN = 0;
+                        let maxYN = 0;
+                        for (let j = 0; j + 1 < poly.length; j += 2) {
+                          minXN = Math.min(minXN, poly[j]);
+                          minYN = Math.min(minYN, poly[j + 1]);
+                          maxXN = Math.max(maxXN, poly[j]);
+                          maxYN = Math.max(maxYN, poly[j + 1]);
+                        }
+                        const x1 = minXN * imgSize.width;
+                        const y1 = minYN * imgSize.height;
+                        const x2 = maxXN * imgSize.width;
+                        const y2 = maxYN * imgSize.height;
+                        const cid = samClasses.indexOf(samCurrentClass);
+                        const newAnn: SAMAnnotation = {
+                          class: samCurrentClass,
+                          class_id: cid >= 0 ? cid : 0,
+                          bbox: [x1, y1, x2, y2],
+                          segmentation: mask.polygons.join(' '),
+                          confidence: 1,
+                        };
+                        const newBox: AnnotationBox = { x1, y1, x2, y2 };
+                        const newMasks = [...samMasks, mask];
+                        const newBoxes = [...samBoxes, newBox];
+                        const nextAnnotations = [...samAnnotations, newAnn];
+                        setSamMasks(newMasks);
+                        setSamAnnotations(nextAnnotations);
+                        setSamBoxes(newBoxes);
+                        saveSamHistory(samPoints, newBoxes, newMasks, nextAnnotations);
+                      }}
+                      onMaskSelect={(idx) => setSamSelectedId(String(idx))}
+                      onAnnotationSelect={setSamSelectedId}
+                      currentClass={samCurrentClass}
+                    />
+                  </div>
                 ) : (
-                  <label style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                    width: '100%', height: '420px', cursor: 'pointer',
-                    border: '2px dashed var(--border-color)', borderRadius: 'var(--radius-xl)',
-                    background: 'var(--bg-secondary)', transition: 'all var(--transition-base)',
-                  }}>
-                    <div style={{ fontSize: '52px', marginBottom: '16px' }}>🖼️</div>
-                    <p style={{ fontWeight: 600, marginBottom: '4px' }}>点击或拖拽上传图片</p>
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>支持 JPG、PNG、WebP</p>
-                    <input type="file" accept="image/*"
-                      onChange={(e) => handleSamFileSelect(e.target.files ? Array.from(e.target.files) : [])}
-                      style={{ display: 'none' }} />
+                  <label
+                    onClick={triggerSamFilePick}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '100%',
+                      minHeight: '360px',
+                      cursor: 'pointer',
+                      border: '2px dashed var(--border-color)',
+                      borderRadius: '12px',
+                      background: 'var(--bg-secondary)',
+                    }}
+                  >
+                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>🖼️</div>
+                    <p style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-primary)' }}>点击选择图片</p>
+                    <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>JPG、PNG、WebP</p>
                   </label>
                 )}
               </div>
-              <AnnotationPanel
-                annotations={samAnnotations} selectedId={samSelectedId}
-                onSelect={setSamSelectedId} onDelete={handleSamDelete}
-                onClassChange={handleSamClassChange} onExport={handleSamExport}
-                classes={samClasses}
-              />
+
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderTop: '1px solid var(--border-color)',
+                  background: 'var(--bg-secondary)',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, 1fr)',
+                  gap: '8px',
+                  fontSize: '11px',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <span>🟢 点击 — 正样本点</span>
+                <span>🔴 Shift+点击 — 负样本点</span>
+                <span>⬜ 拖动 — 框选（SAM 分割）</span>
+                <span>🔺 L — 多边形 · Esc / Backspace 撤销点</span>
+              </div>
             </div>
 
-            <div style={{
-              marginTop: '20px', padding: '12px 16px',
-              background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-color)',
-              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px',
-              fontSize: '13px', color: 'var(--text-secondary)'
-            }}>
-              <span>🟢 点击 — 正样本点</span>
-              <span>🔴 Shift+点击 — 负样本点</span>
-              <span>⬜ 拖动 — 框选分割</span>
-              <span>⚡ 自动标注 — 批量检测</span>
-            </div>
+            {/* 右：对象列表 */}
+            <aside
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                borderLeft: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+              }}
+            >
+              <AnnotationPanel
+                annotations={samAnnotations}
+                selectedId={samSelectedId}
+                hoveredId={samHoveredId}
+                onSelect={setSamSelectedId}
+                onDelete={handleSamDelete}
+                onHover={setSamHoveredId}
+                onClassChange={handleSamClassChange}
+                onExport={handleSamExport}
+                onBulkClassChange={handleSamBulkClassChange}
+                onBulkDelete={handleSamBulkDelete}
+                onSelectionIdsChange={setSamPanelSelectedIds}
+                classes={samClasses}
+                variant="card"
+              />
+            </aside>
           </div>
         )}
       </Card>
