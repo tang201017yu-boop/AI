@@ -36,7 +36,6 @@ cat >/etc/docker/daemon.json <<'JSON'
 {
   "dns": ["223.5.5.5", "119.29.29.29", "8.8.8.8"],
   "registry-mirrors": [
-    "https://mirror.ccs.tencentyun.com",
     "https://docker.m.daocloud.io"
   ]
 }
