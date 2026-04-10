@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux 一键部署：配置 Docker DNS/镜像加速、准备目录、启动生产栈（CPU）。
+# Linux 一键部署：配置 Docker DNS、准备目录、启动生产栈（CPU）；默认直连 Docker Hub。
 # 可选后台构建 GPU 镜像（耗时长，不阻塞上线）。
 #
 # 用法（在仓库根目录或任意路径）：
@@ -10,6 +10,7 @@
 #   APP_DIR=/root/AI          项目目录（默认：本脚本所在仓库根目录）
 #   REPO_URL=...              无本地代码时从此克隆
 #   BRANCH=dev                分支
+#   USE_DOCKER_MIRROR=1       启用 DaoCloud 镜像（DNS 差时不要开，默认直连 Docker Hub）
 
 set -euo pipefail
 
@@ -27,19 +28,25 @@ if [[ "${EUID:-0}" -ne 0 ]]; then
   exit 1
 fi
 
-echo "==> [1/6] 配置 Docker DNS 与镜像加速（已备份旧 daemon.json）"
+echo "==> [1/6] 配置 Docker（已备份旧 daemon.json；默认直连 registry-1.docker.io，不用镜像站）"
 mkdir -p /etc/docker
 if [[ -f /etc/docker/daemon.json ]]; then
   cp /etc/docker/daemon.json "/etc/docker/daemon.json.bak.$(date +%s)"
 fi
-cat >/etc/docker/daemon.json <<'JSON'
+if [[ "${USE_DOCKER_MIRROR:-0}" == "1" ]]; then
+  cat >/etc/docker/daemon.json <<'JSON'
 {
   "dns": ["223.5.5.5", "119.29.29.29", "8.8.8.8"],
-  "registry-mirrors": [
-    "https://docker.m.daocloud.io"
-  ]
+  "registry-mirrors": ["https://docker.m.daocloud.io"]
 }
 JSON
+else
+  cat >/etc/docker/daemon.json <<'JSON'
+{
+  "dns": ["223.5.5.5", "119.29.29.29", "8.8.8.8"]
+}
+JSON
+fi
 systemctl daemon-reload
 systemctl restart docker
 sleep 2
