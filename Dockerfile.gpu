@@ -2,7 +2,8 @@
 # 优化目标：充分发挥 RTX 5080 性能，支持 CUDA 加速训练和推理
 
 # ============== 第一阶段：构建阶段 ==============
-FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
+# 使用 Docker Hub 的 nvidia/cuda，避免部分网络无法解析 nvcr.io
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"
@@ -60,7 +61,7 @@ RUN pip install --no-cache-dir \
     -r requirements.txt
 
 # ============== 第二阶段：运行时 ==============
-FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
 
 LABEL maintainer="OpenCV Platform"
 LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (GPU 加速)"

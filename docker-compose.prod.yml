@@ -125,4 +125,5 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.28.0.0/16
+        # 避免与机器上已有 172.28.x Docker 网段冲突
+        - subnet: 172.30.0.0/16

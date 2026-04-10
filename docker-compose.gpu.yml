@@ -50,6 +50,7 @@ services:
       dockerfile: Dockerfile.gpu
     image: opencv-platform:gpu
     container_name: opencv-platform-gpu
+    gpus: all
     ports:
       - "8000:8000"
     volumes:
@@ -158,4 +159,5 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.28.0.0/16
+        # 避免与已有 Docker 网络 172.28.x 冲突，可改为其他未占用网段
+        - subnet: 172.31.0.0/16
