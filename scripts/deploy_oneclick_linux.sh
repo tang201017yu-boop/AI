@@ -12,6 +12,9 @@
 #   BRANCH=dev
 #   USE_DOCKER_MIRROR=1          启用 DaoCloud（内网 DNS 差时勿开）
 #   SKIP_IPV6_FIX=1               不关闭 IPv6（默认会关，避免 Docker Hub 走 V6 失败）
+#   DOCKER_PROXY=http://ip:port  公司出口需代理时设置（会写入 dockerd systemd 配置）
+#   CLEAR_DOCKER_PROXY=1         删除旧的 /etc/systemd/.../http-proxy.conf（坏代理会拖死 pull）
+#   SKIP_DOCKER_PULL_VERIFY=1     跳过 python:3.12-slim 拉取检测（已离线 load 镜像时用）
 
 set -euo pipefail
 
@@ -56,7 +59,7 @@ else
   echo "==> [2/8] 已跳过 IPv6 修复（SKIP_IPV6_FIX=1）"
 fi
 
-echo "==> [3/8] Docker：去掉镜像加速碎片、仅保留 DNS、直连 Docker Hub"
+echo "==> [3/8] Docker：镜像加速碎片、daemon.json、dockerd 代理（若需要）"
 mkdir -p /etc/docker /root/docker.bak.vision
 if [[ -f /etc/docker/daemon.json ]]; then
   cp /etc/docker/daemon.json "/root/docker.bak.vision/daemon.json.$(date +%s)"
@@ -78,13 +81,44 @@ else
 }
 JSON
 fi
+
+DROPIN="/etc/systemd/system/docker.service.d"
+mkdir -p "$DROPIN"
+PROXY_USE="${DOCKER_PROXY:-}"
+[[ -z "$PROXY_USE" && -n "${HTTPS_PROXY:-}" ]] && PROXY_USE="$HTTPS_PROXY"
+[[ -z "$PROXY_USE" && -n "${HTTP_PROXY:-}" ]] && PROXY_USE="$HTTP_PROXY"
+
+if [[ -n "$PROXY_USE" ]]; then
+  cat >"$DROPIN/http-proxy.conf" <<EOF
+[Service]
+Environment="HTTP_PROXY=$PROXY_USE"
+Environment="HTTPS_PROXY=$PROXY_USE"
+Environment="NO_PROXY=localhost,127.0.0.1,::1,127.0.0.0/8,10.0.0.0/8,192.168.0.0/16,172.16.0.0/12"
+EOF
+  echo "已为 dockerd 配置代理: $PROXY_USE"
+elif [[ "${CLEAR_DOCKER_PROXY:-0}" == "1" ]] && [[ -f "$DROPIN/http-proxy.conf" ]]; then
+  mv "$DROPIN/http-proxy.conf" "/root/docker.bak.vision/http-proxy.conf.$(date +%s).bak"
+  echo "已移除旧的 dockerd 代理配置（CLEAR_DOCKER_PROXY=1）"
+fi
+
 systemctl daemon-reload
 systemctl restart docker
 sleep 3
 
-echo "==> [4/8] 验证：拉取 python:3.12-slim"
-if ! docker pull python:3.12-slim; then
-  echo "拉取失败。可尝试：检查出口防火墙是否放行 443；或设置内网 HTTP 代理后重试。"
+echo "==> [4/8] 验证：拉取 python:3.12-slim（检测能否访问 Docker Hub）"
+if [[ "${SKIP_DOCKER_PULL_VERIFY:-0}" == "1" ]]; then
+  echo "已跳过拉取检测（SKIP_DOCKER_PULL_VERIFY=1）"
+elif ! docker pull python:3.12-slim; then
+  echo ""
+  echo "========== Docker Hub 连不上（常见：防火墙拦 443 / 必须走公司代理）=========="
+  echo "1) 本机测试:  curl -v --connect-timeout 10 https://registry-1.docker.io/v2/"
+  echo "2) 有代理时重新跑（把地址换成网管给的）:"
+  echo "   DOCKER_PROXY=http://代理IP:端口 sudo -E bash scripts/deploy_oneclick_linux.sh $*"
+  echo "3) 去掉错误代理后直连:"
+  echo "   CLEAR_DOCKER_PROXY=1 sudo -E bash scripts/deploy_oneclick_linux.sh $*"
+  echo "4) 离线：能上网的电脑执行 docker pull python:3.12-slim && docker save ... 拷到本机 docker load -i xxx.tar"
+  echo "   然后: SKIP_DOCKER_PULL_VERIFY=1 sudo -E bash scripts/deploy_oneclick_linux.sh $*"
+  echo "================================================================"
   exit 1
 fi
 
