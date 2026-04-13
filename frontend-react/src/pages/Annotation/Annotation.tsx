@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardHeader, Button, Input } from '../../components/common';
-import { annotationApi, inferenceApi, samApi, modelApi } from '../../services/api';
+import { annotationApi, inferenceApi, samApi, modelApi, datasetApi } from '../../services/api';
 import type { AnnotationProject, SAMAnnotation, AnnotationTool, AnnotationPoint, AnnotationBox, AnnotationMask, ClassSuggestion } from '../../types';
 import { AnnotationCanvas, AnnotationToolbar, AnnotationPanel } from '../../components/Annotation';
+import { useSearchParams } from 'react-router-dom';
 
 /** 与推理页一致：训练/上传的权重，用于智能标注里选「自己的模型」 */
 interface UserYoloModelOption {
@@ -14,6 +15,7 @@ interface UserYoloModelOption {
 type SamToolbarVersion = 'sam2_lite' | 'sam2_base' | 'sam2_large' | 'sam3';
 
 export const Annotation: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const samFileInputRef = useRef<HTMLInputElement | null>(null);
   const projectUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [projects, setProjects] = useState<AnnotationProject[]>([]);
@@ -21,6 +23,8 @@ export const Annotation: React.FC = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [linkedDataset, setLinkedDataset] = useState<string>('');
+  const [linkedDatasetClasses, setLinkedDatasetClasses] = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<AnnotationProject | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [uploadingProjectId, setUploadingProjectId] = useState<string | null>(null);
@@ -808,6 +812,30 @@ export const Annotation: React.FC = () => {
     loadUserYoloModels();
   }, []);
 
+  useEffect(() => {
+    const datasetName = searchParams.get('dataset') || '';
+    setLinkedDataset(datasetName);
+    if (!datasetName) {
+      setLinkedDatasetClasses([]);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await datasetApi.get(datasetName);
+        const body: any = res.data;
+        const ds = body?.dataset || body?.data?.dataset || body?.data || {};
+        const classes = ds?.classes || [];
+        setLinkedDatasetClasses(Array.isArray(classes) ? classes : []);
+        if (!newProjectName) {
+          setNewProjectName(`${datasetName}_标注`);
+        }
+      } catch (e) {
+        console.warn('加载联动数据集失败:', e);
+        setLinkedDatasetClasses([]);
+      }
+    })();
+  }, [searchParams]);
+
   const loadUserYoloModels = async () => {
     try {
       const res = await modelApi.getUserModels();
@@ -849,9 +877,15 @@ export const Annotation: React.FC = () => {
   const handleCreateProject = async () => {
     if (!newProjectName) return;
     try {
+      const classesFromInput = newProjectDesc
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+      const finalClasses = classesFromInput.length > 0 ? classesFromInput : linkedDatasetClasses;
       await annotationApi.createProject({
         name: newProjectName,
         description: newProjectDesc,
+        classes: finalClasses,
       });
       setNewProjectName('');
       setNewProjectDesc('');
@@ -1271,6 +1305,11 @@ export const Annotation: React.FC = () => {
       {showCreate && (
         <Card style={{ border: '1px solid var(--primary-200)', background: 'var(--primary-50)' }}>
           <CardHeader icon="➕" title="创建标注项目" />
+          {linkedDataset && (
+            <p style={{ marginBottom: 'var(--space-3)', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+              当前来自数据集联动：`{linkedDataset}`，将自动继承类别（也可在下方手动输入逗号分隔类别覆盖）。
+            </p>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 'var(--space-4)', alignItems: 'flex-end' }}>
             <Input
               label="项目名称"

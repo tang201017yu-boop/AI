@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Card, CardHeader, Button, StatCard } from '../../components/common';
 import { datasetApi } from '../../services/api';
 import type { Dataset } from '../../types';
+import { useNavigate } from 'react-router-dom';
 
 interface DatasetStats {
   summary: {
@@ -39,11 +40,22 @@ interface ImageItem {
   labels: { class_id: number; bbox: number[] }[];
 }
 
+interface DatasetProject {
+  id: string;
+  name: string;
+  created_at?: string;
+  datasets: Dataset[];
+  dataset_count: number;
+}
+
 type ViewMode = 'grid' | 'compact' | 'table';
 type SortOption = 'name_asc' | 'name_desc' | 'date_new' | 'date_old' | 'size_asc' | 'size_desc' | 'labels_asc' | 'labels_desc';
 
 export const Datasets: React.FC = () => {
+  const navigate = useNavigate();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [datasetProjects, setDatasetProjects] = useState<DatasetProject[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('default');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
@@ -75,7 +87,7 @@ export const Datasets: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    loadDatasets();
+    loadDatasetProjects();
   }, []);
 
   useEffect(() => {
@@ -96,6 +108,32 @@ export const Datasets: React.FC = () => {
       }
     } catch (error) {
       console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadDatasetProjects = async () => {
+    try {
+      const res = await datasetApi.listProjects();
+      const projects = res.data?.projects || res.data?.data?.projects || [];
+      setDatasetProjects(projects);
+      if (projects.length > 0) {
+        const targetProject = projects.find((p: DatasetProject) => p.id === selectedProjectId) || projects[0];
+        setSelectedProjectId(targetProject.id);
+        setDatasets(targetProject.datasets || []);
+        if ((targetProject.datasets || []).length > 0 && !selectedDataset) {
+          setSelectedDataset(targetProject.datasets[0].name);
+        } else if ((targetProject.datasets || []).length === 0) {
+          setSelectedDataset(null);
+        }
+      } else {
+        setDatasets([]);
+        setSelectedDataset(null);
+      }
+    } catch (error) {
+      console.error(error);
+      await loadDatasets();
     } finally {
       setLoading(false);
     }
@@ -140,12 +178,12 @@ export const Datasets: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('file', files[0]);
-      const res = await datasetApi.upload(formData);
+      const res = await datasetApi.upload(formData, selectedProjectId);
       if (res.data?.success === false) {
         alert(`上传失败: ${res.data?.message || '未知错误'}`);
         return;
       }
-      await loadDatasets();
+      await loadDatasetProjects();
       // 上传后自动选中新数据集
       const newName = (res.data as any)?.dataset?.name || (res.data as any)?.data?.name;
       if (newName) setSelectedDataset(newName);
@@ -164,14 +202,53 @@ export const Datasets: React.FC = () => {
     if (!confirm(`确定要删除数据集 ${selectedDataset} 吗？此操作不可恢复。`)) return;
     try {
       await datasetApi.delete(selectedDataset);
-      const res = await datasetApi.list();
-      const rd2 = res.data as any;
-      const datasetsData = rd2?.datasets || rd2?.data?.datasets || [];
-      setDatasets(datasetsData);
-      setSelectedDataset(datasetsData.length > 0 ? datasetsData[0].name : null);
+      await loadDatasetProjects();
     } catch (error) {
       console.error(error);
     }
+  };
+
+  const handleCreateProject = async () => {
+    const name = prompt('请输入项目名称');
+    if (!name?.trim()) return;
+    await datasetApi.createProject(name.trim());
+    await loadDatasetProjects();
+  };
+
+  const handleRenameProject = async () => {
+    const project = datasetProjects.find(p => p.id === selectedProjectId);
+    if (!project || project.id === 'default') return;
+    const newName = prompt('请输入新项目名称', project.name);
+    if (!newName?.trim() || newName.trim() === project.name) return;
+    await datasetApi.renameProject(project.id, newName.trim());
+    await loadDatasetProjects();
+  };
+
+  const handleDeleteProject = async () => {
+    const project = datasetProjects.find(p => p.id === selectedProjectId);
+    if (!project || project.id === 'default') return;
+    if (!confirm(`确定删除项目 ${project.name} 吗？项目下数据集会回到默认项目。`)) return;
+    await datasetApi.deleteProject(project.id);
+    await loadDatasetProjects();
+  };
+
+  const handleMoveDatasetToProject = async () => {
+    if (!selectedDataset) return;
+    const options = datasetProjects.map((p, idx) => `${idx + 1}. ${p.name}`).join('\n');
+    const indexRaw = prompt(`选择目标项目编号:\n${options}`);
+    const idx = Number(indexRaw) - 1;
+    if (Number.isNaN(idx) || idx < 0 || idx >= datasetProjects.length) return;
+    await datasetApi.moveToProject(datasetProjects[idx].id, selectedDataset);
+    await loadDatasetProjects();
+  };
+
+  const handleRenameDataset = async () => {
+    if (!selectedDataset) return;
+    const newName = prompt('请输入新数据集名称', selectedDataset);
+    if (!newName?.trim() || newName.trim() === selectedDataset) return;
+    await datasetApi.rename(selectedDataset, newName.trim());
+    await loadDatasetProjects();
+    setSelectedDataset(newName.trim());
   };
 
   const handleExport = async (format: string) => {
@@ -775,6 +852,22 @@ export const Datasets: React.FC = () => {
         <h1 style={{ fontFamily: 'DM Sans', fontWeight: 700 }}>数据集管理</h1>
         <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
           <select
+            value={selectedProjectId}
+            onChange={(e) => {
+              const pid = e.target.value;
+              setSelectedProjectId(pid);
+              const project = datasetProjects.find(p => p.id === pid);
+              const projectDatasets = project?.datasets || [];
+              setDatasets(projectDatasets);
+              setSelectedDataset(projectDatasets.length > 0 ? projectDatasets[0].name : null);
+            }}
+            style={{ padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', minWidth: '180px' }}
+          >
+            {datasetProjects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name} ({p.dataset_count})</option>
+            ))}
+          </select>
+          <select
             value={selectedDataset || ''}
             onChange={(e) => setSelectedDataset(e.target.value)}
             style={{ padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', minWidth: '200px' }}
@@ -792,6 +885,24 @@ export const Datasets: React.FC = () => {
           />
           <Button variant="primary" loading={uploading} onClick={() => fileInputRef.current?.click()}>
             上传数据集
+          </Button>
+          <Button variant="secondary" onClick={handleCreateProject}>
+            新建项目
+          </Button>
+          <Button variant="secondary" onClick={handleRenameProject} disabled={selectedProjectId === 'default'}>
+            重命名项目
+          </Button>
+          <Button variant="secondary" onClick={handleDeleteProject} disabled={selectedProjectId === 'default'}>
+            删除项目
+          </Button>
+          <Button variant="secondary" onClick={handleMoveDatasetToProject} disabled={!selectedDataset}>
+            移动数据集
+          </Button>
+          <Button variant="secondary" onClick={handleRenameDataset} disabled={!selectedDataset}>
+            重命名数据集
+          </Button>
+          <Button variant="primary" onClick={() => navigate(`/annotation?dataset=${encodeURIComponent(selectedDataset || '')}`)} disabled={!selectedDataset}>
+            去标注
           </Button>
           <Button variant="secondary" disabled={!selectedDataset} onClick={handleDeleteDataset}>
             删除数据集

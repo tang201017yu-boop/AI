@@ -47,11 +47,27 @@ export const systemApi = {
 export const datasetApi = {
   list: () => api.get<ApiResponse<{datasets: Dataset[]}>>('/datasets/list'),
   get: (id: string) => api.get<ApiResponse<Dataset>>(`/datasets/${id}`),
-  upload: (formData: FormData) =>
-    api.post<ApiResponse<DatasetUploadResponse>>('/datasets/upload', formData, {
+  listProjects: () => api.get('/dataset-projects'),
+  createProject: (name: string) => api.post('/dataset-projects', { name }),
+  renameProject: (projectId: string, newName: string) =>
+    api.put(`/dataset-projects/${projectId}/rename`, { new_name: newName }),
+  deleteProject: (projectId: string) => api.delete(`/dataset-projects/${projectId}`),
+  moveToProject: (projectId: string, datasetName: string) =>
+    api.put(`/dataset-projects/${projectId}/datasets/${encodeURIComponent(datasetName)}`),
+  upload: (formData: FormData, projectId?: string) => {
+    if (projectId) {
+      formData.append('project_id', projectId);
+    }
+    return api.post<ApiResponse<DatasetUploadResponse>>('/datasets/upload', formData, {
       headers: multipartHeaders,
-    }),
+    });
+  },
   delete: (id: string) => api.delete(`/datasets/${id}`),
+  rename: (id: string, newName: string) => {
+    const formData = new FormData();
+    formData.append('new_name', newName);
+    return api.put(`/datasets/${encodeURIComponent(id)}/rename`, formData, { headers: multipartHeaders });
+  },
   // 数据集统计
   getStatistics: (name: string) => api.get(`/datasets/${name}/statistics`),
   getClassDistribution: (name: string) => api.get(`/datasets/${name}/class-distribution`),
@@ -147,8 +163,17 @@ export const inferenceApi = {
 export const annotationApi = {
   listProjects: () => api.get<ApiResponse<AnnotationProject[]>>('/annotation/projects'),
   getProject: (id: string) => api.get<ApiResponse<AnnotationProject>>(`/annotation/projects/${id}`),
-  createProject: (data: Partial<AnnotationProject>) =>
-    api.post<ApiResponse<AnnotationProject>>('/annotation/projects', data),
+  createProject: (data: Partial<AnnotationProject> & { task_type?: string; classes?: string[] }) => {
+    const formData = new FormData();
+    formData.append('name', data.name || '');
+    formData.append('task_type', data.task_type || 'detect');
+    if (data.classes && data.classes.length > 0) {
+      formData.append('classes', JSON.stringify(data.classes));
+    }
+    return api.post<ApiResponse<AnnotationProject>>('/annotation/projects', formData, {
+      headers: multipartHeaders,
+    });
+  },
   deleteProject: (id: string) =>
     api.delete<ApiResponse<void>>(`/annotation/projects/${id}`),
   getImages: (projectId: string) =>

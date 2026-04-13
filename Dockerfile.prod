@@ -9,6 +9,10 @@ LABEL description="基于 Ultralytics YOLO 的开源计算机视觉平台 (生�
 
 WORKDIR /build
 
+# builder 阶段同样切换到国内 apt 源，避免首次安装编译工具过慢
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
+
 # 配置国内 pip 源（提速 5 倍+）
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV PIP_EXTRA_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple

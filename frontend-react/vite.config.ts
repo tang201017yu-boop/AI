@@ -5,6 +5,11 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_BACKEND_URL || 'http://localhost:8000'
 
+  if (mode === 'development') {
+    // 启动时确认代理目标；跨机部署请在 .env.development 设置 VITE_BACKEND_URL
+    console.info(`[vite] API 代理目标: ${backendUrl} (/api, /uploads, /annotation-images)`)
+  }
+
   return {
     plugins: [react()],
     server: {

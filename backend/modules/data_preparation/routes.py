@@ -33,10 +33,16 @@ async def upload_dataset(
     file: UploadFile = File(...),
     name: Optional[str] = Form(None),
     task_type: str = Form("detect"),
-    use_smart_storage: bool = Form(True)
+    use_smart_storage: bool = Form(True),
+    project_id: Optional[str] = Form(None)
 ):
     """上传数据集（支持智能存储）"""
-    return dataset_service.upload_dataset(file, name, task_type, use_smart_storage)
+    result = dataset_service.upload_dataset(file, name, task_type, use_smart_storage)
+    if result.get("success") and project_id:
+        ds_name = result.get("dataset", {}).get("name")
+        if ds_name:
+            dataset_service.assign_dataset_to_project(ds_name, project_id)
+    return result
 
 
 @router.get("/datasets/list")
@@ -62,6 +68,17 @@ async def delete_dataset(name: str):
         return result
     raise HTTPException(status_code=404, detail=result["message"])
 
+
+@router.put("/datasets/{name}/rename")
+async def rename_dataset(name: str, new_name: str = Form(...)):
+    """重命名数据集"""
+    result = dataset_service.rename_dataset(name, new_name)
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=400, detail=result.get("message", "重命名失败"))
+
+
+# 数据集项目 CRUD 已注册至 backend.api.routes（/api/v1/dataset-projects），避免与基础 API 文档不一致
 
 # ==================== 数据处理 ====================
 
@@ -212,6 +229,21 @@ async def create_project(
     """创建标注项目"""
     class_list = json.loads(classes) if classes else None
     return annotation_service.create_project(name, task_type, class_list)
+
+
+@router.get("/annotation/projects")
+async def list_annotation_projects():
+    """获取标注项目列表"""
+    return {"success": True, "data": annotation_service.list_projects()}
+
+
+@router.delete("/annotation/projects/{project_name}")
+async def delete_annotation_project(project_name: str):
+    """删除标注项目"""
+    result = annotation_service.delete_project(project_name)
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=404, detail=result.get("message", "项目不存在"))
 
 
 @router.post("/annotation/projects/{project_name}/images")

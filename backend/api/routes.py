@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -37,6 +38,15 @@ from backend.modules.training import routes as training_routes
 from backend.utils.file_utils import allowed_file, save_uploaded_file, get_unique_filename
 
 router = APIRouter()
+
+
+class DatasetProjectCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+class DatasetProjectRename(BaseModel):
+    new_name: str = Field(..., min_length=1)
+
 
 # 挂载训练模块路由
 router.include_router(training_routes.router, prefix="/training", tags=["训练"])
@@ -515,6 +525,49 @@ async def upload_model(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 数据集项目（挂载在基础 API，避免仅部分路由部署时 404）====================
+@router.get("/dataset-projects")
+async def list_dataset_projects():
+    """列出数据集项目（项目内含数据集）"""
+    return {"success": True, "projects": dataset_service.list_dataset_projects()}
+
+
+@router.post("/dataset-projects")
+async def create_dataset_project(body: DatasetProjectCreate):
+    """创建数据集项目"""
+    result = dataset_service.create_dataset_project(body.name.strip())
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=400, detail=result.get("message", "创建失败"))
+
+
+@router.put("/dataset-projects/{project_id}/rename")
+async def rename_dataset_project(project_id: str, body: DatasetProjectRename):
+    """重命名数据集项目"""
+    result = dataset_service.rename_dataset_project(project_id, body.new_name.strip())
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=400, detail=result.get("message", "重命名失败"))
+
+
+@router.delete("/dataset-projects/{project_id}")
+async def delete_dataset_project(project_id: str):
+    """删除数据集项目"""
+    result = dataset_service.delete_dataset_project(project_id)
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=400, detail=result.get("message", "删除失败"))
+
+
+@router.put("/dataset-projects/{project_id}/datasets/{dataset_name}")
+async def assign_dataset_to_project(project_id: str, dataset_name: str):
+    """把数据集移动到指定项目"""
+    result = dataset_service.assign_dataset_to_project(dataset_name, project_id)
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=400, detail=result.get("message", "移动失败"))
 
 
 # ==================== 数据集相关 ====================

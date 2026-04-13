@@ -6,6 +6,7 @@
 """
 import os
 import json
+import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
@@ -38,6 +39,184 @@ class DatasetService:
         self.dataset_cache: Dict[str, Dict] = {}
         self.cache_ttl = settings.DATASET_CACHE_TTL
         self._processing_lock = threading.Lock()
+        self._projects_meta_file = settings.DATASETS_DIR / ".dataset_projects.json"
+        self._default_project_name = "默认项目"
+
+    def _load_projects_meta(self) -> Dict[str, Any]:
+        """加载数据集项目元数据"""
+        if not self._projects_meta_file.exists():
+            return {
+                "projects": [{
+                    "id": "default",
+                    "name": self._default_project_name,
+                    "created_at": datetime.now().isoformat()
+                }],
+                "dataset_to_project": {}
+            }
+        try:
+            with open(self._projects_meta_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if "projects" not in data:
+                    data["projects"] = []
+                if "dataset_to_project" not in data:
+                    data["dataset_to_project"] = {}
+                if not any(p.get("id") == "default" for p in data["projects"]):
+                    data["projects"].insert(0, {
+                        "id": "default",
+                        "name": self._default_project_name,
+                        "created_at": datetime.now().isoformat()
+                    })
+                return data
+        except Exception:
+            return {
+                "projects": [{
+                    "id": "default",
+                    "name": self._default_project_name,
+                    "created_at": datetime.now().isoformat()
+                }],
+                "dataset_to_project": {}
+            }
+
+    def _save_projects_meta(self, data: Dict[str, Any]) -> None:
+        """保存数据集项目元数据"""
+        with open(self._projects_meta_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def list_dataset_projects(self) -> List[Dict[str, Any]]:
+        """列出数据集项目（含项目下的数据集）"""
+        meta = self._load_projects_meta()
+        datasets = self.list_datasets()
+        ds_map = {d["name"]: d for d in datasets if d.get("name")}
+
+        projects = []
+        for p in meta["projects"]:
+            pid = p.get("id")
+            project_datasets = []
+            for ds_name, ds_project in meta["dataset_to_project"].items():
+                if ds_project == pid and ds_name in ds_map:
+                    project_datasets.append(ds_map[ds_name])
+            projects.append({
+                "id": pid,
+                "name": p.get("name"),
+                "created_at": p.get("created_at"),
+                "datasets": sorted(project_datasets, key=lambda x: x.get("name", "")),
+                "dataset_count": len(project_datasets)
+            })
+
+        # 未分配的数据集自动归到默认项目
+        default_project = next((x for x in projects if x["id"] == "default"), None)
+        if default_project is not None:
+            assigned = set(meta["dataset_to_project"].keys())
+            unassigned = [d for n, d in ds_map.items() if n not in assigned]
+            default_project["datasets"].extend(sorted(unassigned, key=lambda x: x.get("name", "")))
+            default_project["dataset_count"] = len(default_project["datasets"])
+
+        return projects
+
+    def create_dataset_project(self, name: str) -> Dict[str, Any]:
+        """创建数据集项目"""
+        name = (name or "").strip()
+        if not name:
+            return {"success": False, "message": "项目名称不能为空"}
+
+        meta = self._load_projects_meta()
+        if any(p.get("name") == name for p in meta["projects"]):
+            return {"success": False, "message": "项目名称已存在"}
+
+        project_id = f"project_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        project = {
+            "id": project_id,
+            "name": name,
+            "created_at": datetime.now().isoformat()
+        }
+        meta["projects"].append(project)
+        self._save_projects_meta(meta)
+        return {"success": True, "project": project}
+
+    def rename_dataset_project(self, project_id: str, new_name: str) -> Dict[str, Any]:
+        """重命名数据集项目"""
+        if project_id == "default":
+            return {"success": False, "message": "默认项目不支持重命名"}
+        new_name = (new_name or "").strip()
+        if not new_name:
+            return {"success": False, "message": "新名称不能为空"}
+
+        meta = self._load_projects_meta()
+        if any(p.get("name") == new_name and p.get("id") != project_id for p in meta["projects"]):
+            return {"success": False, "message": "项目名称已存在"}
+
+        for p in meta["projects"]:
+            if p.get("id") == project_id:
+                p["name"] = new_name
+                self._save_projects_meta(meta)
+                return {"success": True, "project": p}
+        return {"success": False, "message": "项目不存在"}
+
+    def delete_dataset_project(self, project_id: str) -> Dict[str, Any]:
+        """删除数据集项目（项目下数据集回到默认项目）"""
+        if project_id == "default":
+            return {"success": False, "message": "默认项目不支持删除"}
+        meta = self._load_projects_meta()
+        if not any(p.get("id") == project_id for p in meta["projects"]):
+            return {"success": False, "message": "项目不存在"}
+
+        meta["projects"] = [p for p in meta["projects"] if p.get("id") != project_id]
+        for ds_name, pid in list(meta["dataset_to_project"].items()):
+            if pid == project_id:
+                meta["dataset_to_project"].pop(ds_name, None)
+        self._save_projects_meta(meta)
+        return {"success": True, "message": "项目已删除"}
+
+    def assign_dataset_to_project(self, dataset_name: str, project_id: str) -> Dict[str, Any]:
+        """将数据集分配到项目"""
+        dataset_dir = settings.DATASETS_DIR / dataset_name
+        if not dataset_dir.exists():
+            return {"success": False, "message": "数据集不存在"}
+
+        meta = self._load_projects_meta()
+        if project_id != "default" and not any(p.get("id") == project_id for p in meta["projects"]):
+            return {"success": False, "message": "项目不存在"}
+
+        if project_id == "default":
+            meta["dataset_to_project"].pop(dataset_name, None)
+        else:
+            meta["dataset_to_project"][dataset_name] = project_id
+        self._save_projects_meta(meta)
+        return {"success": True, "message": "数据集已移动"}
+
+    def rename_dataset(self, old_name: str, new_name: str) -> Dict[str, Any]:
+        """重命名数据集目录并更新映射"""
+        old_name = (old_name or "").strip()
+        new_name = (new_name or "").strip()
+        if not old_name or not new_name:
+            return {"success": False, "message": "名称不能为空"}
+        if old_name == new_name:
+            return {"success": True, "message": "名称未变化"}
+
+        old_dir = settings.DATASETS_DIR / old_name
+        new_dir = settings.DATASETS_DIR / new_name
+        if not old_dir.exists():
+            return {"success": False, "message": "原数据集不存在"}
+        if new_dir.exists():
+            return {"success": False, "message": "目标名称已存在"}
+
+        shutil.move(str(old_dir), str(new_dir))
+
+        # 更新缓存
+        if old_name in self.dataset_cache:
+            entry = self.dataset_cache.pop(old_name)
+            if "info" in entry:
+                entry["info"]["name"] = new_name
+                entry["info"]["path"] = str(new_dir)
+            self.dataset_cache[new_name] = entry
+
+        # 更新项目映射
+        meta = self._load_projects_meta()
+        if old_name in meta["dataset_to_project"]:
+            meta["dataset_to_project"][new_name] = meta["dataset_to_project"].pop(old_name)
+        self._save_projects_meta(meta)
+
+        return {"success": True, "message": "数据集重命名成功", "new_name": new_name}
 
     def _get_dataset_path(self, name: str) -> Path:
         """
@@ -1088,6 +1267,11 @@ class DatasetService:
 
         if name in self.dataset_cache:
             del self.dataset_cache[name]
+
+        meta = self._load_projects_meta()
+        if name in meta["dataset_to_project"]:
+            meta["dataset_to_project"].pop(name, None)
+            self._save_projects_meta(meta)
 
         return {"success": True, "message": "数据集已删除"}
 
