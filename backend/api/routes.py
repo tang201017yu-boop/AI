@@ -531,16 +531,26 @@ async def upload_model(file: UploadFile = File(...)):
 @router.get("/dataset-projects")
 async def list_dataset_projects():
     """列出数据集项目（项目内含数据集）"""
-    return {"success": True, "projects": dataset_service.list_dataset_projects()}
+    try:
+        return {"success": True, "projects": dataset_service.list_dataset_projects()}
+    except Exception as e:
+        logger.exception("GET /dataset-projects 失败")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/dataset-projects")
 async def create_dataset_project(body: DatasetProjectCreate):
     """创建数据集项目"""
-    result = dataset_service.create_dataset_project(body.name.strip())
-    if result.get("success"):
-        return result
-    raise HTTPException(status_code=400, detail=result.get("message", "创建失败"))
+    try:
+        result = dataset_service.create_dataset_project(body.name.strip())
+        if result.get("success"):
+            return result
+        raise HTTPException(status_code=400, detail=result.get("message", "创建失败"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("POST /dataset-projects 失败")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/dataset-projects/{project_id}/rename")
@@ -605,70 +615,29 @@ async def refresh_datasets():
 
 
 @router.post("/datasets/upload")
-async def upload_dataset(file: UploadFile = File(...)):
-    """上传数据集（zip 格式）"""
-    if not file.filename.endswith('.zip'):
-        raise HTTPException(status_code=400, detail="Only .zip files are allowed")
-
+async def upload_dataset(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    task_type: str = Form("detect"),
+    use_smart_storage: bool = Form(True),
+    project_id: Optional[str] = Form(None),
+):
+    """上传数据集并可直接关联到数据集项目"""
     try:
-        import zipfile
-        import shutil
-
-        # 保存上传的 zip 文件
-        zip_path = settings.UPLOADS_DIR / file.filename
-        save_uploaded_file(file, str(zip_path))
-
-        # 解压到临时目录
-        dataset_name = file.filename.replace('.zip', '')
-        temp_path = settings.UPLOADS_DIR / f"temp_{dataset_name}"
-
-        # 清理旧目录
-        if temp_path.exists():
-            shutil.rmtree(temp_path)
-        temp_path.mkdir(parents=True, exist_ok=True)
-
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            namelist = zip_ref.namelist()
-            print(f"[数据集上传] ZIP 内部文件数量: {len(namelist)}")
-            zip_ref.extractall(temp_path)
-
-        # 删除 zip 文件
-        zip_path.unlink()
-
-        # 处理嵌套目录：如果解压后只有一个子目录，把内容提上来
-        dataset_path = settings.DATASETS_DIR / dataset_name
-
-        if temp_path.exists():
-            contents = list(temp_path.iterdir())
-            if len(contents) == 1 and contents[0].is_dir():
-                # ZIP 内部有嵌套目录，移动内容上去
-                nested_dir = contents[0]
-                print(f"[数据集上传] 检测到嵌套目录，移动内容: {nested_dir.name}")
-
-                if dataset_path.exists():
-                    shutil.rmtree(dataset_path)
-                shutil.move(str(nested_dir), str(dataset_path))
-                shutil.rmtree(temp_path)
-            else:
-                # 直接移动整个 temp 目录
-                if dataset_path.exists():
-                    shutil.rmtree(dataset_path)
-                shutil.move(str(temp_path), str(dataset_path))
-
-        # 统计文件
-        extracted_files = list(dataset_path.rglob("*")) if dataset_path.exists() else []
-        print(f"[数据集上传] 最终文件数量: {len(extracted_files)}")
-
-        return {
-            "success": True,
-            "message": "Dataset uploaded successfully",
-            "dataset_name": dataset_name,
-            "path": str(dataset_path),
-            "files_count": len(extracted_files)
-        }
+        result = dataset_service.upload_dataset(
+            file=file,
+            name=name,
+            task_type=task_type,
+            use_smart_storage=use_smart_storage,
+            auto_process=True,
+        )
+        if result.get("success") and project_id:
+            ds_name = result.get("dataset", {}).get("name")
+            if ds_name:
+                dataset_service.assign_dataset_to_project(ds_name, project_id)
+        return result
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("POST /datasets/upload 失败")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -882,11 +851,13 @@ async def visualize_annotations(project_id: str, image_name: str):
 async def solution_object_counting(
     file: UploadFile = File(...),
     model_name: Optional[str] = Form(None),
-    region_points: Optional[str] = Form(None),  # JSON string
+    region_type: str = Form("polygon"),
+    region_points: Optional[str] = Form(None),  # JSON 数组，如 [[x,y],...]
     show_in: bool = Form(True),
     show_out: bool = Form(True),
     classes: Optional[str] = Form(None),  # JSON string
-    conf: float = Form(0.25)
+    conf: float = Form(0.25),
+    line_width: int = Form(2),
 ):
     """对象计数 - 统计进出区域的对象数量"""
     if not solutions_service:
@@ -925,11 +896,13 @@ async def solution_object_counting(
         result = solutions_service.object_counting(
             source=str(file_path),
             model_name=model_name,
+            region_type=region_type,
             region_points=region,
             show_in=show_in,
             show_out=show_out,
             classes=class_list,
             conf=conf,
+            line_width=line_width,
             output_path=output_path
         )
 
@@ -943,87 +916,9 @@ async def solution_object_counting(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/solutions/heatmap", response_model=SolutionResponse)
-async def solution_heatmap(
-    file: UploadFile = File(...),
-    model_name: Optional[str] = Form(None),
-    colormap: str = Form("COLORMAP_JET"),
-    classes: Optional[str] = Form(None),
-    conf: float = Form(0.25)
-):
-    """热图生成 - 可视化检测密度"""
-    import cv2
-    import logging
-    logger = logging.getLogger(__name__)
-
-    # 转换 colormap 名称为 OpenCV 整数常量
-    colormap_value = getattr(cv2, colormap, cv2.COLORMAP_JET)
-
-    logger.info(f"[heatmap] 收到请求: filename={file.filename}, model={model_name}, conf={conf}")
-
-    if not solutions_service:
-        raise HTTPException(status_code=500, detail="Solutions service not available")
-
-    # 扩展支持的文件类型（图片 + 视频），让 cv2 自行验证能否打开
-    IMAGE_EXTS = ["jpg", "jpeg", "png", "bmp", "tiff", "tif", "webp", "gif"]
-    VIDEO_EXTS = ["mp4", "avi", "mov", "mkv", "flv", "wmv", "m4v", "ts"]
-    ALLOWED_EXTS = IMAGE_EXTS + VIDEO_EXTS
-
-    fname = file.filename or ""
-    if fname and not allowed_file(fname, ALLOWED_EXTS):
-        logger.warning(f"[heatmap] 文件类型不支持: {fname}")
-        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {fname}，请上传图片或视频文件")
-
-    try:
-        import json
-        import re
-
-        # 保存上传文件
-        # 清理文件名，移除 = & , 等 URL 特殊字符，防止静态文件 URL 解析出错
-        def _sanitize(name):
-            ext = name.rsplit('.', 1)[-1].lower() if '.' in name else 'jpg'
-            safe = re.sub(r'[^A-Za-z0-9_\-]', '_', name.rsplit('.', 1)[0]) + '.' + ext
-            return safe[:80]
-        clean_fname = _sanitize(fname) if fname else 'upload.jpg'
-        logger.info(f"[heatmap] 文件名清理: {fname!r} -> {clean_fname!r}")
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), clean_fname)
-        file_path = settings.UPLOADS_DIR / filename
-        save_uploaded_file(file, str(file_path))
-
-        # 解析参数
-        class_list = None
-        if classes:
-            try:
-                class_list = json.loads(classes)
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        # 设置输出路径
-        output_path = str(settings.UPLOADS_DIR / f"heatmap_{filename}")
-
-        # 生成热图
-        result = solutions_service.generate_heatmap(
-            source=str(file_path),
-            model_name=model_name,
-            colormap=colormap_value,
-            classes=class_list,
-            conf=conf,
-            output_path=output_path
-        )
-
-        logger.info(f"[heatmap] 处理结果: success={result.get('success')}")
-
-        # 转换为相对路径
-        if result.get("output_path"):
-            result["output_path"] = f"/uploads/{Path(result['output_path']).name}"
-
-        return SolutionResponse(**result)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[heatmap] 处理异常: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# /solutions/heatmap 路由已迁移到 backend/modules/solutions/routes.py
+# 该模块使用 ThreadPoolExecutor 异步处理，返回 task_id 支持进度轮询，
+# 避免视频处理时阻塞 asyncio 事件循环。
 
 
 @router.post("/solutions/speed-estimation", response_model=SolutionResponse)

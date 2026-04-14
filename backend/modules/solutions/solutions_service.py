@@ -158,6 +158,59 @@ class SolutionsService:
             })
         return solutions_list
 
+    @staticmethod
+    def _normalize_region_points(region_points) -> Optional[List[Tuple[int, int]]]:
+        """将 JSON 解析后的区域转为 (x,y) 元组列表。"""
+        if not region_points:
+            return None
+        out: List[Tuple[int, int]] = []
+        for p in region_points:
+            if isinstance(p, (list, tuple)) and len(p) >= 2:
+                out.append((int(float(p[0])), int(float(p[1]))))
+        return out if out else None
+
+    @staticmethod
+    def _default_counting_region(width: int, height: int, region_type: str) -> List[Tuple[int, int]]:
+        """按画面尺寸生成默认计数区域（避免固定 1280×720 导致小图/竖图完全错位）。"""
+        margin_x = max(2, int(width * 0.02))
+        margin_y = max(2, int(height * 0.02))
+        if region_type == "line":
+            y = max(margin_y, int(height * 0.55))
+            return [(margin_x, y), (width - margin_x, y)]
+        return [
+            (margin_x, int(height * 0.45)),
+            (width - margin_x, int(height * 0.45)),
+            (width - margin_x, height - margin_y),
+            (margin_x, height - margin_y),
+        ]
+
+    @staticmethod
+    def _class_counts_from_counter(counter) -> Dict[str, int]:
+        """当前帧各类检测数量（与 Ultralytics 终端摘要一致，按类名排序输出）。"""
+        cls_counts: Dict[str, int] = {}
+        for cls_id in getattr(counter, "clss", []) or []:
+            try:
+                idx = int(cls_id)
+                names = getattr(counter, "names", None)
+                if isinstance(names, (list, tuple)) and idx < len(names):
+                    cls_name = str(names[idx])
+                elif isinstance(names, dict):
+                    cls_name = str(names.get(idx, idx))
+                else:
+                    cls_name = str(idx)
+            except Exception:
+                cls_name = str(cls_id)
+            cls_counts[cls_name] = cls_counts.get(cls_name, 0) + 1
+        return cls_counts
+
+    @staticmethod
+    def _format_class_summary_line(cls_counts: Dict[str, int]) -> str:
+        """形如: 1 bus, 6 car, 1 motorcycle, 1 person（按类名字母序）。"""
+        if not cls_counts:
+            return "no objects"
+        parts = [f"{cls_counts[k]} {k}" for k in sorted(cls_counts.keys())]
+        return ", ".join(parts)
+
     # ==================== 对象计数 ====================
     def object_counting(
         self,
@@ -172,19 +225,81 @@ class SolutionsService:
         line_width: int = 2,
         output_path: str = None
     ) -> Dict[str, Any]:
-        """对象计数 - 支持区域计数和分类统计"""
+        """对象计数 - 支持区域计数和分类统计。
+
+        说明：Ultralytics ObjectCounter 的进出计数依赖连续帧轨迹；单张图片上 in/out 通常为 0。
+        对图片会额外返回 detected_objects（当前画面跟踪到的目标数），便于静态图查看检测效果。
+        """
         try:
             model = self.load_model(model_name)
             model_path = get_model_path(model)
 
-            # 根据区域类型设置默认区域
+            region_points = self._normalize_region_points(region_points)
+            src_path = Path(source)
+            suffix = src_path.suffix.lower()
+            is_image = suffix in (
+                ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff",
+            )
+
+            # ---------- 图片：imread，单帧处理，结果图用 imwrite ----------
+            if is_image:
+                frame = cv2.imread(str(source))
+                if frame is None:
+                    return {"success": False, "message": "无法读取图片文件，请确认格式正确"}
+                h, w = frame.shape[:2]
+                if region_points is None:
+                    region_points = self._default_counting_region(w, h, region_type)
+
+                counter = solutions.ObjectCounter(
+                    show=False,
+                    region=region_points,
+                    model=model_path,
+                    classes=classes,
+                    show_in=show_in,
+                    show_out=show_out,
+                    line_width=line_width,
+                    device=self.default_device,
+                    conf=conf,
+                )
+                result = counter(frame)
+                in_c = getattr(result, "in_count", 0)
+                out_c = getattr(result, "out_count", 0)
+                total_tracks = getattr(result, "total_tracks", 0)
+                cls_counts = self._class_counts_from_counter(counter)
+                cls_summary = self._format_class_summary_line(cls_counts)
+                speed_data = getattr(result, "speed", {}) or {}
+                sol_ms = float(speed_data.get("solution", 0.0))
+                tr_ms = float(speed_data.get("track", 0.0))
+                results_data = {
+                    "in_count": in_c,
+                    "out_count": out_c,
+                    "total_frames": 1,
+                    "detected_objects": total_tracks,
+                    "objects_by_class": cls_counts,
+                    "recent_inference_logs": [
+                        f"1: {h}x{w} {sol_ms:.1f}ms, {cls_summary} | track {tr_ms:.1f}ms"
+                    ],
+                }
+                if output_path and getattr(result, "plot_im", None) is not None:
+                    cv2.imwrite(output_path, result.plot_im)
+
+                return {
+                    "success": True,
+                    "message": "对象计数完成（静态图仅显示检测与区域；进出计数需视频连续帧）",
+                    "results": results_data,
+                    "output_path": output_path,
+                }
+
+            # ---------- 视频：首帧确定默认区域，再顺序处理（避免 VideoCapture 无法回绕） ----------
+            cap = cv2.VideoCapture(source)
+            ok, first = cap.read()
+            if not ok or first is None:
+                cap.release()
+                return {"success": False, "message": "无法打开视频或读取首帧"}
+
+            fh, fw = first.shape[:2]
             if region_points is None:
-                if region_type == "line":
-                    # 直线模式 - 用于进出计数
-                    region_points = [(20, 400), (1260, 400)]
-                else:
-                    # 多边形模式 - 用于区域计数
-                    region_points = [(20, 400), (1260, 400), (1260, 360), (20, 360)]
+                region_points = self._default_counting_region(fw, fh, region_type)
 
             counter = solutions.ObjectCounter(
                 show=False,
@@ -194,43 +309,73 @@ class SolutionsService:
                 show_in=show_in,
                 show_out=show_out,
                 line_width=line_width,
-                device=self.default_device
+                device=self.default_device,
+                conf=conf,
             )
 
-            cap = cv2.VideoCapture(source)
+            out = None
             if output_path:
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or fw
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or fh
+                out = cv2.VideoWriter(
+                    output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+                )
 
             results_data = {"in_count": 0, "out_count": 0, "total_frames": 0}
+            last_tracks = 0
+            last_class_counts: Dict[str, int] = {}
+            recent_logs: List[str] = []
 
+            def _process_frame(frame_bgr):
+                nonlocal last_tracks, last_class_counts
+                r = counter(frame_bgr)
+                results_data["total_frames"] += 1
+                if hasattr(r, "in_count"):
+                    results_data["in_count"] = r.in_count
+                if hasattr(r, "out_count"):
+                    results_data["out_count"] = r.out_count
+                if hasattr(r, "total_tracks"):
+                    last_tracks = r.total_tracks
+                if output_path and out is not None and getattr(r, "plot_im", None) is not None:
+                    out.write(r.plot_im)
+
+                # 组织前端可展示的推理摘要（与 Ultralytics 终端: 帧号 分辨率 solution_ms, 各类数量）
+                fh_i, fw_i = frame_bgr.shape[:2]
+                cls_counts = self._class_counts_from_counter(counter)
+                last_class_counts = dict(cls_counts)
+                cls_summary = self._format_class_summary_line(cls_counts)
+                speed_data = getattr(r, "speed", {}) or {}
+                sol_ms = float(speed_data.get("solution", 0.0))
+                tr_ms = float(speed_data.get("track", 0.0))
+                log_line = (
+                    f"{results_data['total_frames']}: {fh_i}x{fw_i} {sol_ms:.1f}ms, {cls_summary} | track {tr_ms:.1f}ms"
+                )
+                recent_logs.append(log_line)
+                if len(recent_logs) > 20:
+                    recent_logs.pop(0)
+                return r
+
+            _process_frame(first)
             while cap.isOpened():
                 success, frame = cap.read()
                 if not success:
                     break
-
-                result = counter(frame)
-                results_data["total_frames"] += 1
-
-                if hasattr(result, 'in_count'):
-                    results_data["in_count"] = result.in_count
-                if hasattr(result, 'out_count'):
-                    results_data["out_count"] = result.out_count
-
-                if output_path and hasattr(result, 'plot_im'):
-                    out.write(result.plot_im)
+                _process_frame(frame)
 
             cap.release()
-            if output_path:
+            if out is not None:
                 out.release()
+
+            results_data["detected_objects"] = last_tracks
+            results_data["objects_by_class"] = last_class_counts
+            results_data["recent_inference_logs"] = recent_logs
 
             return {
                 "success": True,
                 "message": "对象计数完成",
                 "results": results_data,
-                "output_path": output_path
+                "output_path": output_path,
             }
         except Exception as e:
             return {"success": False, "message": f"对象计数失败: {str(e)}"}
@@ -251,8 +396,55 @@ class SolutionsService:
             import scipy.ndimage as ndi
 
             model = self.load_model(model_name)
-            model_path = get_model_path(model)
+            src_path = Path(source)
+            suffix = src_path.suffix.lower()
+            is_image = suffix in (
+                ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff",
+            )
 
+            # ---------- 图片：单帧生成热力图，输出图片 ----------
+            if is_image:
+                frame = cv2.imread(str(source))
+                if frame is None:
+                    return {"success": False, "message": "无法读取图片文件，请确认格式正确"}
+
+                height, width = frame.shape[:2]
+                heatmap_2d = np.zeros((height, width), dtype=np.float32)
+
+                # 单帧检测，累加检测框区域的热点
+                results = model.predict(frame, conf=conf, classes=classes, verbose=False)
+                boxes = results[0].boxes.xyxy.cpu().numpy() if len(results[0].boxes) > 0 else []
+                for box in boxes:
+                    x1, y1, x2, y2 = map(int, box[:4])
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(width, x2), min(height, y2)
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+
+                    single_heatmap = np.zeros((height, width), dtype=np.float32)
+                    single_heatmap[y1:y2, x1:x2] = 1.0
+                    single_heatmap = ndi.gaussian_filter(single_heatmap, sigma=15)
+                    heatmap_2d += single_heatmap
+
+                if np.max(heatmap_2d) > 0:
+                    heatmap_normalized = (heatmap_2d / np.max(heatmap_2d)).clip(0, 1)
+                    heatmap_colored = cv2.applyColorMap((heatmap_normalized * 255).astype(np.uint8), colormap)
+                    alpha = 0.5
+                    annotated_frame = cv2.addWeighted(frame, 1 - alpha, heatmap_colored, alpha, 0)
+                else:
+                    annotated_frame = frame
+
+                if output_path:
+                    cv2.imwrite(output_path, annotated_frame)
+
+                return {
+                    "success": True,
+                    "message": "热图生成完成，共处理 1 帧",
+                    "total_frames": 1,
+                    "output_path": output_path
+                }
+
+            # ---------- 视频：逐帧累积热力图，输出视频 ----------
             cap = cv2.VideoCapture(source)
             if not cap.isOpened():
                 return {"success": False, "message": "无法打开视频文件"}
@@ -262,11 +454,21 @@ class SolutionsService:
             if total_frames <= 0:
                 total_frames = 100  # 默认估计值
 
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
+            out = None
             if output_path:
                 fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
-                out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                # 优先尝试 H.264（浏览器兼容性最好），回退到 mp4v
+                for fourcc_str in ("avc1", "mp4v"):
+                    fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+                    _out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                    if _out.isOpened():
+                        out = _out
+                        break
+                    _out.release()
+                if out is None:
+                    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
 
             # 初始化热图累计器（2D 数组）
             heatmap_2d = np.zeros((height, width), dtype=np.float32)

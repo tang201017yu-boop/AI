@@ -2,6 +2,154 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, Button } from '../../components/common';
 import { solutionsApi, modelApi, inferenceApi } from '../../services/api';
 
+/** 兼容 axios 体为扁平结构或嵌套 { data: { success, output_path, ... } } */
+function unwrapSolutionPayload(res: { data?: unknown }): any {
+  const d = res?.data as any;
+  if (d == null) return null;
+  if (d.data != null && typeof d.data === 'object') {
+    const inner = d.data as Record<string, unknown>;
+    const looksLikePayload =
+      typeof inner.success === 'boolean' ||
+      inner.output_path != null ||
+      inner.results != null ||
+      typeof inner.message === 'string';
+    if (looksLikePayload) return inner;
+  }
+  return d;
+}
+
+function aliasOutputPathToResultImage(payload: any) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (payload.output_path && !payload.result_image && !payload.output_image) {
+    return { ...payload, result_image: payload.output_path };
+  }
+  return payload;
+}
+
+/** YOLO 默认 COCO 类别英文名 → 中文（自定义训练类别无映射时保留原文） */
+const COCO_CLASS_NAME_ZH: Record<string, string> = {
+  person: '人',
+  bicycle: '自行车',
+  car: '汽车',
+  motorcycle: '摩托车',
+  airplane: '飞机',
+  bus: '公交车',
+  train: '火车',
+  truck: '卡车',
+  boat: '船',
+  'traffic light': '交通灯',
+  'fire hydrant': '消防栓',
+  'stop sign': '停车标志',
+  'parking meter': '停车计时器',
+  bench: '长椅',
+  bird: '鸟',
+  cat: '猫',
+  dog: '狗',
+  horse: '马',
+  sheep: '羊',
+  cow: '牛',
+  elephant: '大象',
+  bear: '熊',
+  zebra: '斑马',
+  giraffe: '长颈鹿',
+  backpack: '背包',
+  umbrella: '雨伞',
+  handbag: '手提包',
+  tie: '领带',
+  suitcase: '行李箱',
+  frisbee: '飞盘',
+  skis: '滑雪板',
+  snowboard: '单板滑雪',
+  'sports ball': '运动球',
+  kite: '风筝',
+  'baseball bat': '棒球棒',
+  'baseball glove': '棒球手套',
+  skateboard: '滑板',
+  surfboard: '冲浪板',
+  'tennis racket': '网球拍',
+  bottle: '瓶子',
+  'wine glass': '酒杯',
+  cup: '杯子',
+  fork: '叉子',
+  knife: '刀',
+  spoon: '勺子',
+  bowl: '碗',
+  banana: '香蕉',
+  apple: '苹果',
+  sandwich: '三明治',
+  orange: '橙子',
+  broccoli: '西兰花',
+  carrot: '胡萝卜',
+  'hot dog': '热狗',
+  pizza: '披萨',
+  donut: '甜甜圈',
+  cake: '蛋糕',
+  chair: '椅子',
+  couch: '沙发',
+  'potted plant': '盆栽',
+  bed: '床',
+  'dining table': '餐桌',
+  toilet: '马桶',
+  tv: '电视',
+  laptop: '笔记本电脑',
+  mouse: '鼠标',
+  remote: '遥控器',
+  keyboard: '键盘',
+  'cell phone': '手机',
+  microwave: '微波炉',
+  oven: '烤箱',
+  toaster: '烤面包机',
+  sink: '水槽',
+  refrigerator: '冰箱',
+  book: '书',
+  clock: '时钟',
+  vase: '花瓶',
+  scissors: '剪刀',
+  'teddy bear': '泰迪熊',
+  'hair drier': '吹风机',
+  toothbrush: '牙刷',
+};
+
+function detectionClassLabelZh(englishName: string): string {
+  const key = String(englishName).trim().toLowerCase();
+  return COCO_CLASS_NAME_ZH[key] ?? englishName;
+}
+
+function deriveObjectsByClass(counting: any): Array<[string, number]> {
+  // 优先使用后端直接返回的分类统计
+  const raw = counting?.objects_by_class;
+  if (raw && typeof raw === 'object') {
+    const entries = Object.entries(raw as Record<string, number>)
+      .map(([cls, num]) => [cls, Number(num)] as [string, number])
+      .filter(([, num]) => Number.isFinite(num) && num > 0);
+    if (entries.length > 0) return entries;
+  }
+
+  // 兜底：从 recent_inference_logs 最后一条中解析 "1 bus, 6 car, 1 person"
+  const logs = (counting?.recent_inference_logs || []) as string[];
+  const lastLog = logs.length ? String(logs[logs.length - 1]) : '';
+  if (!lastLog) return [];
+
+  const summaryMatch = lastLog.match(/ms,\s*(.*?)\s*\|\s*track/i);
+  if (!summaryMatch || !summaryMatch[1]) return [];
+  const summary = summaryMatch[1].trim();
+  if (!summary || summary.toLowerCase() === 'no objects') return [];
+
+  const parsed: Record<string, number> = {};
+  summary.split(',').forEach((part) => {
+    const item = part.trim();
+    const m = item.match(/^(\d+)\s+(.+)$/);
+    if (!m) return;
+    const count = Number(m[1]);
+    const cls = m[2].trim();
+    if (count > 0 && cls) {
+      parsed[cls] = (parsed[cls] || 0) + count;
+    }
+  });
+
+  return Object.entries(parsed);
+}
+
 // 可用的检测模型列表
 const DETECTION_MODELS = [
   // 训练项目模型
@@ -38,7 +186,7 @@ const SOLUTIONS = {
           { value: 'line', label: '直线(进出计数)' },
         ]
       },
-      { name: 'region_points', label: '区域坐标', type: 'text', placeholder: '如: [(20,400),(1260,400),(1260,360),(20,360)]' },
+      { name: 'region_points', label: '区域坐标(JSON)', type: 'text', placeholder: '如: [[20,400],[1260,400],[1260,360],[20,360]]' },
       { name: 'show_in', label: '显示进入计数', type: 'checkbox', default: true },
       { name: 'show_out', label: '显示离开计数', type: 'checkbox', default: true },
       { name: 'line_width', label: '线条宽度', type: 'number', default: 2, min: 1, max: 10 },
@@ -240,22 +388,19 @@ export const SolutionRunner: React.FC = () => {
           const conf = Number(params.conf ?? 0.25);
           formData.append('conf', String(conf));
           const res = await solutionsApi.workoutMonitoring(formData);
-          const data: any = res.data?.data || res.data;
-          if (data?.output_path && !data?.output_image && !data?.result_image) {
-            data.result_image = data.output_path;
-          }
+          const data: any = aliasOutputPathToResultImage(unwrapSolutionPayload(res));
           setResult(data);
           return;
         }
         const modelName = String(params.model_name || 'yolo11n.pt');
         const conf = Number(params.conf ?? 0.25);
         const res = await inferenceApi.image(file, modelName, conf);
-        const data: any = res.data?.data || res.data;
+        const data: any = unwrapSolutionPayload(res);
         // 统一结果字段，复用当前页面展示逻辑
         if (data?.annotated_image && !data?.output_image) {
           data.output_image = data.annotated_image;
         }
-        setResult(data);
+        setResult(aliasOutputPathToResultImage(data));
         return;
       }
 
@@ -318,8 +463,58 @@ export const SolutionRunner: React.FC = () => {
       }
 
       const res = await apiFunc(formData);
-      const data = res.data?.data || res.data;
+      let data = aliasOutputPathToResultImage(unwrapSolutionPayload(res));
+
+      // 热力图兼容异步任务接口：若首次仅返回 task_id，则轮询状态直到拿到 output_path
+      if (
+        selectedSolution === 'heatmap' &&
+        data?.task_id &&
+        !data?.output_path &&
+        !data?.result_image
+      ) {
+        const maxAttempts = 60; // 最长轮询约 2 分钟
+        let finished = false;
+        for (let i = 0; i < maxAttempts; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          const statusRes = await solutionsApi.heatmapStatus(String(data.task_id));
+          const statusData = aliasOutputPathToResultImage(unwrapSolutionPayload(statusRes));
+
+          // 实时更新进度文案，避免用户误以为卡住
+          setResult({
+            ...data,
+            ...statusData,
+            success: statusData?.status !== 'failed',
+          });
+
+          if (statusData?.status === 'completed' && (statusData?.output_path || statusData?.result_image)) {
+            data = { ...data, ...statusData, success: true };
+            finished = true;
+            break;
+          }
+          if (statusData?.status === 'failed') {
+            data = {
+              ...data,
+              ...statusData,
+              success: false,
+              message: statusData?.message || '热力图处理失败',
+            };
+            finished = true;
+            break;
+          }
+        }
+        if (!finished) {
+          data = {
+            ...data,
+            success: false,
+            message: '热力图处理超时，请稍后重试或检查后端日志',
+          };
+        }
+      }
+
       setResult(data);
+      if (data?.success === false) {
+        alert(`处理失败: ${data?.message || '请检查参数或后端日志'}`);
+      }
     } catch (error) {
       console.error('处理失败:', error);
       const msg = error instanceof Error ? error.message : '处理失败，请重试';
@@ -406,7 +601,16 @@ export const SolutionRunner: React.FC = () => {
     if (!candidate) return '';
     if (String(candidate).startsWith('data:')) return String(candidate);
     if (String(candidate).startsWith('http')) return String(candidate);
-    return window.location.origin + String(candidate);
+    const rel = String(candidate);
+    // 相对路径：与当前页同源（开发时经 Vite 代理到后端）
+    if (rel.startsWith('/')) return `${window.location.origin}${rel}`;
+    return `${window.location.origin}/${rel}`;
+  };
+
+  const mediaUrlWithBust = (url: string, isVideo: boolean) => {
+    if (!url || url.startsWith('data:')) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}${isVideo ? 't' : '_'}=${Date.now()}`;
   };
 
   return (
@@ -495,6 +699,30 @@ export const SolutionRunner: React.FC = () => {
           {result && (
             <div style={{ marginTop: 'var(--space-6)' }}>
               <CardHeader icon="📊" title="处理结果" />
+              {result.success === false && (
+                <div style={{
+                  padding: 'var(--space-3)',
+                  marginBottom: 'var(--space-3)',
+                  background: '#fef2f2',
+                  color: '#b91c1c',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.875rem',
+                }}>
+                  {result.message || '处理失败'}
+                </div>
+              )}
+              {result.status === 'processing' && (
+                <div style={{
+                  padding: 'var(--space-3)',
+                  marginBottom: 'var(--space-3)',
+                  background: '#eff6ff',
+                  color: '#1d4ed8',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.875rem',
+                }}>
+                  {`热力图处理中：${result.progress ?? 0}% ${result.message ? `- ${result.message}` : ''}`}
+                </div>
+              )}
               {/* 处理图片/视频结果 */}
               {(() => {
                 const mediaPath = resolveMediaPath(result);
@@ -504,7 +732,7 @@ export const SolutionRunner: React.FC = () => {
                 return isVideo ? (
                   <div>
                     <video
-                      src={mediaPath + (mediaPath.includes('?') ? '&' : '?') + 't=' + Date.now()}
+                      src={mediaUrlWithBust(mediaPath, true)}
                       controls
                       playsInline
                       style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)', backgroundColor: '#000' }}
@@ -512,15 +740,29 @@ export const SolutionRunner: React.FC = () => {
                     <a href={mediaPath + (mediaPath.includes('?') ? '&' : '?') + 'download=1'} download style={{ display: 'inline-block', marginTop: '8px', color: '#3b82f6', textDecoration: 'none' }}>
                       下载视频
                     </a>
+                    <a href={mediaPath} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: '8px', marginLeft: '12px', color: '#3b82f6', textDecoration: 'none' }}>
+                      打开结果文件
+                    </a>
                   </div>
                 ) : (
-                  <img
-                    src={mediaPath}
-                    alt="Result"
-                    style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)' }}
-                  />
+                  <div>
+                    <img
+                      src={mediaUrlWithBust(mediaPath, false)}
+                      alt="Result"
+                      style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)' }}
+                    />
+                    <a href={mediaPath} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: '4px', color: '#3b82f6', textDecoration: 'none' }}>
+                      打开结果文件
+                    </a>
+                  </div>
                 );
               })()}
+
+              {result.success !== false && result.status !== 'processing' && !resolveMediaPath(result) && !(result.results || result.counting) && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                  未返回结果图地址，请检查后端 `/uploads` 挂载与前端代理配置。
+                </p>
+              )}
 
               {/* 媒体无法内嵌时兜底链接 */}
               {!resolveMediaPath(result) && (result.output_path || result?.results?.output_path) && (
@@ -533,18 +775,82 @@ export const SolutionRunner: React.FC = () => {
                   打开处理结果文件
                 </a>
               )}
-              {/* 处理计数结果 - 支持 results 或 counting */}
-              {(result.results || result.counting) && (
+              {/* 处理计数结果 - 支持 results / counting / 平铺返回 */}
+              {(
+                result.results ||
+                result.counting ||
+                result?.in_count != null ||
+                result?.out_count != null ||
+                result?.total_frames != null ||
+                result?.detected_objects != null ||
+                (result?.objects_by_class && typeof result.objects_by_class === 'object')
+              ) && (
                 <div style={{ padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
                   <h4 style={{ marginBottom: 'var(--space-2)' }}>计数结果:</h4>
-                  {Object.entries(result.results || result.counting).map(([key, value]: [string, any]) => (
-                    <div key={key} style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
-                      <span>{key === 'in_count' ? '进入数量' : key === 'out_count' ? '离开数量' : key === 'total_frames' ? '总帧数' : key}:</span>
-                      <span style={{ fontWeight: 600 }}>{String(value)}</span>
-                    </div>
-                  ))}
+                  {(() => {
+                    const counting = result.results || result.counting || result || {};
+                    const inCount = Number(counting.in_count || 0);
+                    const outCount = Number(counting.out_count || 0);
+                    const netCount = inCount - outCount;
+                    return (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                          <span>进入总数:</span>
+                          <span style={{ fontWeight: 600 }}>{inCount}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                          <span>离开总数:</span>
+                          <span style={{ fontWeight: 600 }}>{outCount}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                          <span>净计数 (进入-离开):</span>
+                          <span style={{ fontWeight: 700, color: netCount >= 0 ? '#16a34a' : '#dc2626' }}>{netCount}</span>
+                        </div>
+                        {counting.total_frames != null && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>处理帧数:</span>
+                            <span style={{ fontWeight: 600 }}>{String(counting.total_frames)}</span>
+                          </div>
+                        )}
+                        {counting.detected_objects != null && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>检测到目标数（静态图/末帧）:</span>
+                            <span style={{ fontWeight: 600 }}>{String(counting.detected_objects)}</span>
+                          </div>
+                        )}
+                        {(() => {
+                          const appearedClassEntries = deriveObjectsByClass(counting)
+                            .sort(([a], [b]) =>
+                              detectionClassLabelZh(a).localeCompare(detectionClassLabelZh(b), 'zh-CN')
+                            );
+                          if (appearedClassEntries.length === 0) return null;
+                          return (
+                            <div style={{ marginTop: 'var(--space-3)', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--border-color)' }}>
+                              <div style={{ fontWeight: 600, marginBottom: 'var(--space-2)', fontSize: '0.875rem' }}>出现过的物体（中文）:</div>
+                              {appearedClassEntries.map(([cls, num]) => (
+                                <div key={cls} style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                                  <span>{detectionClassLabelZh(cls)}</span>
+                                  <span style={{ fontWeight: 600 }}>{String(num)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
+              {((result.results?.recent_inference_logs || result.counting?.recent_inference_logs || result?.recent_inference_logs) as string[] | undefined)?.length ? (
+                <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
+                  <h4 style={{ marginBottom: 'var(--space-2)' }}>推理日志（最近20帧）:</h4>
+                  <div style={{ maxHeight: '180px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.8rem', lineHeight: 1.5 }}>
+                    {((result.results?.recent_inference_logs || result.counting?.recent_inference_logs || result?.recent_inference_logs) as string[]).map((line, idx) => (
+                      <div key={idx}>{line}</div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {/* 速度估算结果 */}
               {(result.speeds || result.results?.speeds) && (
                 <div style={{ padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>

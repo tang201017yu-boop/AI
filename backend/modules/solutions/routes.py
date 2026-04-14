@@ -13,6 +13,10 @@ from backend.modules.solutions.solutions_service import solutions_service
 
 router = APIRouter()
 
+# 模块级线程池：热力图等耗时任务在后台线程中执行，避免阻塞 asyncio 事件循环
+from concurrent.futures import ThreadPoolExecutor as _TPE
+_heatmap_executor = _TPE(max_workers=2, thread_name_prefix="heatmap")
+
 
 # ==================== 解决方案列表 ====================
 
@@ -101,12 +105,12 @@ async def solution_heatmap(
     classes: Optional[str] = Form(None),
     conf: float = Form(0.25)
 ):
-    """热图生成（异步）"""
+    """热图生成（异步）- 使用后台线程处理，返回 task_id 供前端轮询进度"""
     import cv2
+    import re
     import uuid
     import logging
     import traceback
-    from concurrent.futures import ThreadPoolExecutor
     logger = logging.getLogger(__name__)
 
     try:
@@ -116,12 +120,35 @@ async def solution_heatmap(
         # 生成任务 ID
         task_id = str(uuid.uuid4())[:8]
 
+        # 清理文件名，移除特殊字符防止静态文件 URL 解析出错
+        fname = file.filename or "upload.jpg"
+        def _sanitize(name: str) -> str:
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else "jpg"
+            safe = re.sub(r"[^A-Za-z0-9_\-]", "_", name.rsplit(".", 1)[0]) + "." + ext
+            return safe[:80]
+        clean_fname = _sanitize(fname)
+
         # 保存上传的文件
-        filename = get_unique_filename(str(settings.UPLOADS_DIR), file.filename or "upload.mp4")
+        filename = get_unique_filename(str(settings.UPLOADS_DIR), clean_fname)
         file_path = settings.UPLOADS_DIR / filename
         save_uploaded_file(file, str(file_path))
 
-        output_path = str(settings.UPLOADS_DIR / f"heatmap_{task_id}_{filename}")
+        # 按输入文件类型确定输出扩展名（视频输出 .mp4，图片保持原格式）
+        input_ext = Path(filename).suffix.lower()
+        _video_exts = {".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".m4v", ".ts"}
+        _image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
+        if input_ext in _video_exts:
+            output_ext = ".mp4"
+        elif input_ext in _image_exts:
+            output_ext = input_ext
+        else:
+            output_ext = ".jpg"
+
+        output_name = get_unique_filename(
+            str(settings.UPLOADS_DIR),
+            f"heatmap_{task_id}_{Path(filename).stem}{output_ext}",
+        )
+        output_path = str(settings.UPLOADS_DIR / output_name)
 
         # 初始化任务状态
         heatmap_tasks[task_id] = {
@@ -165,8 +192,7 @@ async def solution_heatmap(
                 heatmap_tasks[task_id]["message"] = str(e)
                 heatmap_tasks[task_id]["progress"] = 0
 
-        executor = ThreadPoolExecutor(max_workers=2)
-        executor.submit(process_heatmap)
+        _heatmap_executor.submit(process_heatmap)
 
         return {
             "success": True,

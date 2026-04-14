@@ -368,6 +368,8 @@ export const solutionsApi = {
     api.post('/solutions/object-counting', formData, { headers: multipartHeaders }),
   heatmap: (formData: FormData) =>
     api.post('/solutions/heatmap', formData, { headers: multipartHeaders }),
+  heatmapStatus: (taskId: string) =>
+    api.get(`/solutions/heatmap/status/${taskId}`),
   speedEstimation: (formData: FormData) =>
     api.post('/solutions/speed-estimation', formData, { headers: multipartHeaders }),
   distanceCalculation: (formData: FormData) =>
