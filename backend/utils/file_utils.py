@@ -4,7 +4,7 @@
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime
 
 
@@ -73,6 +73,17 @@ def get_unique_filename(directory: str, filename: str) -> str:
         counter += 1
     
     return file_path.name
+
+
+def uploads_public_url(file_path: Union[str, Path], uploads_dir: Union[str, Path]) -> str:
+    """将上传目录内的绝对路径转为对外 URL（保留子目录，如 cropped-objects/…）。"""
+    p = Path(file_path)
+    root = Path(uploads_dir)
+    try:
+        rel = p.relative_to(root)
+    except ValueError:
+        return f"/uploads/{p.name}"
+    return f"/uploads/{rel.as_posix()}"
 
 
 def save_uploaded_file(upload_file, destination: str) -> str:

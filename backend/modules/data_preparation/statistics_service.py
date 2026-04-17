@@ -126,20 +126,17 @@ class StatisticsService:
         return image_dirs, label_dirs
 
     def _get_summary(self, dataset_path: Path) -> Dict[str, Any]:
-        """获取数据集摘要"""
-        image_dirs, label_dirs = self._resolve_dirs(dataset_path)
+        """获取数据集摘要（与 /datasets/{name}/images 使用同一套枚举规则，避免概览与浏览张数不一致）"""
+        from backend.modules.data_preparation.dataset_service import dataset_service
 
-        # 图片总数（跨所有目录）
-        image_count = sum(self._count_images(d) for d in image_dirs)
+        entries = dataset_service.collect_dataset_image_entries(dataset_path)
+        image_count = len(entries)
+        annotation_count = sum(
+            dataset_service.count_label_lines_for_image(p, lbl) for p, _, lbl in entries
+        )
+        total_size = sum(p.stat().st_size for p, _, _ in entries) if entries else 0
 
-        # 标注总数
-        annotation_count = sum(self._count_annotations(d) for d in label_dirs)
-
-        # 类别列表
         classes = self._get_classes(dataset_path)
-
-        # 文件大小统计
-        total_size = sum(self._get_total_size(d) for d in image_dirs)
 
         return {
             "total_images": image_count,
@@ -404,46 +401,30 @@ class StatisticsService:
         }
 
     def _get_split_details(self, dataset_path: Path) -> Dict[str, Any]:
-        """获取数据拆分详情，兼容标准结构和 Roboflow 结构"""
-        SPLITS = ["train", "val", "test"]
+        """获取数据拆分详情（与图片浏览同一枚举，避免重复计数或漏计）"""
+        from backend.modules.data_preparation.dataset_service import dataset_service
+
+        entries = dataset_service.collect_dataset_image_entries(dataset_path)
         splits = {
             "train": {"images": 0, "annotations": 0},
             "val": {"images": 0, "annotations": 0},
             "test": {"images": 0, "annotations": 0},
-            "unlabeled": {"images": 0, "annotations": 0}
+            "unlabeled": {"images": 0, "annotations": 0},
         }
 
-        images_dir = dataset_path / "images"
-        labels_dir = dataset_path / "labels"
+        for img_path, sp, lbl_root in entries:
+            ann = dataset_service.count_label_lines_for_image(img_path, lbl_root)
+            if sp == "train":
+                bucket = "train"
+            elif sp == "val":
+                bucket = "val"
+            elif sp == "test":
+                bucket = "test"
+            else:
+                bucket = "unlabeled"
+            splits[bucket]["images"] += 1
+            splits[bucket]["annotations"] += ann
 
-        # 结构一: images/train/, images/val/ (标准)
-        for split in SPLITS:
-            si = images_dir / split
-            sl = labels_dir / split
-            if si.exists():
-                splits[split]["images"] += self._count_images(si)
-            if sl.exists():
-                splits[split]["annotations"] += self._count_annotations(sl)
-
-        # 结构二: train/images/, valid/images/ (Roboflow)
-        for sp_dir, canonical in [("train","train"),("val","val"),("valid","val"),("test","test")]:
-            si = dataset_path / sp_dir / "images"
-            sl = dataset_path / sp_dir / "labels"
-            if si.exists():
-                splits[canonical]["images"] += self._count_images(si)
-            if sl.exists():
-                splits[canonical]["annotations"] += self._count_annotations(sl)
-
-        # 未分类图片（直接在 images/ 根目录下，不在子目录中）
-        if images_dir.exists():
-            all_images = []
-            for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp"]:
-                all_images.extend(images_dir.glob(ext))
-            labeled_count = sum(splits[s]["images"] for s in SPLITS)
-            unlabeled = len(all_images) - labeled_count
-            splits["unlabeled"]["images"] = max(0, unlabeled)
-
-        # 计算百分比
         total = sum(s["images"] for s in splits.values())
         for split in splits:
             splits[split]["percentage"] = round(

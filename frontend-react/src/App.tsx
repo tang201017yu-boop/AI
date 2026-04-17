@@ -18,6 +18,7 @@ import { AINative } from './pages/AINative/AINative';
 export const App: React.FC = () => {
   return (
     <Routes>
+      <Route path="/embed/annotation" element={<Annotation />} />
       <Route path="/" element={<Layout />}>
         <Route index element={<Home />} />
         <Route path="ai-native" element={<AINative />} />

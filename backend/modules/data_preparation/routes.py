@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 import io
 import logging
+from urllib.parse import quote
 
 from backend.core.config import settings
 from backend.core.utils import allowed_file, save_uploaded_file, extract_zip
@@ -1261,66 +1262,20 @@ async def list_dataset_images(
     if not dataset_path.exists():
         raise HTTPException(status_code=404, detail="数据集不存在")
 
-    IMAGE_EXTS = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']
-    SPLIT_DIRS = ['train', 'val', 'valid', 'test']
+    # 与概览统计共用同一套枚举，保证「总张数 / 拆分」一致
+    file_entries = dataset_service.collect_dataset_image_entries(dataset_path)
+    if not file_entries:
+        return {
+            "success": True,
+            "images": [],
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "view": view,
+        }
 
-    # ---- 确定图片根目录及标签根目录（兼容多种 YOLO 目录结构）----
-    # 结构 A: dataset/images/  (平铺或含 train/val 子目录)
-    # 结构 B: dataset/train/images/, dataset/valid/images/ ... (Roboflow 标准格式)
-    root_images_dir = dataset_path / "images"
-    root_labels_dir = dataset_path / "labels" if (dataset_path / "labels").exists() else dataset_path / "annotation"
-
-    # 检测图片文件分布
-    # 先判断 images/ 下是否直接有图片（含递归）
-    has_root_images = root_images_dir.exists() and any(
-        True for ext in IMAGE_EXTS for _ in root_images_dir.rglob(ext)
-    ) if root_images_dir.exists() else False
-
-    # 判断是否存在 Roboflow 结构（train/images/, valid/images/ ...）
-    split_image_dirs: dict = {}  # split_name -> Path
-    split_label_dirs: dict = {}  # split_name -> Path
-    for sp in SPLIT_DIRS:
-        sp_images = dataset_path / sp / "images"
-        sp_labels = dataset_path / sp / "labels"
-        if sp_images.exists() and any(True for ext in IMAGE_EXTS for _ in sp_images.rglob(ext)):
-            canonical = 'val' if sp == 'valid' else sp
-            split_image_dirs[canonical] = sp_images
-            if sp_labels.exists():
-                split_label_dirs[canonical] = sp_labels
-
-    use_split_structure = not has_root_images and bool(split_image_dirs)
-
-    if not has_root_images and not use_split_structure:
-        return {"success": True, "images": [], "total": 0}
-
-    # ---- 收集所有图片文件（带拆分信息）----
-    # item: (img_path, split_name, label_search_dir)
-    file_entries = []
-
-    if use_split_structure:
-        # Roboflow 格式: train/images/, valid/images/ ...
-        for sp_name, sp_dir in split_image_dirs.items():
-            if split and split != sp_name:
-                continue
-            for ext in IMAGE_EXTS:
-                for img_path in sp_dir.rglob(ext):
-                    file_entries.append((img_path, sp_name, split_label_dirs.get(sp_name)))
-    else:
-        # 标准格式: images/ (平铺或含子目录)
-        for ext in IMAGE_EXTS:
-            for img_path in root_images_dir.rglob(ext):
-                path_parts = img_path.parts
-                if 'train' in path_parts:
-                    sp_name = 'train'
-                elif 'val' in path_parts:
-                    sp_name = 'val'
-                elif 'test' in path_parts:
-                    sp_name = 'test'
-                else:
-                    sp_name = 'unknown'
-                if split and split != sp_name:
-                    continue
-                file_entries.append((img_path, sp_name, root_labels_dir if root_labels_dir.exists() else None))
+    if split:
+        file_entries = [(p, sp, lbl) for p, sp, lbl in file_entries if sp == split]
 
     # ---- 构建标签索引（stem -> labels），支持多个标签目录 ----
     def _load_labels(label_dir: Path) -> dict:
@@ -1358,43 +1313,54 @@ async def list_dataset_images(
     has_thumbnails = thumbs_dir.exists()
 
     # ---- 构建图片列表 ----
+    # PIL 解码失败仍保留条目（宽/高为 0），与 collect_dataset_image_entries 数量一致，避免概览「总图片数」与列表 total 不一致
     images = []
     for img_path, split_name, label_dir in sorted(file_entries, key=lambda x: x[0].name):
+        labels = _get_labels(label_dir, img_path.stem)
+
+        is_labeled = len(labels) > 0
+        if labeled == "labeled" and not is_labeled:
+            continue
+        if labeled == "unlabeled" and is_labeled:
+            continue
+
+        width, height = 0, 0
         try:
             with Image.open(img_path) as img:
                 width, height = img.size
+        except Exception as e:
+            print(f"Warning: could not decode image {img_path}: {e}")
 
-            labels = _get_labels(label_dir, img_path.stem)
-
-            # 标注筛选
-            is_labeled = len(labels) > 0
-            if labeled == "labeled" and not is_labeled:
-                continue
-            if labeled == "unlabeled" and is_labeled:
-                continue
-
-            thumb_name = f"{img_path.stem}_thumb{img_path.suffix}"
-            thumb_path = thumbs_dir / thumb_name
-            thumbnail_url = (
-                f"/api/v1/datasets/{name}/thumbnails/{img_path.name}"
-                if (has_thumbnails and thumb_path.exists())
-                else f"/api/v1/datasets/{name}/images/{img_path.name}"
-            )
-
-            images.append({
-                "filename": img_path.name,
-                "path": f"/api/v1/datasets/{name}/images/{img_path.name}",
-                "thumbnail": thumbnail_url,
-                "width": width,
-                "height": height,
-                "size": img_path.stat().st_size,
-                "modified": img_path.stat().st_mtime,
-                "split": split_name,
-                "label_count": len(labels),
-                "labels": labels
-            })
+        try:
+            st = img_path.stat()
+            size = st.st_size
+            modified = st.st_mtime
         except Exception as e:
             print(f"Error processing image {img_path}: {e}")
+            continue
+
+        thumb_name = f"{img_path.stem}_thumb{img_path.suffix}"
+        thumb_path = thumbs_dir / thumb_name
+        encoded_dataset_name = quote(name, safe="")
+        encoded_image_name = quote(img_path.name, safe="")
+        thumbnail_url = (
+            f"/api/v1/datasets/{encoded_dataset_name}/thumbnails/{encoded_image_name}"
+            if (has_thumbnails and thumb_path.exists())
+            else f"/api/v1/datasets/{encoded_dataset_name}/images/{encoded_image_name}"
+        )
+
+        images.append({
+            "filename": img_path.name,
+            "path": f"/api/v1/datasets/{encoded_dataset_name}/images/{encoded_image_name}",
+            "thumbnail": thumbnail_url,
+            "width": width,
+            "height": height,
+            "size": size,
+            "modified": modified,
+            "split": split_name,
+            "label_count": len(labels),
+            "labels": labels
+        })
 
     # 排序
     if sort:
@@ -1479,6 +1445,20 @@ async def get_dataset_image(name: str, filename: str):
     return FileResponse(image_path, media_type=media_types.get(ext, 'image/jpeg'))
 
 
+@router.delete("/datasets/{name}/images/{filename}")
+async def delete_dataset_image(name: str, filename: str):
+    """删除数据集中的单张图片及对应标签文件"""
+    from urllib.parse import unquote
+
+    safe_name = unquote(filename)
+    result = dataset_service.delete_dataset_image(name, safe_name)
+    if result.get("success"):
+        return result
+    msg = result.get("message", "删除失败")
+    code = 404 if ("不存在" in msg) else 400
+    raise HTTPException(status_code=code, detail=msg)
+
+
 @router.get("/datasets/{name}/image-info/{filename}")
 async def get_image_info(name: str, filename: str):
     """获取图片详细信息"""
@@ -1536,8 +1516,8 @@ async def get_image_info(name: str, filename: str):
             "split": split,
             "label_count": len(labels),
             "labels": labels,
-            "image_url": f"/api/v1/datasets/{name}/images/{filename}",
-            "thumbnail_url": f"/api/v1/datasets/{name}/thumbnails/{filename}"
+            "image_url": f"/api/v1/datasets/{quote(name, safe='')}/images/{quote(filename, safe='')}",
+            "thumbnail_url": f"/api/v1/datasets/{quote(name, safe='')}/thumbnails/{quote(filename, safe='')}"
         }
     }
 

@@ -7,12 +7,24 @@
 import os
 import json
 import shutil
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import threading
 from collections import defaultdict
 import math
+
+logger = logging.getLogger(__name__)
+
+
+def _invalidate_dataset_statistics_cache() -> None:
+    """数据集增删改移后清除统计缓存，避免概览页显示过期数字。"""
+    try:
+        from backend.modules.data_preparation.statistics_service import statistics_service
+        statistics_service.clear_cache()
+    except Exception as e:
+        logger.debug("清除统计缓存跳过: %s", e)
 
 try:
     from PIL import Image
@@ -44,49 +56,94 @@ class DatasetService:
 
     def _load_projects_meta(self) -> Dict[str, Any]:
         """加载数据集项目元数据"""
+        default_meta = {
+            "projects": [{
+                "id": "default",
+                "name": self._default_project_name,
+                "created_at": datetime.now().isoformat()
+            }],
+            "dataset_to_project": {}
+        }
         if not self._projects_meta_file.exists():
-            return {
-                "projects": [{
-                    "id": "default",
-                    "name": self._default_project_name,
-                    "created_at": datetime.now().isoformat()
-                }],
-                "dataset_to_project": {}
-            }
+            return default_meta
         try:
             with open(self._projects_meta_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                if "projects" not in data:
-                    data["projects"] = []
-                if "dataset_to_project" not in data:
-                    data["dataset_to_project"] = {}
-                if not any(p.get("id") == "default" for p in data["projects"]):
-                    data["projects"].insert(0, {
-                        "id": "default",
-                        "name": self._default_project_name,
-                        "created_at": datetime.now().isoformat()
-                    })
-                return data
-        except Exception:
-            return {
-                "projects": [{
+            if not isinstance(data, dict):
+                logger.warning("数据集项目元数据格式错误（非对象），已使用默认配置")
+                return default_meta
+            raw_projects = data.get("projects", [])
+            if not isinstance(raw_projects, list):
+                raw_projects = []
+            projects = []
+            for p in raw_projects:
+                if not isinstance(p, dict):
+                    continue
+                pid = p.get("id")
+                if not pid:
+                    continue
+                projects.append({
+                    "id": str(pid),
+                    "name": p.get("name") or str(pid),
+                    "created_at": p.get("created_at") or datetime.now().isoformat(),
+                })
+            raw_map = data.get("dataset_to_project", {})
+            if not isinstance(raw_map, dict):
+                raw_map = {}
+            dataset_to_project = {
+                str(k): str(v) for k, v in raw_map.items()
+                if k is not None and v is not None
+            }
+            data["projects"] = projects
+            data["dataset_to_project"] = dataset_to_project
+            if not any(p.get("id") == "default" for p in data["projects"]):
+                data["projects"].insert(0, {
                     "id": "default",
                     "name": self._default_project_name,
                     "created_at": datetime.now().isoformat()
-                }],
-                "dataset_to_project": {}
-            }
+                })
+            return data
+        except Exception as e:
+            logger.warning("读取数据集项目元数据失败，使用默认配置: %s", e)
+            return default_meta
 
     def _save_projects_meta(self, data: Dict[str, Any]) -> None:
         """保存数据集项目元数据"""
-        with open(self._projects_meta_file, 'w', encoding='utf-8') as f:
+        path = self._projects_meta_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+    def _dataset_entry_to_dict(self, d: Any) -> Optional[Dict[str, Any]]:
+        """将 list_datasets 的单条结果规范为可 JSON 序列化的 dict"""
+        if d is None:
+            return None
+        if isinstance(d, dict):
+            return d
+        if hasattr(d, "model_dump"):
+            try:
+                return d.model_dump()
+            except Exception:
+                return None
+        if hasattr(d, "dict"):
+            try:
+                return d.dict()
+            except Exception:
+                return None
+        return None
 
     def list_dataset_projects(self) -> List[Dict[str, Any]]:
         """列出数据集项目（含项目下的数据集）"""
         meta = self._load_projects_meta()
         datasets = self.list_datasets()
-        ds_map = {d["name"]: d for d in datasets if d.get("name")}
+        ds_map = {}
+        for d in datasets:
+            row = self._dataset_entry_to_dict(d)
+            name = row.get("name") if row else None
+            if row and name:
+                ds_map[name] = row
 
         projects = []
         for p in meta["projects"]:
@@ -99,7 +156,7 @@ class DatasetService:
                 "id": pid,
                 "name": p.get("name"),
                 "created_at": p.get("created_at"),
-                "datasets": sorted(project_datasets, key=lambda x: x.get("name", "")),
+                "datasets": sorted(project_datasets, key=lambda x: str(x.get("name", "")).lower()),
                 "dataset_count": len(project_datasets)
             })
 
@@ -108,9 +165,16 @@ class DatasetService:
         if default_project is not None:
             assigned = set(meta["dataset_to_project"].keys())
             unassigned = [d for n, d in ds_map.items() if n not in assigned]
-            default_project["datasets"].extend(sorted(unassigned, key=lambda x: x.get("name", "")))
+            default_project["datasets"].extend(sorted(unassigned, key=lambda x: str(x.get("name", "")).lower()))
             default_project["dataset_count"] = len(default_project["datasets"])
 
+        # 默认项目置顶，其余按名称稳定排序，保证前端下拉与列表顺序一致
+        def _project_sort_key(item: Dict[str, Any]) -> tuple:
+            pid = item.get("id") or ""
+            name = str(item.get("name") or "")
+            return (0 if pid == "default" else 1, name.lower())
+
+        projects.sort(key=_project_sort_key)
         return projects
 
     def create_dataset_project(self, name: str) -> Dict[str, Any]:
@@ -130,7 +194,11 @@ class DatasetService:
             "created_at": datetime.now().isoformat()
         }
         meta["projects"].append(project)
-        self._save_projects_meta(meta)
+        try:
+            self._save_projects_meta(meta)
+        except OSError as e:
+            logger.exception("保存数据集项目元数据失败: %s", self._projects_meta_file)
+            return {"success": False, "message": f"无法写入项目配置（检查 data/datasets 目录权限）: {e}"}
         return {"success": True, "project": project}
 
     def rename_dataset_project(self, project_id: str, new_name: str) -> Dict[str, Any]:
@@ -182,6 +250,7 @@ class DatasetService:
         else:
             meta["dataset_to_project"][dataset_name] = project_id
         self._save_projects_meta(meta)
+        _invalidate_dataset_statistics_cache()
         return {"success": True, "message": "数据集已移动"}
 
     def rename_dataset(self, old_name: str, new_name: str) -> Dict[str, Any]:
@@ -216,6 +285,7 @@ class DatasetService:
             meta["dataset_to_project"][new_name] = meta["dataset_to_project"].pop(old_name)
         self._save_projects_meta(meta)
 
+        _invalidate_dataset_statistics_cache()
         return {"success": True, "message": "数据集重命名成功", "new_name": new_name}
 
     def _get_dataset_path(self, name: str) -> Path:
@@ -252,6 +322,86 @@ class DatasetService:
                     return child
 
         return base_path
+
+    def collect_dataset_image_entries(
+        self, dataset_path: Path
+    ) -> List[Tuple[Path, str, Optional[Path]]]:
+        """
+        与 GET /datasets/{name}/images 相同的扫描规则。
+        返回 (图片路径, split 名, 标签查找根目录)。
+        """
+        IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        SPLIT_DIRS = ["train", "val", "valid", "test"]
+        root_images_dir = dataset_path / "images"
+        root_labels_dir = (
+            dataset_path / "labels"
+            if (dataset_path / "labels").exists()
+            else dataset_path / "annotation"
+        )
+
+        has_root_images = (
+            root_images_dir.exists()
+            and any(
+                p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
+                for p in root_images_dir.rglob("*")
+            )
+        )
+
+        split_image_dirs: Dict[str, Path] = {}
+        split_label_dirs: Dict[str, Path] = {}
+        for sp in SPLIT_DIRS:
+            sp_images = dataset_path / sp / "images"
+            sp_labels = dataset_path / sp / "labels"
+            if sp_images.exists() and any(
+                p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
+                for p in sp_images.rglob("*")
+            ):
+                canonical = "val" if sp == "valid" else sp
+                split_image_dirs[canonical] = sp_images
+                if sp_labels.exists():
+                    split_label_dirs[canonical] = sp_labels
+
+        use_split_structure = not has_root_images and bool(split_image_dirs)
+        out: List[Tuple[Path, str, Optional[Path]]] = []
+
+        if not has_root_images and not use_split_structure:
+            return out
+
+        if use_split_structure:
+            for sp_name, sp_dir in split_image_dirs.items():
+                for img_path in sp_dir.rglob("*"):
+                    if img_path.is_file() and img_path.suffix.lower() in IMAGE_SUFFIXES:
+                        out.append((img_path, sp_name, split_label_dirs.get(sp_name)))
+        else:
+            for img_path in root_images_dir.rglob("*"):
+                if not img_path.is_file() or img_path.suffix.lower() not in IMAGE_SUFFIXES:
+                    continue
+                path_parts = img_path.parts
+                if "train" in path_parts:
+                    sp_name = "train"
+                elif "val" in path_parts:
+                    sp_name = "val"
+                elif "test" in path_parts:
+                    sp_name = "test"
+                else:
+                    sp_name = "unknown"
+                lbl_root = root_labels_dir if root_labels_dir.exists() else None
+                out.append((img_path, sp_name, lbl_root))
+
+        return out
+
+    def count_label_lines_for_image(self, img_path: Path, label_root: Optional[Path]) -> int:
+        """与图片列表接口一致：在 label_root 下按文件名主干查找 YOLO txt 并统计非空行数。"""
+        if not label_root or not label_root.exists():
+            return 0
+        stem = img_path.stem
+        for lf in label_root.rglob(f"{stem}.txt"):
+            if lf.is_file():
+                try:
+                    return sum(1 for line in lf.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip())
+                except Exception:
+                    return 0
+        return 0
 
     def upload_dataset(
         self,
@@ -331,6 +481,17 @@ class DatasetService:
         # 生成数据集信息
         info = self._generate_dataset_info(dataset_dir, name, task_type)
 
+        # 兜底校验：压缩包里没有任何图片时，返回明确错误，避免前端看到“上传成功但图片为0”
+        if int(info.get("num_images", 0) or 0) <= 0:
+            try:
+                shutil.rmtree(dataset_dir, ignore_errors=True)
+            except Exception:
+                pass
+            return {
+                "success": False,
+                "message": "未检测到可用图片文件（支持 jpg/jpeg/png/bmp/webp），请检查 ZIP 内容与目录结构",
+            }
+
         # 添加存储统计信息
         info["storage"] = {
             "smart_storage_enabled": use_smart_storage,
@@ -352,6 +513,8 @@ class DatasetService:
             "info": info,
             "timestamp": datetime.now().timestamp()
         }
+
+        _invalidate_dataset_statistics_cache()
 
         return {
             "success": True,
@@ -1169,19 +1332,23 @@ class DatasetService:
         image_count = 0
         class_counts: Dict[str, int] = {}
 
-        image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']
+        image_suffixes = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
         if images_dir.exists():
-            for ext in image_extensions:
-                image_count += len(list(images_dir.rglob(ext)))
+            image_count += sum(
+                1 for p in images_dir.rglob('*')
+                if p.is_file() and p.suffix.lower() in image_suffixes
+            )
 
         # 兼容 Roboflow 结构: train/images/, valid/images/, test/images/
         if image_count == 0:
             for sp in ['train', 'val', 'valid', 'test']:
                 sp_dir = dataset_dir / sp / "images"
                 if sp_dir.exists():
-                    for ext in image_extensions:
-                        image_count += len(list(sp_dir.rglob(ext)))
+                    image_count += sum(
+                        1 for p in sp_dir.rglob('*')
+                        if p.is_file() and p.suffix.lower() in image_suffixes
+                    )
 
         # 读取 YAML 配置获取类别
         yaml_path = dataset_dir / "data.yaml"
@@ -1223,24 +1390,44 @@ class DatasetService:
 
     def list_datasets(self) -> List[Dict[str, Any]]:
         """列出所有数据集"""
-        datasets = []
+        datasets: List[Dict[str, Any]] = []
+        root = settings.DATASETS_DIR
+        if not root.exists() or not root.is_dir():
+            logger.warning("数据集根目录不可用: %s", root)
+            return datasets
 
-        for dataset_dir in settings.DATASETS_DIR.iterdir():
+        try:
+            entries = list(root.iterdir())
+        except OSError as e:
+            logger.exception("无法扫描数据集目录 %s: %s", root, e)
+            return datasets
+
+        for dataset_dir in entries:
             if not dataset_dir.is_dir():
                 continue
+            name = dataset_dir.name
+            if name.startswith("."):
+                continue
 
-            cache_entry = self.dataset_cache.get(dataset_dir.name)
-            if cache_entry:
-                if datetime.now().timestamp() - cache_entry["timestamp"] < self.cache_ttl:
-                    datasets.append(cache_entry["info"])
-                    continue
+            try:
+                cache_entry = self.dataset_cache.get(name)
+                if cache_entry:
+                    if datetime.now().timestamp() - cache_entry["timestamp"] < self.cache_ttl:
+                        info = cache_entry["info"]
+                        if isinstance(info, dict):
+                            datasets.append(info)
+                            continue
+                        self.dataset_cache.pop(name, None)
 
-            info = self._generate_dataset_info(dataset_dir, dataset_dir.name, "detect")
-            self.dataset_cache[dataset_dir.name] = {
-                "info": info,
-                "timestamp": datetime.now().timestamp()
-            }
-            datasets.append(info)
+                info = self._generate_dataset_info(dataset_dir, name, "detect")
+                self.dataset_cache[name] = {
+                    "info": info,
+                    "timestamp": datetime.now().timestamp()
+                }
+                datasets.append(info)
+            except Exception as e:
+                logger.warning("跳过数据集目录 %s（扫描失败）: %s", name, e)
+                continue
 
         return datasets
 
@@ -1255,6 +1442,104 @@ class DatasetService:
             return cache_entry["info"]
 
         return self._generate_dataset_info(dataset_dir, name, "detect")
+
+    def resolve_dataset_image_path(self, dataset_name: str, filename: str) -> Optional[Path]:
+        """定位数据集中某张图片的绝对路径（与图片 GET 路由搜索顺序一致）。"""
+        dataset_path = self._get_dataset_path(dataset_name)
+        if not dataset_path.exists():
+            return None
+
+        search_dirs: List[Path] = []
+        if (dataset_path / "images").exists():
+            search_dirs.append(dataset_path / "images")
+        for sp in ["train", "val", "valid", "test"]:
+            sp_dir = dataset_path / sp / "images"
+            if sp_dir.exists():
+                search_dirs.append(sp_dir)
+        if not search_dirs:
+            search_dirs = [dataset_path]
+
+        for search_dir in search_dirs:
+            candidate = search_dir / filename
+            if candidate.is_file():
+                return candidate
+            for img_path in search_dir.rglob(filename):
+                if img_path.is_file():
+                    return img_path
+        return None
+
+    def _resolve_label_path_for_image(self, dataset_path: Path, image_path: Path) -> Optional[Path]:
+        """根据图片路径查找对应 YOLO txt 标签路径。"""
+        stem = image_path.stem
+        try:
+            rel = image_path.relative_to(dataset_path)
+        except ValueError:
+            rel = None
+        if rel is not None:
+            parts = list(rel.parts)
+            # Roboflow: train/images/foo.jpg -> train/labels/foo.txt
+            if len(parts) >= 3 and parts[1] == "images":
+                split = parts[0]
+                lbl = dataset_path / split / "labels" / f"{stem}.txt"
+                if lbl.is_file():
+                    return lbl
+            # 标准: images/train/foo.jpg -> labels/train/foo.txt
+            if len(parts) >= 3 and parts[0] == "images":
+                sub = parts[1]
+                if sub in ("train", "val", "test", "valid"):
+                    canon = "val" if sub == "valid" else sub
+                    lbl = dataset_path / "labels" / canon / f"{stem}.txt"
+                    if lbl.is_file():
+                        return lbl
+        flat = dataset_path / "labels" / f"{stem}.txt"
+        if flat.is_file():
+            return flat
+        labels_dir = dataset_path / "labels"
+        if labels_dir.exists():
+            for p in labels_dir.rglob(f"{stem}.txt"):
+                if p.is_file():
+                    return p
+        return None
+
+    def delete_dataset_image(self, dataset_name: str, filename: str) -> Dict[str, Any]:
+        """删除数据集中单张图片及对应标签、缩略图缓存。"""
+        dataset_path = self._get_dataset_path(dataset_name)
+        if not dataset_path.exists():
+            return {"success": False, "message": "数据集不存在"}
+
+        image_path = self.resolve_dataset_image_path(dataset_name, filename)
+        if not image_path or not image_path.is_file():
+            return {"success": False, "message": "图片不存在"}
+
+        try:
+            image_path.unlink()
+        except OSError as e:
+            return {"success": False, "message": str(e)}
+
+        stem = image_path.stem
+        suffix = image_path.suffix
+
+        label_path = self._resolve_label_path_for_image(dataset_path, image_path)
+        if label_path and label_path.is_file():
+            try:
+                label_path.unlink()
+            except OSError:
+                pass
+
+        thumbs_dir = dataset_path / ".thumbnails"
+        if thumbs_dir.exists():
+            for ext in (suffix, ".jpg", ".jpeg", ".png", ".webp"):
+                t = thumbs_dir / f"{stem}_thumb{ext}"
+                if t.exists():
+                    try:
+                        t.unlink()
+                    except OSError:
+                        pass
+
+        if dataset_name in self.dataset_cache:
+            del self.dataset_cache[dataset_name]
+        _invalidate_dataset_statistics_cache()
+        return {"success": True, "message": "图片已删除", "filename": filename}
 
     def delete_dataset(self, name: str) -> Dict[str, Any]:
         """删除数据集"""
@@ -1273,6 +1558,7 @@ class DatasetService:
             meta["dataset_to_project"].pop(name, None)
             self._save_projects_meta(meta)
 
+        _invalidate_dataset_statistics_cache()
         return {"success": True, "message": "数据集已删除"}
 
     # ==================== 格式检测 ====================

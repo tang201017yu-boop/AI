@@ -554,10 +554,11 @@ const AnnotationCanvas: React.FC<Props> = ({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
       style={{
+        display: 'block',
         width: 'auto',
-        maxWidth: '100%',
-        maxHeight: '100%',
         height: 'auto',
+        maxWidth: '100%',
+        maxHeight: 'calc(100vh - 230px)',
         cursor: getCursor(),
         border: '1px solid #e2e8f0',
         borderRadius: '8px',

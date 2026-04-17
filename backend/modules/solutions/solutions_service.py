@@ -2,6 +2,10 @@
 解决方案服务 - Solutions Service
 提供 Ultralytics Solutions 功能（独立模块）
 """
+import os
+import re
+import shutil
+import subprocess
 import cv2
 import numpy as np
 import logging
@@ -21,6 +25,106 @@ except ImportError:
     print("Warning: ultralytics not installed")
 
 from backend.core.config import settings
+
+
+def _open_solution_mp4_writer(path: str, fps: float, width: int, height: int):
+    """
+    创建 MP4 写入器。优先尝试浏览器可解码的 H.264 fourcc，否则回退 mp4v。
+    说明：多数浏览器无法播放 OpenCV 默认的 MPEG-4 Part 2（mp4v），需 H.264 或事后 remux。
+    """
+    w, h = int(width), int(height)
+    fps_f = float(fps) if fps and float(fps) > 0 else 30.0
+    p = str(path)
+    for tag in ("avc1", "H264", "X264", "mp4v"):
+        fourcc = cv2.VideoWriter_fourcc(*tag)
+        vw = cv2.VideoWriter(p, fourcc, fps_f, (w, h))
+        if vw.isOpened():
+            if tag == "mp4v":
+                logger.warning(
+                    "[video] OpenCV 仅能以 mp4v 打开写入器，浏览器内可能无法播放；"
+                    "请安装 ffmpeg 以便自动转码为 H.264，或换用带 FFmpeg 的 OpenCV 构建"
+                )
+            else:
+                logger.info("[video] VideoWriter fourcc=%s path=%s", tag, Path(p).name)
+            return vw
+        vw.release()
+    vw = cv2.VideoWriter(p, cv2.VideoWriter_fourcc(*"mp4v"), fps_f, (w, h))
+    if not vw.isOpened():
+        logger.error("[video] 无法为 %s 创建 VideoWriter", Path(p).name)
+    return vw
+
+
+def _resolve_ffmpeg_executable() -> Optional[str]:
+    """
+    解析用于转码的 ffmpeg 可执行文件路径：
+    1) 环境变量 FFMPEG_PATH
+    2) PATH 中的 ffmpeg
+    3) imageio-ffmpeg 自带的二进制（无需在服务器上单独安装 ffmpeg）
+    """
+    env_p = os.environ.get("FFMPEG_PATH", "").strip()
+    if env_p and Path(env_p).is_file():
+        return env_p
+    which = shutil.which("ffmpeg")
+    if which:
+        return which
+    try:
+        import imageio_ffmpeg  # type: ignore
+
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and Path(exe).is_file():
+            return exe
+    except Exception as e:
+        logger.debug("[video] imageio-ffmpeg 不可用: %s", e)
+    return None
+
+
+def _remux_mp4_for_html5_video(path: Optional[str]) -> None:
+    """
+    将已写好的 MP4 用 ffmpeg 转为 H.264 + yuv420p + faststart，便于 <video> 标签播放。
+    若既无系统 ffmpeg 也未安装 imageio-ffmpeg，则静默跳过。
+    """
+    if not path or Path(path).suffix.lower() != ".mp4":
+        return
+    ffmpeg = _resolve_ffmpeg_executable()
+    if not ffmpeg:
+        logger.warning(
+            "[video] 未找到 ffmpeg（请 pip install imageio-ffmpeg 或安装系统 ffmpeg），"
+            "输出可能无法在浏览器内播放: %s",
+            Path(path).name,
+        )
+        return
+    src = Path(path)
+    if not src.is_file() or src.stat().st_size == 0:
+        return
+    tmp = src.parent / f".{src.stem}.html5_tmp{src.suffix}"
+    try:
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-an",
+            str(tmp),
+        ]
+        subprocess.run(cmd, check=True, timeout=7200)
+        os.replace(str(tmp), str(src))
+        logger.info("[video] ffmpeg remux OK: %s", src.name)
+    except Exception as e:
+        logger.warning("[video] ffmpeg remux failed for %s: %s", path, e)
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _to_numpy(frame):
@@ -315,12 +419,10 @@ class SolutionsService:
 
             out = None
             if output_path:
-                fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+                fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or fw
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or fh
-                out = cv2.VideoWriter(
-                    output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
-                )
+                out = _open_solution_mp4_writer(output_path, fps, width, height)
 
             results_data = {"in_count": 0, "out_count": 0, "total_frames": 0}
             last_tracks = 0
@@ -337,7 +439,7 @@ class SolutionsService:
                     results_data["out_count"] = r.out_count
                 if hasattr(r, "total_tracks"):
                     last_tracks = r.total_tracks
-                if output_path and out is not None and getattr(r, "plot_im", None) is not None:
+                if output_path and out is not None and out.isOpened() and getattr(r, "plot_im", None) is not None:
                     out.write(r.plot_im)
 
                 # 组织前端可展示的推理摘要（与 Ultralytics 终端: 帧号 分辨率 solution_ms, 各类数量）
@@ -366,6 +468,8 @@ class SolutionsService:
             cap.release()
             if out is not None:
                 out.release()
+            if output_path:
+                _remux_mp4_for_html5_video(output_path)
 
             results_data["detected_objects"] = last_tracks
             results_data["objects_by_class"] = last_class_counts
@@ -458,17 +562,8 @@ class SolutionsService:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
             out = None
             if output_path:
-                fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-                # 优先尝试 H.264（浏览器兼容性最好），回退到 mp4v
-                for fourcc_str in ("avc1", "mp4v"):
-                    fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
-                    _out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-                    if _out.isOpened():
-                        out = _out
-                        break
-                    _out.release()
-                if out is None:
-                    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
+                out = _open_solution_mp4_writer(output_path, fps, width, height)
 
             # 初始化热图累计器（2D 数组）
             heatmap_2d = np.zeros((height, width), dtype=np.float32)
@@ -522,12 +617,13 @@ class SolutionsService:
                     progress = int((frame_count / total_frames) * 100)
                     progress_callback(progress, f"正在处理第 {frame_count}/{total_frames} 帧")
 
-                if output_path and out is not None:
+                if output_path and out is not None and out.isOpened():
                     out.write(annotated_frame)
 
             cap.release()
             if output_path and out is not None:
                 out.release()
+                _remux_mp4_for_html5_video(output_path)
 
             return {
                 "success": True,
@@ -569,11 +665,12 @@ class SolutionsService:
             )
 
             cap = cv2.VideoCapture(source)
+            out = None
             if output_path:
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                out = _open_solution_mp4_writer(output_path, fps, width, height)
 
             frame_count = 0
             speeds = []
@@ -589,12 +686,13 @@ class SolutionsService:
                 if hasattr(result, 'speed'):
                     speeds.append(result.speed)
 
-                if output_path:
+                if output_path and out is not None and out.isOpened():
                     out.write(frame)
 
             cap.release()
-            if output_path:
+            if output_path and out is not None:
                 out.release()
+                _remux_mp4_for_html5_video(output_path)
 
             return {
                 "success": True,
@@ -744,11 +842,12 @@ class SolutionsService:
             )
 
             cap = cv2.VideoCapture(source)
+            out = None
             if output_path:
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                out = _open_solution_mp4_writer(output_path, fps, width, height)
 
             frame_count = 0
             while cap.isOpened():
@@ -759,12 +858,13 @@ class SolutionsService:
                 blur(frame)
                 frame_count += 1
 
-                if output_path:
+                if output_path and out is not None and out.isOpened():
                     out.write(frame)
 
             cap.release()
-            if output_path:
+            if output_path and out is not None:
                 out.release()
+                _remux_mp4_for_html5_video(output_path)
 
             return {
                 "success": True,
@@ -789,8 +889,9 @@ class SolutionsService:
             model = self.load_model(model_name)
             img = cv2.imread(image_path)
 
+            # 与其它方案一致：直接写入 uploads 根目录，避免子目录在部分部署上未就绪导致静态 URL 404
             if output_dir is None:
-                output_dir = str(settings.UPLOADS_DIR / "cropped-objects")
+                output_dir = str(settings.UPLOADS_DIR)
             Path(output_dir).mkdir(parents=True, exist_ok=True)
 
             results = model.predict(source=img, conf=conf, classes=classes, verbose=False)
@@ -804,7 +905,8 @@ class SolutionsService:
                     class_name = model.names[cls_id]
 
                     cropped = img[xyxy[1]:xyxy[3], xyxy[0]:xyxy[2]]
-                    crop_filename = f"{class_name}_{i}_{Path(image_path).stem}.jpg"
+                    safe_cls = re.sub(r"[^\w.\-]+", "_", str(class_name))[:40].strip("_") or str(cls_id)
+                    crop_filename = f"crop_{safe_cls}_{i}_{Path(image_path).stem}.jpg"
                     crop_path = str(Path(output_dir) / crop_filename)
                     cv2.imwrite(crop_path, cropped)
 
@@ -854,11 +956,12 @@ class SolutionsService:
             )
 
             cap = cv2.VideoCapture(source)
+            out = None
             if output_path:
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                out = _open_solution_mp4_writer(output_path, fps, width, height)
 
             queue_data = {"max_queue_count": 0, "frame_counts": [], "total_frames": 0}
 
@@ -875,12 +978,13 @@ class SolutionsService:
                     queue_data["frame_counts"].append(qc)
                     queue_data["max_queue_count"] = max(queue_data["max_queue_count"], qc)
 
-                if output_path:
+                if output_path and out is not None and out.isOpened():
                     out.write(frame)
 
             cap.release()
-            if output_path:
+            if output_path and out is not None:
                 out.release()
+                _remux_mp4_for_html5_video(output_path)
 
             if queue_data["frame_counts"]:
                 queue_data["avg_queue_count"] = sum(queue_data["frame_counts"]) / len(queue_data["frame_counts"])
@@ -970,22 +1074,23 @@ class SolutionsService:
 
                 writer = None
                 if output_path:
-                    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
                     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                    writer = _open_solution_mp4_writer(output_path, fps, width, height)
 
                 while cap.isOpened():
                     ok, frame = cap.read()
                     if not ok:
                         break
                     frame = process_frame(frame)
-                    if writer:
+                    if writer is not None and writer.isOpened():
                         writer.write(frame)
 
                 cap.release()
-                if writer:
+                if writer is not None:
                     writer.release()
+                    _remux_mp4_for_html5_video(output_path)
             else:
                 frame = cv2.imread(source)
                 if frame is None:

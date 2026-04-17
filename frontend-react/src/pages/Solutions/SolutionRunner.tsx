@@ -18,9 +18,18 @@ function unwrapSolutionPayload(res: { data?: unknown }): any {
   return d;
 }
 
+/** 是否为可内嵌的图片/视频路径（排除旧后端把目录当 output_path 的 /uploads/cropped-objects） */
+function looksLikeRenderableUploadUrl(url: unknown): boolean {
+  if (url == null || typeof url !== 'string') return false;
+  const path = url.split('?')[0].toLowerCase();
+  if (!path.startsWith('/uploads/') && !path.includes('/uploads/')) return true;
+  return /\.(jpe?g|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)$/i.test(path);
+}
+
 function aliasOutputPathToResultImage(payload: any) {
   if (!payload || typeof payload !== 'object') return payload;
   if (payload.output_path && !payload.result_image && !payload.output_image) {
+    if (!looksLikeRenderableUploadUrl(payload.output_path)) return payload;
     return { ...payload, result_image: payload.output_path };
   }
   return payload;
@@ -178,18 +187,30 @@ const SOLUTIONS = {
     color: '#3b82f6',
     supportsVideo: true,
     params: [
-      { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo26n.pt', options: DETECTION_MODELS },
-      { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05 },
+      { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo26n.pt', options: DETECTION_MODELS,
+        help: '模型越小越快；精度要求高可选 s/m。' },
+      { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05,
+        help: '越高框越少但更准；越低检出更多但易误报。' },
       { name: 'region_type', label: '区域类型', type: 'select', default: 'polygon',
         options: [
           { value: 'polygon', label: '多边形区域' },
           { value: 'line', label: '直线(进出计数)' },
-        ]
+        ],
+        help: '多边形：框定一片区域做统计；直线：适合跨线进出计数（视频效果更好）。',
       },
-      { name: 'region_points', label: '区域坐标(JSON)', type: 'text', placeholder: '如: [[20,400],[1260,400],[1260,360],[20,360]]' },
-      { name: 'show_in', label: '显示进入计数', type: 'checkbox', default: true },
-      { name: 'show_out', label: '显示离开计数', type: 'checkbox', default: true },
-      { name: 'line_width', label: '线条宽度', type: 'number', default: 2, min: 1, max: 10 },
+      {
+        name: 'region_points',
+        label: '区域坐标(JSON)',
+        type: 'text',
+        placeholder: '留空则用画面默认区域。多边形示例: [[20,400],[1260,400],[1260,720],[20,720]]',
+        help: '像素坐标 [[x,y],...] 至少 3 点构成多边形；直线为 2 点 [[x1,y1],[x2,y2]]。与上传分辨率一致。',
+      },
+      { name: 'show_in', label: '在画面上标注「进入」计数', type: 'checkbox', default: true,
+        help: '关闭可减少画面文字干扰。' },
+      { name: 'show_out', label: '在画面上标注「离开」计数', type: 'checkbox', default: true,
+        help: '进出计数依赖视频连续帧；单张图多为 0。' },
+      { name: 'line_width', label: '线条宽度', type: 'number', default: 2, min: 1, max: 10,
+        help: '区域边线、检测框线粗细。' },
     ]
   },
   'heatmap': {
@@ -223,7 +244,15 @@ const SOLUTIONS = {
     params: [
       { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo26n.pt', options: DETECTION_MODELS },
       { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05 },
-      { name: 'pixel_to_meter', label: '像素/米比例', type: 'number', default: 10, min: 0.1, step: 0.1 },
+      {
+        name: 'pixel_to_meter',
+        label: '像素距离标定',
+        type: 'number',
+        default: 10,
+        min: 0.1,
+        step: 0.1,
+        help: '与 Ultralytics 测速标定相关：数值含义以后端实现为准，一般表示「每米对应多少像素」类比例，可按画面标定调整。',
+      },
       { name: 'line_width', label: '线条宽度', type: 'number', default: 2, min: 1, max: 10 },
     ]
   },
@@ -289,7 +318,13 @@ const SOLUTIONS = {
       { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo26n.pt', options: DETECTION_MODELS },
       { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05 },
       { name: 'line_width', label: '线条宽度', type: 'number', default: 2, min: 1, max: 10 },
-      { name: 'parking_slots', label: '车位坐标(JSON)', type: 'text', placeholder: '如: [[[80,420],[260,420],[260,600],[80,600]],[[280,420],[460,420],[460,600],[280,600]]]' },
+      {
+        name: 'parking_slots',
+        label: '车位坐标(JSON)',
+        type: 'text',
+        placeholder: '留空则用后端默认示例车位。格式: 每个车位为 [[x,y],...] 至少 3 点的多边形数组',
+        help: '三维数组：多个车位，每个车位一圈顶点。坐标需与画面分辨率一致。',
+      },
     ]
   },
   'vision-eye': {
@@ -328,6 +363,8 @@ interface Param {
   max?: number;
   step?: number;
   placeholder?: string;
+  /** 参数说明，显示在控件下方 */
+  help?: string;
 }
 
 interface SolutionConfig {
@@ -345,6 +382,7 @@ export const SolutionRunner: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [resultVideoError, setResultVideoError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [params, setParams] = useState<Record<string, any>>({});
 
@@ -367,6 +405,7 @@ export const SolutionRunner: React.FC = () => {
       setFile(selectedFile);
       setPreview(URL.createObjectURL(selectedFile));
       setResult(null);
+      setResultVideoError(false);
     }
   };
 
@@ -374,10 +413,30 @@ export const SolutionRunner: React.FC = () => {
     setParams(prev => ({ ...prev, [name]: value }));
   };
 
+  const paramHelpStyle: React.CSSProperties = {
+    margin: '6px 0 0 0',
+    fontSize: '0.75rem',
+    color: 'var(--text-secondary)',
+    lineHeight: 1.45,
+  };
+
+  /** 区域/车位类 JSON：空为合法；非空须能 parse 且为数组 */
+  const regionJsonInvalid = (raw: string): boolean => {
+    const s = String(raw ?? '').trim();
+    if (!s) return false;
+    try {
+      const v = JSON.parse(s);
+      return !Array.isArray(v);
+    } catch {
+      return true;
+    }
+  };
+
   const handleProcess = async () => {
     if (!file || !selectedSolution) return;
 
     setLoading(true);
+    setResultVideoError(false);
     try {
       // 健身监测：图片走快速推理；视频走方案接口，返回处理后视频
       if (selectedSolution === 'workout-monitoring') {
@@ -406,6 +465,15 @@ export const SolutionRunner: React.FC = () => {
 
       const formData = new FormData();
       formData.append('file', file);
+
+      if (selectedSolution === 'object-counting' && regionJsonInvalid(params.region_points ?? '')) {
+        alert('区域坐标 JSON 格式不正确，请检查或为「留空」使用默认区域。');
+        return;
+      }
+      if (selectedSolution === 'parking-management' && regionJsonInvalid(params.parking_slots ?? '')) {
+        alert('车位坐标 JSON 格式不正确，请检查或为「留空」使用示例默认车位。');
+        return;
+      }
 
       // 添加参数
       Object.entries(params).forEach(([key, value]) => {
@@ -528,6 +596,7 @@ export const SolutionRunner: React.FC = () => {
     setFile(null);
     setPreview(null);
     setResult(null);
+    setResultVideoError(false);
   };
 
   // 渲染解决方案列表
@@ -588,7 +657,10 @@ export const SolutionRunner: React.FC = () => {
   // 统一提取媒体结果路径（兼容不同后端返回结构）
   const resolveMediaPath = (data: any): string => {
     if (!data) return '';
-    const candidate =
+    const crops = data?.results?.cropped_images ?? data?.cropped_images;
+    const firstCrop = Array.isArray(crops) ? crops.find((x: any) => x?.crop_path) : undefined;
+
+    let candidate =
       data.result_image ||
       data.output_path ||
       data.output_image ||
@@ -598,6 +670,14 @@ export const SolutionRunner: React.FC = () => {
       data?.results?.output_image ||
       data?.results?.annotated_image ||
       '';
+
+    // 目标裁剪：旧 API 可能把 output_path/result_image 写成目录或无效路径；有裁剪列表时强制用第一张图
+    if (firstCrop?.crop_path && (!candidate || !looksLikeRenderableUploadUrl(candidate))) {
+      candidate = firstCrop.crop_path;
+    }
+    if (!candidate) {
+      if (firstCrop?.crop_path) candidate = firstCrop.crop_path;
+    }
     if (!candidate) return '';
     if (String(candidate).startsWith('data:')) return String(candidate);
     if (String(candidate).startsWith('http')) return String(candidate);
@@ -735,8 +815,16 @@ export const SolutionRunner: React.FC = () => {
                       src={mediaUrlWithBust(mediaPath, true)}
                       controls
                       playsInline
+                      preload="metadata"
+                      onLoadedData={() => setResultVideoError(false)}
+                      onError={() => setResultVideoError(true)}
                       style={{ width: '100%', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-3)', backgroundColor: '#000' }}
                     />
+                    {resultVideoError && (
+                      <p style={{ fontSize: '0.8125rem', color: '#b45309', marginBottom: 'var(--space-2)' }}>
+                        浏览器无法解码该视频编码时会出现黑屏或无法播放。请使用下方「下载视频」，或在服务器安装 ffmpeg 后重新处理（后端会输出 H.264 以兼容网页播放）。
+                      </p>
+                    )}
                     <a href={mediaPath + (mediaPath.includes('?') ? '&' : '?') + 'download=1'} download style={{ display: 'inline-block', marginTop: '8px', color: '#3b82f6', textDecoration: 'none' }}>
                       下载视频
                     </a>
@@ -758,7 +846,65 @@ export const SolutionRunner: React.FC = () => {
                 );
               })()}
 
-              {result.success !== false && result.status !== 'processing' && !resolveMediaPath(result) && !(result.results || result.counting) && (
+              {selectedSolution === 'object-crop' && result.success !== false && result.status !== 'processing' && (() => {
+                const crops = (result.results?.cropped_images ?? result.cropped_images) as
+                  | Array<{ crop_path?: string; class_name?: string }>
+                  | undefined;
+                if (!crops?.length) {
+                  return (
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: 'var(--space-3)' }}>
+                      未检测到可裁剪目标，可尝试换图或调低置信度阈值。
+                    </p>
+                  );
+                }
+                return (
+                  <div style={{ marginTop: 'var(--space-4)' }}>
+                    <h4 style={{ margin: '0 0 var(--space-2)', fontSize: '0.9375rem', fontWeight: 600 }}>
+                      全部裁剪块（{result.results?.total_crops ?? result.total_crops ?? crops.length}）
+                    </h4>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))',
+                        gap: 'var(--space-3)',
+                      }}
+                    >
+                      {crops.filter((item) => item.crop_path).map((item, idx) => {
+                        const rel = String(item.crop_path);
+                        const abs =
+                          rel.startsWith('http') ? rel : rel.startsWith('/') ? `${window.location.origin}${rel}` : `${window.location.origin}/${rel}`;
+                        return (
+                          <a
+                            key={`${rel}-${idx}`}
+                            href={abs}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ textAlign: 'center', textDecoration: 'none', color: 'inherit' }}
+                          >
+                            <img
+                              src={mediaUrlWithBust(abs, false)}
+                              alt={item.class_name || `crop-${idx}`}
+                              style={{
+                                width: '100%',
+                                aspectRatio: '1',
+                                objectFit: 'cover',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid var(--border-color)',
+                                display: 'block',
+                              }}
+                            />
+                            <div style={{ fontSize: '0.75rem', marginTop: '6px', color: 'var(--text-secondary)' }}>
+                              {detectionClassLabelZh(String(item.class_name ?? ''))}
+                            </div>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {result.success !== false && result.status !== 'processing' && !resolveMediaPath(result) && !(result.results || result.counting) && selectedSolution !== 'object-crop' && (
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
                   未返回结果图地址，请检查后端 `/uploads` 挂载与前端代理配置。
                 </p>
@@ -917,51 +1063,93 @@ export const SolutionRunner: React.FC = () => {
             <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
               {solution.params.map(param => (
                 <div key={param.name}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer' }}>
-                    {param.type === 'checkbox' ? (
+                  {param.type === 'checkbox' ? (
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer' }}>
                       <input
                         type="checkbox"
-                        checked={params[param.name] ?? param.default}
+                        checked={Boolean(params[param.name] ?? param.default)}
                         onChange={e => handleParamChange(param.name, e.target.checked)}
-                        style={{ width: '18px', height: '18px' }}
+                        style={{ width: '18px', height: '18px', marginTop: '2px', flexShrink: 0 }}
                       />
-                    ) : (
-                      param.label
-                    )}
-                  </label>
-                  {param.type === 'checkbox' ? null : param.type === 'select' ? (
-                    <select
-                      value={params[param.name] || param.default}
-                      onChange={e => handleParamChange(param.name, e.target.value)}
-                      className="form-select"
-                      style={{ width: '100%' }}
-                    >
-                      {param.options?.map((opt: any) => (
-                        <option key={opt.value || opt} value={opt.value || opt}>
-                          {opt.label || opt}
-                        </option>
-                      ))}
-                    </select>
-                  ) : param.type === 'number' ? (
-                    <input
-                      type="number"
-                      value={params[param.name] || param.default}
-                      onChange={e => handleParamChange(param.name, parseFloat(e.target.value))}
-                      min={(param as any).min}
-                      max={(param as any).max}
-                      step={(param as any).step}
-                      className="form-input"
-                      style={{ width: '100%' }}
-                    />
+                      <span>
+                        {param.label}
+                        {param.help ? <p style={{ ...paramHelpStyle, marginTop: '4px', fontWeight: 400 }}>{param.help}</p> : null}
+                      </span>
+                    </label>
                   ) : (
-                    <input
-                      type="text"
-                      value={params[param.name] || ''}
-                      onChange={e => handleParamChange(param.name, e.target.value)}
-                      placeholder={(param as any).placeholder}
-                      className="form-input"
-                      style={{ width: '100%' }}
-                    />
+                    <>
+                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '6px' }}>
+                        {param.label}
+                      </label>
+                      {param.type === 'select' ? (
+                        <select
+                          value={params[param.name] ?? param.default}
+                          onChange={e => handleParamChange(param.name, e.target.value)}
+                          className="form-select"
+                          style={{ width: '100%' }}
+                        >
+                          {param.options?.map((opt: any) => (
+                            <option key={opt.value || opt} value={opt.value || opt}>
+                              {opt.label || opt}
+                            </option>
+                          ))}
+                        </select>
+                      ) : param.type === 'number' ? (
+                        <input
+                          type="number"
+                          value={params[param.name] ?? param.default}
+                          onChange={e => {
+                            const n = parseFloat(e.target.value);
+                            handleParamChange(param.name, Number.isNaN(n) ? param.default : n);
+                          }}
+                          min={(param as Param).min}
+                          max={(param as Param).max}
+                          step={(param as Param).step}
+                          className="form-input"
+                          style={{ width: '100%' }}
+                        />
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch', flexWrap: 'wrap' }}>
+                            <input
+                              type="text"
+                              value={params[param.name] ?? ''}
+                              onChange={e => handleParamChange(param.name, e.target.value)}
+                              placeholder={(param as Param).placeholder}
+                              className="form-input"
+                              style={{ flex: '1 1 200px', minWidth: 0 }}
+                            />
+                            {selectedSolution === 'object-counting' && param.name === 'region_points' ? (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleParamChange('region_points', '')}
+                              >
+                                默认区域
+                              </Button>
+                            ) : null}
+                            {selectedSolution === 'parking-management' && param.name === 'parking_slots' ? (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleParamChange('parking_slots', '')}
+                              >
+                                示例车位
+                              </Button>
+                            ) : null}
+                          </div>
+                          {param.name === 'region_points' && regionJsonInvalid(String(params[param.name] ?? '')) ? (
+                            <p style={{ ...paramHelpStyle, color: '#b91c1c' }}>JSON 无法解析，请检查括号与逗号。</p>
+                          ) : null}
+                          {param.name === 'parking_slots' && regionJsonInvalid(String(params[param.name] ?? '')) ? (
+                            <p style={{ ...paramHelpStyle, color: '#b91c1c' }}>JSON 无法解析，应为车位数组。</p>
+                          ) : null}
+                        </>
+                      )}
+                      {param.help && param.type !== 'checkbox' ? <p style={paramHelpStyle}>{param.help}</p> : null}
+                    </>
                   )}
                 </div>
               ))}

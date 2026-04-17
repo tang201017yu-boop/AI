@@ -185,14 +185,14 @@ logger.info("中间件注册完成: CORS, 日志, 代理(开发模式)")
 # 静态文件服务
 # ============================================================================
 uploads_dir = settings.UPLOADS_DIR
-if uploads_dir.exists():
-    app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
-    logger.info(f"上传文件服务: /uploads -> {uploads_dir}")
+uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+logger.info(f"上传文件服务: /uploads -> {uploads_dir}")
 
 annotation_images_dir = settings.ANNOTATION_PROJECTS_DIR
-if annotation_images_dir.exists():
-    app.mount("/annotation-images", StaticFiles(directory=str(annotation_images_dir)), name="annotation_images")
-    logger.info(f"标注图片服务: /annotation-images -> {annotation_images_dir}")
+annotation_images_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/annotation-images", StaticFiles(directory=str(annotation_images_dir)), name="annotation_images")
+logger.info(f"标注图片服务: /annotation-images -> {annotation_images_dir}")
 
 models_dir = Path("/root/wuyu/Vision_Platform/data/models")
 models_dir.mkdir(parents=True, exist_ok=True)

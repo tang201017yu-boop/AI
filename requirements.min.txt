@@ -6,6 +6,7 @@ python-dotenv
 pyyaml
 pillow
 opencv-python
+imageio-ffmpeg
 ultralytics
 supervision
 torch

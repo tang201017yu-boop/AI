@@ -9,6 +9,7 @@ import json
 
 from backend.core.config import settings
 from backend.core.utils import allowed_file, save_uploaded_file, get_unique_filename
+from backend.utils.file_utils import uploads_public_url
 from backend.modules.solutions.solutions_service import solutions_service
 
 router = APIRouter()
@@ -361,11 +362,11 @@ async def solution_object_crop(
         conf=conf
     )
 
-    # 更新裁剪图片路径
+    # 更新裁剪图片路径（保留 cropped-objects 等子目录）
     cropped_images = result.get("cropped_images", [])
     for img in cropped_images:
         if img.get("crop_path"):
-            img["crop_path"] = f"/uploads/{Path(img['crop_path']).name}"
+            img["crop_path"] = uploads_public_url(img["crop_path"], settings.UPLOADS_DIR)
 
     return result
 

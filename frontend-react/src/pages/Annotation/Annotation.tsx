@@ -16,6 +16,7 @@ type SamToolbarVersion = 'sam2_lite' | 'sam2_base' | 'sam2_large' | 'sam3';
 
 export const Annotation: React.FC = () => {
   const [searchParams] = useSearchParams();
+  const compactWorkbenchMode = searchParams.get('compact') === 'workspace';
   const samFileInputRef = useRef<HTMLInputElement | null>(null);
   const projectUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [projects, setProjects] = useState<AnnotationProject[]>([]);
@@ -814,24 +815,71 @@ export const Annotation: React.FC = () => {
 
   useEffect(() => {
     const datasetName = searchParams.get('dataset') || '';
+    const imageUrlParam = searchParams.get('image_url') || '';
+    const imageNameParam = searchParams.get('image') || '';
+
     setLinkedDataset(datasetName);
     if (!datasetName) {
       setLinkedDatasetClasses([]);
+    } else {
+      (async () => {
+        try {
+          const res = await datasetApi.get(datasetName);
+          const body: any = res.data;
+          const ds = body?.dataset || body?.data?.dataset || body?.data || {};
+          const classes = ds?.classes || [];
+          setLinkedDatasetClasses(Array.isArray(classes) ? classes : []);
+          if (!newProjectName) {
+            setNewProjectName(`${datasetName}_标注`);
+          }
+        } catch (e) {
+          console.warn('加载联动数据集失败:', e);
+          setLinkedDatasetClasses([]);
+        }
+      })();
+    }
+
+    if (!imageUrlParam) {
       return;
     }
+
     (async () => {
+      setSamLoading(true);
       try {
-        const res = await datasetApi.get(datasetName);
-        const body: any = res.data;
-        const ds = body?.dataset || body?.data?.dataset || body?.data || {};
-        const classes = ds?.classes || [];
-        setLinkedDatasetClasses(Array.isArray(classes) ? classes : []);
-        if (!newProjectName) {
-          setNewProjectName(`${datasetName}_标注`);
+        const resp = await fetch(imageUrlParam);
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
         }
+        const blob = await resp.blob();
+        const fallbackName = imageUrlParam.split('/').pop() || 'dataset_image.jpg';
+        const imageName = decodeURIComponent(imageNameParam || fallbackName);
+        const file = new File([blob], imageName, { type: blob.type || 'image/jpeg' });
+        const imageObjectUrl = URL.createObjectURL(blob);
+
+        setSamPoints([]);
+        setSamBoxes([]);
+        setSamMasks([]);
+        setSamAnnotations([]);
+        setSamSelectedId(null);
+        setSamHistory([]);
+        setSamHistoryIndex(-1);
+
+        setSelectedImage(null);
+        setBatchFiles([]);
+        setAutoLabelResult(null);
+
+        setSamImage(imageObjectUrl);
+        setSamImagePath(imageName);
+        setSamFile(file);
+        setAnnotationMode('draw');
+
+        const imgEl = new Image();
+        imgEl.onload = () => setImgSize({ width: imgEl.naturalWidth || imgEl.width, height: imgEl.naturalHeight || imgEl.height });
+        imgEl.src = imageObjectUrl;
       } catch (e) {
-        console.warn('加载联动数据集失败:', e);
-        setLinkedDatasetClasses([]);
+        console.warn('加载联动图片失败:', e);
+      } finally {
+        setSamLoading(false);
       }
     })();
   }, [searchParams]);
@@ -1288,21 +1336,22 @@ export const Annotation: React.FC = () => {
 
   return (
     <div style={pageStyle}>
-      {/* 页面标题 */}
-      <div style={sectionHeaderStyle}>
-        <div>
-          <h1 style={{ fontWeight: 700, fontSize: '1.75rem', marginBottom: '4px' }}>智能标注</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-            支持 YOLO 预标注、SAM 分割标注和手动标注
-          </p>
+      {!compactWorkbenchMode && (
+        <div style={sectionHeaderStyle}>
+          <div>
+            <h1 style={{ fontWeight: 700, fontSize: '1.75rem', marginBottom: '4px' }}>智能标注</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+              支持 YOLO 预标注、SAM 分割标注和手动标注
+            </p>
+          </div>
+          <Button variant="primary" onClick={() => setShowCreate(!showCreate)}>
+            {showCreate ? '取消' : '+ 创建项目'}
+          </Button>
         </div>
-        <Button variant="primary" onClick={() => setShowCreate(!showCreate)}>
-          {showCreate ? '取消' : '+ 创建项目'}
-        </Button>
-      </div>
+      )}
 
       {/* 创建项目 */}
-      {showCreate && (
+      {!compactWorkbenchMode && showCreate && (
         <Card style={{ border: '1px solid var(--primary-200)', background: 'var(--primary-50)' }}>
           <CardHeader icon="➕" title="创建标注项目" />
           {linkedDataset && (
@@ -1331,6 +1380,7 @@ export const Annotation: React.FC = () => {
       )}
 
       {/* YOLO 智能预标注 */}
+      {!compactWorkbenchMode && (
       <Card>
         <div style={sectionHeaderStyle}>
           <CardHeader icon="🤖" title="YOLO 智能预标注" />
@@ -1575,8 +1625,10 @@ export const Annotation: React.FC = () => {
           </div>
         )}
       </Card>
+      )}
 
       {/* 项目列表 */}
+      {!compactWorkbenchMode && (
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-5)' }}>
           <CardHeader icon="✏️" title="标注项目列表" />
@@ -1733,7 +1785,9 @@ export const Annotation: React.FC = () => {
           </div>
         )}
       </Card>
+      )}
 
+      {!compactWorkbenchMode && (
       <input
         ref={projectUploadInputRef}
         type="file"
@@ -1742,26 +1796,31 @@ export const Annotation: React.FC = () => {
         onChange={(e) => handleProjectUploadSelect(e.target.files)}
         style={{ display: 'none' }}
       />
+      )}
 
       {/* SAM / Ultralytics Hub 风格三栏工作台 */}
       <Card>
-        <div style={{ marginBottom: 'var(--space-4)' }}>
-          <CardHeader icon="✂️" title="标注工作台" />
-          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0 0', lineHeight: 1.55 }}>
-            左栏图集 · 中栏画布与工具 · 右栏对象列表；交互习惯参考
-            {' '}
-            <a href="https://platform.ultralytics.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--primary-600)' }}>Ultralytics Platform</a>
-            公开文档。类别条、数字键 1–9、框选后 YOLO 识别与上方「检测模型 / 我的模型」一致。
-          </p>
-        </div>
+        {!compactWorkbenchMode && (
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <CardHeader icon="✂️" title="标注工作台" />
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0 0', lineHeight: 1.55 }}>
+              左栏图集 · 中栏画布与工具 · 右栏对象列表；交互习惯参考
+              {' '}
+              <a href="https://platform.ultralytics.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--primary-600)' }}>Ultralytics Platform</a>
+              公开文档。类别条、数字键 1–9、框选后 YOLO 识别与上方「检测模型 / 我的模型」一致。
+            </p>
+          </div>
+        )}
 
         {(annotationMode === 'draw' || annotationMode === 'smart') && (
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'minmax(196px, 220px) minmax(0, 1fr) minmax(280px, 320px)',
+              gridTemplateColumns: compactWorkbenchMode
+                ? 'minmax(130px, 156px) minmax(0, 1fr) minmax(210px, 248px)'
+                : 'minmax(196px, 220px) minmax(0, 1fr) minmax(280px, 320px)',
               // 固定高度，确保左侧缩略图区域能正确计算高度并出现滚动条
-              height: 'min(85vh, 880px)',
+              height: compactWorkbenchMode ? 'min(90vh, 940px)' : 'min(85vh, 880px)',
               maxHeight: '90vh',
               border: '1px solid var(--border-color)',
               borderRadius: 'var(--radius-lg)',
@@ -1887,7 +1946,7 @@ export const Annotation: React.FC = () => {
                   alignItems: 'center',
                   gap: '10px',
                   flexWrap: 'wrap',
-                  padding: '8px 12px',
+                  padding: compactWorkbenchMode ? '6px 10px' : '8px 12px',
                   borderBottom: '1px solid var(--border-color)',
                   background: 'var(--bg-secondary)',
                 }}
@@ -1944,6 +2003,7 @@ export const Annotation: React.FC = () => {
                 samVersion={samVersion}
                 onSamVersionChange={handleSamVersionChange}
                 variant="card"
+                compact={compactWorkbenchMode}
               />
 
               <input
@@ -1961,12 +2021,12 @@ export const Annotation: React.FC = () => {
                 style={{
                   flex: 1,
                   overflow: 'auto',
-                  padding: '16px',
+                  padding: compactWorkbenchMode ? '8px' : '16px',
                   minHeight: '280px',
                 }}
               >
                 {samImage ? (
-                  <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
+                  <div style={{ width: '100%', minHeight: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                     <AnnotationCanvas
                       image={samImage}
                       width={imgSize.width}
@@ -2044,23 +2104,25 @@ export const Annotation: React.FC = () => {
                 )}
               </div>
 
-              <div
-                style={{
-                  padding: '10px 14px',
-                  borderTop: '1px solid var(--border-color)',
-                  background: 'var(--bg-secondary)',
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, 1fr)',
-                  gap: '8px',
-                  fontSize: '11px',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                <span>🟢 点击 — 正样本点</span>
-                <span>🔴 Shift+点击 — 负样本点</span>
-                <span>⬜ 拖动 — 框选（SAM 分割）</span>
-                <span>🔺 L — 多边形 · Esc / Backspace 撤销点</span>
-              </div>
+              {!compactWorkbenchMode && (
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    borderTop: '1px solid var(--border-color)',
+                    background: 'var(--bg-secondary)',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: '8px',
+                    fontSize: '11px',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  <span>🟢 点击 — 正样本点</span>
+                  <span>🔴 Shift+点击 — 负样本点</span>
+                  <span>⬜ 拖动 — 框选（SAM 分割）</span>
+                  <span>🔺 L — 多边形 · Esc / Backspace 撤销点</span>
+                </div>
+              )}
             </div>
 
             {/* 右：对象列表 */}

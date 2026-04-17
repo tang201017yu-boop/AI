@@ -35,7 +35,7 @@ from backend.services.supervision_service import supervision_service
 from backend.modules.training.training_service import training_service
 from backend.modules.training.project_service import project_service
 from backend.modules.training import routes as training_routes
-from backend.utils.file_utils import allowed_file, save_uploaded_file, get_unique_filename
+from backend.utils.file_utils import allowed_file, save_uploaded_file, get_unique_filename, uploads_public_url
 
 router = APIRouter()
 
@@ -1129,11 +1129,17 @@ async def solution_object_crop(
             conf=conf
         )
 
-        # 更新裁剪图片路径为相对路径
+        # 更新裁剪图片路径为可访问的 /uploads/...（含子目录，与 StaticFiles 一致）
         cropped_images = result.get("cropped_images", [])
         for img in cropped_images:
             if img.get("crop_path"):
-                img["crop_path"] = f"/uploads/{Path(img['crop_path']).name}"
+                img["crop_path"] = uploads_public_url(img["crop_path"], settings.UPLOADS_DIR)
+
+        preview = (
+            cropped_images[0]["crop_path"]
+            if cropped_images and cropped_images[0].get("crop_path")
+            else None
+        )
 
         return SolutionResponse(
             success=result["success"],
@@ -1142,7 +1148,7 @@ async def solution_object_crop(
                 "total_crops": result.get("total_crops", 0),
                 "cropped_images": cropped_images
             },
-            output_path=f"/uploads/{Path(result.get('output_dir', '')).name}"
+            output_path=preview,
         )
         
     except Exception as e:

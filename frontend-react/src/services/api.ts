@@ -69,16 +69,19 @@ export const datasetApi = {
     return api.put(`/datasets/${encodeURIComponent(id)}/rename`, formData, { headers: multipartHeaders });
   },
   // 数据集统计
-  getStatistics: (name: string) => api.get(`/datasets/${name}/statistics`),
+  getStatistics: (name: string) => api.get(`/datasets/${encodeURIComponent(name)}/statistics`),
   getClassDistribution: (name: string) => api.get(`/datasets/${name}/class-distribution`),
   getSpatialDistribution: (name: string) => api.get(`/datasets/${name}/spatial-distribution`),
   getDimensionAnalysis: (name: string) => api.get(`/datasets/${name}/dimension-analysis`),
   getSplitDetails: (name: string) => api.get(`/datasets/${name}/split-details`),
   // 图片浏览
   getImages: (name: string, params?: { split?: string; page?: number; pageSize?: number; sort?: string; labeled?: string }) =>
-    api.get(`/datasets/${name}/images`, { params }),
+    api.get(`/datasets/${encodeURIComponent(name)}/images`, { params }),
   getImage: (name: string, filename: string) =>
-    api.get(`/datasets/${name}/images/${filename}`),
+    api.get(`/datasets/${encodeURIComponent(name)}/images/${encodeURIComponent(filename)}`),
+  /** 删除单张图片及同主干的 YOLO 标签 */
+  deleteImage: (datasetName: string, filename: string) =>
+    api.delete(`/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`),
 };
 
 // ============ 模型 API ============

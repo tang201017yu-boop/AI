@@ -48,6 +48,8 @@ interface Props {
   workMode?: 'draw' | 'smart';
   /** studio=暗色三栏工作台（对齐 Ultralytics Hub 视觉层级） */
   variant?: 'card' | 'studio';
+  /** 紧凑模式：减少工具栏留白，给画布更多空间 */
+  compact?: boolean;
 }
 
 export const AnnotationToolbar: React.FC<Props> = ({
@@ -78,6 +80,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
   onAutoClassifyChange,
   workMode = 'draw',
   variant = 'card',
+  compact = false,
   shortcuts = [
     { key: 'P', desc: '点标注' },
     { key: 'B', desc: '框选' },
@@ -121,6 +124,8 @@ export const AnnotationToolbar: React.FC<Props> = ({
   const surface2 = studio ? '#3a3a3c' : '#f1f5f9';
   const fg = studio ? '#e4e4e7' : '#475569';
   const fgMuted = studio ? '#a1a1aa' : '#64748b';
+  const compactGap = compact ? '6px' : '10px';
+  const compactPad = compact ? (studio ? '6px 10px' : '8px 12px') : (studio ? '10px 12px' : '12px 16px');
 
   // 处理添加新类别
   const handleAddClass = () => {
@@ -564,14 +569,14 @@ export const AnnotationToolbar: React.FC<Props> = ({
       position: 'relative',
       display: 'flex',
       flexDirection: 'column',
-      gap: '10px',
-      padding: studio ? '10px 12px' : '12px 16px',
+      gap: compactGap,
+      padding: compactPad,
       background: studio ? '#252526' : '#fff',
       borderRadius: studio ? 0 : 8,
       boxShadow: studio ? 'none' : '0 1px 3px rgba(0,0,0,0.1)',
       borderBottom: studio ? '1px solid #2d2d2d' : undefined,
     }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: compact ? '8px' : '12px' }}>
         {workMode === 'smart' ? (
           smartAutoCluster
         ) : (
@@ -602,7 +607,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
           </span>
         )}
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: compact ? '8px' : '12px' }}>
         {trailingCluster}
       </div>
 
@@ -613,8 +618,8 @@ export const AnnotationToolbar: React.FC<Props> = ({
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
-        gap: '8px',
-        paddingTop: '10px',
+        gap: compact ? '6px' : '8px',
+        paddingTop: compact ? '6px' : '10px',
         borderTop: `1px solid ${line}`,
       }}>
         <span style={{ fontSize: '12px', color: fgMuted, fontWeight: 600 }}>类别</span>
@@ -624,7 +629,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
           gap: '6px',
           flex: 1,
           minWidth: 0,
-          maxHeight: '72px',
+          maxHeight: compact ? '52px' : '72px',
           overflowY: 'auto',
         }}>
           {classes.map((c, i) => {

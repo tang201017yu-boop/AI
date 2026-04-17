@@ -19,12 +19,21 @@ interface DatasetStats {
     percentages: number[];
   };
   split_details: {
-    splits: {
-      train: { images: number; annotations: number; percentage: number };
-      val: { images: number; annotations: number; percentage: number };
-      test: { images: number; annotations: number; percentage: number };
-    };
+    splits: Record<
+      string,
+      { images: number; annotations: number; percentage: number }
+    >;
   };
+}
+
+function splitDisplayName(split: string): string {
+  const m: Record<string, string> = {
+    train: '训练集',
+    val: '验证集',
+    test: '测试集',
+    unlabeled: '未标注',
+  };
+  return m[split] ?? split;
 }
 
 interface ImageItem {
@@ -51,6 +60,32 @@ interface DatasetProject {
 type ViewMode = 'grid' | 'compact' | 'table';
 type SortOption = 'name_asc' | 'name_desc' | 'date_new' | 'date_old' | 'size_asc' | 'size_desc' | 'labels_asc' | 'labels_desc';
 
+/** 兼容 axios 体为扁平或与嵌套 { data: ... } */
+function unwrapProjectsBody(res: { data?: unknown }): DatasetProject[] {
+  const d = res?.data as any;
+  if (!d) return [];
+  const list = d.projects ?? d.data?.projects;
+  return Array.isArray(list) ? list : [];
+}
+
+function unwrapStatisticsBody(res: { data?: unknown }): DatasetStats | null {
+  const d = res?.data as any;
+  if (!d) return null;
+  if (d.summary) return d as DatasetStats;
+  if (d.data?.summary) return d.data as DatasetStats;
+  return null;
+}
+
+function unwrapImagesBody(res: { data?: unknown }): { images: ImageItem[]; total: number } {
+  const d = res?.data as any;
+  if (!d) return { images: [], total: 0 };
+  const inner = d.images != null ? d : d.data;
+  return {
+    images: Array.isArray(inner?.images) ? inner.images : [],
+    total: typeof inner?.total === 'number' ? inner.total : 0,
+  };
+}
+
 export const Datasets: React.FC = () => {
   const navigate = useNavigate();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -75,6 +110,7 @@ export const Datasets: React.FC = () => {
 
   // 全屏查看器状态
   const [fullscreenImage, setFullscreenImage] = useState<ImageItem | null>(null);
+  const [annotationImage, setAnnotationImage] = useState<ImageItem | null>(null);
   const [showLabels, setShowLabels] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [pixelView, setPixelView] = useState(false);
@@ -85,17 +121,38 @@ export const Datasets: React.FC = () => {
 
   // 文件输入引用
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 用于切换数据集时先重置页码再拉取列表，避免仍用旧页码请求 */
+  const datasetLoadRef = useRef<string | null>(null);
+  /** 仅在选中数据集变化时拉统计，避免翻页/排序重复打统计接口 */
+  const statsDatasetRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadDatasetProjects();
   }, []);
 
   useEffect(() => {
-    if (selectedDataset) {
-      loadDatasetStats(selectedDataset);
-      loadDatasetImages(selectedDataset);
+    if (!selectedDataset) {
+      datasetLoadRef.current = null;
+      statsDatasetRef.current = null;
+      return;
     }
-  }, [selectedDataset, currentPage, splitFilter, labeledFilter, sortBy]);
+
+    if (datasetLoadRef.current !== selectedDataset) {
+      const isInitial = datasetLoadRef.current === null;
+      datasetLoadRef.current = selectedDataset;
+      if (!isInitial && currentPage !== 1) {
+        setCurrentPage(1);
+        return;
+      }
+    }
+
+    if (statsDatasetRef.current !== selectedDataset) {
+      statsDatasetRef.current = selectedDataset;
+      loadDatasetStats(selectedDataset);
+    }
+
+    loadDatasetImages(selectedDataset);
+  }, [selectedDataset, currentPage, splitFilter, labeledFilter, sortBy, viewMode]);
 
   const loadDatasets = async () => {
     try {
@@ -113,22 +170,39 @@ export const Datasets: React.FC = () => {
     }
   };
 
-  const loadDatasetProjects = async () => {
+  const loadDatasetProjects = async (opts?: {
+    preferProjectId?: string;
+    preferDatasetName?: string | null;
+  }) => {
     try {
       const res = await datasetApi.listProjects();
-      const projects = res.data?.projects || res.data?.data?.projects || [];
+      const projects = unwrapProjectsBody(res);
       setDatasetProjects(projects);
-      if (projects.length > 0) {
-        const targetProject = projects.find((p: DatasetProject) => p.id === selectedProjectId) || projects[0];
-        setSelectedProjectId(targetProject.id);
-        setDatasets(targetProject.datasets || []);
-        if ((targetProject.datasets || []).length > 0 && !selectedDataset) {
-          setSelectedDataset(targetProject.datasets[0].name);
-        } else if ((targetProject.datasets || []).length === 0) {
-          setSelectedDataset(null);
-        }
-      } else {
+      if (projects.length === 0) {
         setDatasets([]);
+        setSelectedDataset(null);
+        return;
+      }
+
+      const wantPid = opts?.preferProjectId;
+      const targetProject =
+        (wantPid ? projects.find((p: DatasetProject) => p.id === wantPid) : null) ||
+        projects.find((p: DatasetProject) => p.id === selectedProjectId) ||
+        projects[0];
+
+      setSelectedProjectId(targetProject.id);
+      const list = targetProject.datasets || [];
+      setDatasets(list);
+      const names = new Set(list.map((d: Dataset) => d.name));
+
+      const prefer = opts?.preferDatasetName;
+      if (prefer != null && prefer !== '' && names.has(prefer)) {
+        setSelectedDataset(prefer);
+      } else if (selectedDataset && names.has(selectedDataset)) {
+        /* 保持当前选中 */
+      } else if (list.length > 0) {
+        setSelectedDataset(list[0].name);
+      } else {
         setSelectedDataset(null);
       }
     } catch (error) {
@@ -143,9 +217,10 @@ export const Datasets: React.FC = () => {
     setStatsLoading(true);
     try {
       const res = await datasetApi.getStatistics(name);
-      setStats(res.data || res.data?.data);
+      setStats(unwrapStatisticsBody(res));
     } catch (error) {
       console.error(error);
+      setStats(null);
     } finally {
       setStatsLoading(false);
     }
@@ -163,8 +238,9 @@ export const Datasets: React.FC = () => {
       if (labeledFilter) params.labeled = labeledFilter;
 
       const res = await datasetApi.getImages(name, params);
-      setImages(res.data?.images || []);
-      setTotalImages(res.data?.total || 0);
+      const { images: imgs, total } = unwrapImagesBody(res);
+      setImages(imgs);
+      setTotalImages(total);
     } catch (error) {
       console.error(error);
     } finally {
@@ -179,14 +255,16 @@ export const Datasets: React.FC = () => {
       const formData = new FormData();
       formData.append('file', files[0]);
       const res = await datasetApi.upload(formData, selectedProjectId);
-      if (res.data?.success === false) {
-        alert(`上传失败: ${res.data?.message || '未知错误'}`);
+      const rd = res.data as any;
+      if (rd?.success === false) {
+        alert(`上传失败: ${rd?.message || '未知错误'}`);
         return;
       }
-      await loadDatasetProjects();
-      // 上传后自动选中新数据集
-      const newName = (res.data as any)?.dataset?.name || (res.data as any)?.data?.name;
-      if (newName) setSelectedDataset(newName);
+      const newName = rd?.dataset?.name ?? rd?.data?.dataset?.name ?? rd?.data?.name;
+      await loadDatasetProjects({
+        preferProjectId: selectedProjectId,
+        preferDatasetName: newName || undefined,
+      });
     } catch (error: any) {
       console.error(error);
       alert(`上传失败: ${error?.response?.data?.detail || error?.message || '网络错误'}`);
@@ -197,22 +275,32 @@ export const Datasets: React.FC = () => {
     }
   };
 
+  const openImageInAnnotation = (img: ImageItem) => {
+    setAnnotationImage(img);
+    setActiveTab('images');
+  };
+
   const handleDeleteDataset = async () => {
     if (!selectedDataset) return;
     if (!confirm(`确定要删除数据集 ${selectedDataset} 吗？此操作不可恢复。`)) return;
     try {
       await datasetApi.delete(selectedDataset);
-      await loadDatasetProjects();
-    } catch (error) {
+      await loadDatasetProjects({ preferProjectId: selectedProjectId });
+    } catch (error: any) {
       console.error(error);
+      alert(error?.message || '删除失败');
     }
   };
 
   const handleCreateProject = async () => {
     const name = prompt('请输入项目名称');
     if (!name?.trim()) return;
-    await datasetApi.createProject(name.trim());
-    await loadDatasetProjects();
+    try {
+      await datasetApi.createProject(name.trim());
+      await loadDatasetProjects({ preferProjectId: selectedProjectId });
+    } catch (e: any) {
+      alert(e?.message || '创建失败');
+    }
   };
 
   const handleRenameProject = async () => {
@@ -220,35 +308,58 @@ export const Datasets: React.FC = () => {
     if (!project || project.id === 'default') return;
     const newName = prompt('请输入新项目名称', project.name);
     if (!newName?.trim() || newName.trim() === project.name) return;
-    await datasetApi.renameProject(project.id, newName.trim());
-    await loadDatasetProjects();
+    try {
+      await datasetApi.renameProject(project.id, newName.trim());
+      await loadDatasetProjects({ preferProjectId: project.id });
+    } catch (e: any) {
+      alert(e?.message || '重命名失败');
+    }
   };
 
   const handleDeleteProject = async () => {
     const project = datasetProjects.find(p => p.id === selectedProjectId);
     if (!project || project.id === 'default') return;
     if (!confirm(`确定删除项目 ${project.name} 吗？项目下数据集会回到默认项目。`)) return;
-    await datasetApi.deleteProject(project.id);
-    await loadDatasetProjects();
+    try {
+      await datasetApi.deleteProject(project.id);
+      await loadDatasetProjects({ preferProjectId: 'default' });
+    } catch (e: any) {
+      alert(e?.message || '删除失败');
+    }
   };
 
   const handleMoveDatasetToProject = async () => {
     if (!selectedDataset) return;
-    const options = datasetProjects.map((p, idx) => `${idx + 1}. ${p.name}`).join('\n');
+    const options = datasetProjects.map((p, idx) => `${idx + 1}. ${p.name} (${p.dataset_count})`).join('\n');
     const indexRaw = prompt(`选择目标项目编号:\n${options}`);
     const idx = Number(indexRaw) - 1;
     if (Number.isNaN(idx) || idx < 0 || idx >= datasetProjects.length) return;
-    await datasetApi.moveToProject(datasetProjects[idx].id, selectedDataset);
-    await loadDatasetProjects();
+    const targetId = datasetProjects[idx].id;
+    try {
+      await datasetApi.moveToProject(targetId, selectedDataset);
+      await loadDatasetProjects({
+        preferProjectId: targetId,
+        preferDatasetName: selectedDataset,
+      });
+    } catch (e: any) {
+      alert(e?.message || '移动失败');
+    }
   };
 
   const handleRenameDataset = async () => {
     if (!selectedDataset) return;
     const newName = prompt('请输入新数据集名称', selectedDataset);
     if (!newName?.trim() || newName.trim() === selectedDataset) return;
-    await datasetApi.rename(selectedDataset, newName.trim());
-    await loadDatasetProjects();
-    setSelectedDataset(newName.trim());
+    const trimmed = newName.trim();
+    try {
+      await datasetApi.rename(selectedDataset, trimmed);
+      await loadDatasetProjects({
+        preferProjectId: selectedProjectId,
+        preferDatasetName: trimmed,
+      });
+    } catch (e: any) {
+      alert(e?.message || '重命名失败');
+    }
   };
 
   const handleExport = async (format: string) => {
@@ -256,7 +367,7 @@ export const Datasets: React.FC = () => {
     setExporting(true);
     try {
       const response = await fetch(
-        `/api/v1/datasets/${selectedDataset}/export?format=${format}&splits=train,val,test`
+        `/api/v1/datasets/${encodeURIComponent(selectedDataset)}/export?format=${format}&splits=train,val,test`
       );
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -277,11 +388,19 @@ export const Datasets: React.FC = () => {
 
   const handleDeleteImage = async (filename: string) => {
     if (!selectedDataset || !confirm(`确定要删除 ${filename} 吗？`)) return;
+    const lastOnPage = images.filter((i) => i.filename !== filename).length === 0;
     try {
-      // 这里需要添加删除API
-      alert('删除功能开发中');
-    } catch (error) {
+      await datasetApi.deleteImage(selectedDataset, filename);
+      setFullscreenImage(null);
+      if (lastOnPage && currentPage > 1) {
+        setCurrentPage((p) => Math.max(1, p - 1));
+      } else {
+        await loadDatasetStats(selectedDataset);
+        await loadDatasetImages(selectedDataset);
+      }
+    } catch (error: any) {
       console.error(error);
+      alert(error?.message || '删除失败');
     }
   };
 
@@ -369,7 +488,7 @@ export const Datasets: React.FC = () => {
                 {Object.entries(split_details.splits).map(([split, data]: [string, any]) => (
                   <div key={split} style={{ marginBottom: 'var(--space-4)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
-                      <span style={{ fontWeight: 500 }}>{split === 'train' ? '训练集' : split === 'val' ? '验证集' : '测试集'}</span>
+                      <span style={{ fontWeight: 500 }}>{splitDisplayName(split)}</span>
                       <span style={{ color: 'var(--text-secondary)' }}>{data.images} 张图片 ({data.percentage.toFixed(1)}%)</span>
                     </div>
                     <div style={{ height: '8px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
@@ -377,7 +496,14 @@ export const Datasets: React.FC = () => {
                         style={{
                           width: `${data.percentage}%`,
                           height: '100%',
-                          background: split === 'train' ? 'var(--primary-500)' : split === 'val' ? 'var(--accent-500)' : 'var(--success-500)',
+                          background:
+                            split === 'train'
+                              ? 'var(--primary-500)'
+                              : split === 'val'
+                                ? 'var(--accent-500)'
+                                : split === 'test'
+                                  ? 'var(--success-500)'
+                                  : 'var(--text-muted)',
                         }}
                       />
                     </div>
@@ -426,7 +552,7 @@ export const Datasets: React.FC = () => {
         {images.map((img, idx) => (
           <div
             key={idx}
-            onClick={() => setFullscreenImage(img)}
+            onClick={() => openImageInAnnotation(img)}
             style={{
               border: '1px solid var(--border)',
               borderTop: '3px solid var(--primary-500)',
@@ -470,6 +596,26 @@ export const Datasets: React.FC = () => {
               />
             </div>
             <div style={{ padding: 'var(--space-3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-2)' }}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFullscreenImage(img);
+                  }}
+                  style={{
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-secondary)',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.75rem',
+                    padding: '2px 8px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  预览
+                </button>
+              </div>
               <p style={{
                 fontWeight: 500,
                 fontSize: '0.875rem',
@@ -529,7 +675,7 @@ export const Datasets: React.FC = () => {
         {images.map((img, idx) => (
           <tr
             key={idx}
-            onClick={() => setFullscreenImage(img)}
+            onClick={() => openImageInAnnotation(img)}
             style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
           >
             <td style={{ padding: 'var(--space-2)' }}>
@@ -537,6 +683,10 @@ export const Datasets: React.FC = () => {
                 src={img.thumbnail}
                 alt={img.filename}
                 style={{ width: '60px', height: '40px', objectFit: 'cover', borderRadius: '4px' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setFullscreenImage(img);
+                }}
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23eee" width="100" height="100"/><text x="50" y="50" text-anchor="middle" dy=".3em" fill="%23999">无</text></svg>';
                 }}
@@ -624,7 +774,7 @@ export const Datasets: React.FC = () => {
 
       {/* 图片统计 */}
       <div style={{ marginBottom: 'var(--space-3)', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-        共 {totalImages} 张图片，当前显示 {images.length} 张
+        共 {totalImages} 张图片，当前显示 {images.length} 张（点击图片在本页打开标注，点预览可查看大图）
       </div>
 
       {imagesLoading ? (
@@ -659,10 +809,54 @@ export const Datasets: React.FC = () => {
               </Button>
             </div>
           )}
+
         </>
       )}
     </div>
   );
+
+  const renderInlineAnnotationModal = () => {
+    if (!annotationImage || !selectedDataset) return null;
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.45)',
+          zIndex: 1100,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 'var(--space-4)',
+        }}
+      >
+        <div
+          style={{
+            width: 'min(96vw, 1400px)',
+            height: 'min(92vh, 920px)',
+            background: 'var(--bg-primary)',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--border)',
+            boxShadow: 'var(--shadow-lg)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontWeight: 600 }}>✏️ 标注中：{annotationImage.filename}</span>
+            <Button variant="secondary" size="sm" onClick={() => setAnnotationImage(null)}>关闭</Button>
+          </div>
+          <iframe
+            key={`${selectedDataset}-${annotationImage.filename}`}
+            src={`/embed/annotation?compact=workspace&dataset=${encodeURIComponent(selectedDataset)}&image=${encodeURIComponent(annotationImage.filename)}&image_url=${encodeURIComponent(annotationImage.path)}`}
+            title="dataset-inline-annotation"
+            style={{ width: '100%', height: '100%', border: 'none', background: 'var(--bg-primary)' }}
+          />
+        </div>
+      </div>
+    );
+  };
 
   // 全屏查看器
   const renderFullscreenViewer = () => {
@@ -848,9 +1042,9 @@ export const Datasets: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)' }}>
-        <h1 style={{ fontFamily: 'DM Sans', fontWeight: 700 }}>数据集管理</h1>
-        <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-6)', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
+        <h1 style={{ fontFamily: 'DM Sans', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0, margin: 0 }}>数据集管理</h1>
+        <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <select
             value={selectedProjectId}
             onChange={(e) => {
@@ -960,6 +1154,7 @@ export const Datasets: React.FC = () => {
       )}
 
       {renderFullscreenViewer()}
+      {renderInlineAnnotationModal()}
       {renderExportModal()}
     </div>
   );
