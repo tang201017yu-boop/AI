@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Card, CardHeader, Button } from '../../components/common';
 import { solutionsApi, modelApi, inferenceApi } from '../../services/api';
+import { SolutionFeatureIcon, IconMediaImage, IconMediaVideo, IconResultChart } from './solutionIcons';
 
 /** 兼容 axios 体为扁平结构或嵌套 { data: { success, output_path, ... } } */
 function unwrapSolutionPayload(res: { data?: unknown }): any {
@@ -124,26 +125,26 @@ function detectionClassLabelZh(englishName: string): string {
   return COCO_CLASS_NAME_ZH[key] ?? englishName;
 }
 
-function deriveObjectsByClass(counting: any): Array<[string, number]> {
-  // 优先使用后端直接返回的分类统计
-  const raw = counting?.objects_by_class;
-  if (raw && typeof raw === 'object') {
-    const entries = Object.entries(raw as Record<string, number>)
-      .map(([cls, num]) => [cls, Number(num)] as [string, number])
-      .filter(([, num]) => Number.isFinite(num) && num > 0);
-    if (entries.length > 0) return entries;
+/** 速度估算接口返回的 results.speeds 中单条结构（与 Ultralytics 一致） */
+function pickLastMeaningfulSpeed(speeds: unknown[]): { track: number; solution: number } | null {
+  if (!Array.isArray(speeds) || speeds.length === 0) return null;
+  for (let i = speeds.length - 1; i >= 0; i--) {
+    const s = speeds[i] as { track?: number; solution?: number } | null;
+    if (s && typeof s === 'object') {
+      const tr = Number(s.track ?? 0);
+      const sol = Number(s.solution ?? 0);
+      if (tr > 0 || sol > 0) return { track: tr, solution: sol };
+    }
   }
+  return null;
+}
 
-  // 兜底：从 recent_inference_logs 最后一条中解析 "1 bus, 6 car, 1 person"
-  const logs = (counting?.recent_inference_logs || []) as string[];
-  const lastLog = logs.length ? String(logs[logs.length - 1]) : '';
-  if (!lastLog) return [];
-
-  const summaryMatch = lastLog.match(/ms,\s*(.*?)\s*\|\s*track/i);
-  if (!summaryMatch || !summaryMatch[1]) return [];
+/** 从单行推理日志解析 `…ms, 3 person, 1 sports ball | track …` 中的各类数量（与后端写入日志的口径一致） */
+function parseClassCountsFromInferenceLogLine(line: string): Array<[string, number]> {
+  const summaryMatch = String(line).match(/ms,\s*(.*?)\s*\|\s*track/i);
+  if (!summaryMatch?.[1]) return [];
   const summary = summaryMatch[1].trim();
   if (!summary || summary.toLowerCase() === 'no objects') return [];
-
   const parsed: Record<string, number> = {};
   summary.split(',').forEach((part) => {
     const item = part.trim();
@@ -155,8 +156,23 @@ function deriveObjectsByClass(counting: any): Array<[string, number]> {
       parsed[cls] = (parsed[cls] || 0) + count;
     }
   });
-
   return Object.entries(parsed);
+}
+
+function deriveObjectsByClass(counting: any): Array<[string, number]> {
+  // 优先使用后端直接返回的分类统计
+  const raw = counting?.objects_by_class;
+  if (raw && typeof raw === 'object') {
+    const entries = Object.entries(raw as Record<string, number>)
+      .map(([cls, num]) => [cls, Number(num)] as [string, number])
+      .filter(([, num]) => Number.isFinite(num) && num > 0);
+    if (entries.length > 0) return entries;
+  }
+
+  // 兜底：与日志最后一行同一解析逻辑
+  const logs = (counting?.recent_inference_logs || []) as string[];
+  const lastLog = logs.length ? String(logs[logs.length - 1]) : '';
+  return parseClassCountsFromInferenceLogLine(lastLog);
 }
 
 // 可用的检测模型列表
@@ -183,7 +199,6 @@ const SOLUTIONS = {
     name: 'object-counting',
     title: '目标计数',
     description: '统计图片或视频中的目标数量，支持区域计数和分类统计',
-    icon: '📊',
     color: '#3b82f6',
     supportsVideo: true,
     params: [
@@ -191,6 +206,18 @@ const SOLUTIONS = {
         help: '模型越小越快；精度要求高可选 s/m。' },
       { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05,
         help: '越高框越少但更准；越低检出更多但易误报。' },
+      { name: 'iou', label: '检测 NMS IoU', type: 'number', default: 0.7, min: 0.1, max: 0.95, step: 0.05,
+        help: '传给 Ultralytics track：目标重叠多时略降低(如 0.55~0.65)可减轻「多目标被压成一条轨迹」；过低易同一物体多框。' },
+      { name: 'max_det', label: '单帧最大检测数', type: 'number', default: 300, min: 1, max: 1000, step: 1,
+        help: '密集场景漏检时可提高；过大更耗显存与时间。' },
+      {
+        name: 'tracker',
+        label: '跟踪器配置',
+        type: 'text',
+        default: '',
+        placeholder: '留空使用 botsort.yaml',
+        help: '可选：bytetrack.yaml 等（需 Ultralytics 可解析）。跨线进出计数依赖稳定 track。',
+      },
       { name: 'region_type', label: '区域类型', type: 'select', default: 'polygon',
         options: [
           { value: 'polygon', label: '多边形区域' },
@@ -217,7 +244,6 @@ const SOLUTIONS = {
     name: 'heatmap',
     title: '热力图生成',
     description: '生成目标检测密度热力图，可视化热点区域',
-    icon: '🔥',
     color: '#ef4444',
     supportsVideo: true,
     params: [
@@ -238,7 +264,6 @@ const SOLUTIONS = {
     name: 'speed-estimation',
     title: '速度估算',
     description: '估算视频中移动目标的速度（需提供参考距离）',
-    icon: '🚗',
     color: '#f97316',
     supportsVideo: true,
     params: [
@@ -260,7 +285,6 @@ const SOLUTIONS = {
     name: 'distance-calculation',
     title: '距离计算',
     description: '计算图像中检测目标之间的距离',
-    icon: '📏',
     color: '#8b5cf6',
     supportsVideo: false,
     params: [
@@ -272,7 +296,6 @@ const SOLUTIONS = {
     name: 'object-blur',
     title: '目标模糊',
     description: '对检测到的目标进行模糊处理，保护隐私',
-    icon: '🔒',
     color: '#64748b',
     supportsVideo: true,
     params: [
@@ -285,7 +308,6 @@ const SOLUTIONS = {
     name: 'object-crop',
     title: '目标裁剪',
     description: '从图像中自动裁剪出检测到的目标',
-    icon: '✂️',
     color: '#10b981',
     supportsVideo: false,
     params: [
@@ -298,7 +320,6 @@ const SOLUTIONS = {
     name: 'queue-management',
     title: '队列管理',
     description: '监控队列长度，分析等待时间',
-    icon: '👥',
     color: '#06b6d4',
     supportsVideo: true,
     params: [
@@ -311,7 +332,6 @@ const SOLUTIONS = {
     name: 'parking-management',
     title: '停车管理',
     description: '检测停车位占用情况，管理车辆进出',
-    icon: '🅿️',
     color: '#eab308',
     supportsVideo: true,
     params: [
@@ -331,7 +351,6 @@ const SOLUTIONS = {
     name: 'vision-eye',
     title: '视觉安防',
     description: '周界入侵检测，异常行为识别',
-    icon: '👁️',
     color: '#ec4899',
     supportsVideo: true,
     params: [
@@ -343,7 +362,6 @@ const SOLUTIONS = {
     name: 'workout-monitoring',
     title: '健身监测',
     description: '人体/器械检测与计数（可选姿态模型）',
-    icon: '🏋️',
     color: '#14b8a6',
     supportsVideo: true,
     params: [
@@ -352,6 +370,18 @@ const SOLUTIONS = {
     ]
   },
 };
+
+/** 显示「统一处理统计」灰区（进出计数/队列/热力图等）；距离/裁剪等仅用各自专属块 */
+const SOLUTIONS_WITH_STATS_PANEL = new Set<string>([
+  'object-counting',
+  'vision-eye',
+  'workout-monitoring',
+  'parking-management',
+  'queue-management',
+  'speed-estimation',
+  'heatmap',
+  'object-blur',
+]);
 
 interface Param {
   name: string;
@@ -371,7 +401,6 @@ interface SolutionConfig {
   name: string;
   title: string;
   description: string;
-  icon: string;
   color: string;
   supportsVideo: boolean;
   params: Param[];
@@ -386,7 +415,39 @@ export const SolutionRunner: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [params, setParams] = useState<Record<string, any>>({});
 
+  /** 切换方案或返回列表时递增，丢弃尚未完成的异步 setResult */
+  const solutionRunRef = useRef(0);
+  /** 健身监测：推理日志滚到底，便于与「末帧摘要」对照 */
+  const inferenceLogScrollRef = useRef<HTMLDivElement>(null);
+
   const solution = selectedSolution ? SOLUTIONS[selectedSolution as keyof typeof SOLUTIONS] : null;
+
+  useLayoutEffect(() => {
+    solutionRunRef.current += 1;
+    setResult(null);
+    setResultVideoError(false);
+    setLoading(false);
+    if (selectedSolution === null) {
+      setFile(null);
+      setPreview((prev) => {
+        if (prev && prev.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(prev);
+          } catch {
+            /* ignore */
+          }
+        }
+        return null;
+      });
+    }
+  }, [selectedSolution]);
+
+  useLayoutEffect(() => {
+    if (selectedSolution !== 'workout-monitoring') return;
+    const el = inferenceLogScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [selectedSolution, result]);
 
   // 初始化参数
   useEffect(() => {
@@ -435,6 +496,12 @@ export const SolutionRunner: React.FC = () => {
   const handleProcess = async () => {
     if (!file || !selectedSolution) return;
 
+    const runAtStart = solutionRunRef.current;
+    const commitResult = (payload: any) => {
+      if (runAtStart !== solutionRunRef.current) return;
+      setResult(payload);
+    };
+
     setLoading(true);
     setResultVideoError(false);
     try {
@@ -448,7 +515,7 @@ export const SolutionRunner: React.FC = () => {
           formData.append('conf', String(conf));
           const res = await solutionsApi.workoutMonitoring(formData);
           const data: any = aliasOutputPathToResultImage(unwrapSolutionPayload(res));
-          setResult(data);
+          commitResult(data);
           return;
         }
         const modelName = String(params.model_name || 'yolo11n.pt');
@@ -459,7 +526,7 @@ export const SolutionRunner: React.FC = () => {
         if (data?.annotated_image && !data?.output_image) {
           data.output_image = data.annotated_image;
         }
-        setResult(aliasOutputPathToResultImage(data));
+        commitResult(aliasOutputPathToResultImage(data));
         return;
       }
 
@@ -548,7 +615,7 @@ export const SolutionRunner: React.FC = () => {
           const statusData = aliasOutputPathToResultImage(unwrapSolutionPayload(statusRes));
 
           // 实时更新进度文案，避免用户误以为卡住
-          setResult({
+          commitResult({
             ...data,
             ...statusData,
             success: statusData?.status !== 'failed',
@@ -579,7 +646,7 @@ export const SolutionRunner: React.FC = () => {
         }
       }
 
-      setResult(data);
+      commitResult(data);
       if (data?.success === false) {
         alert(`处理失败: ${data?.message || '请检查参数或后端日志'}`);
       }
@@ -623,10 +690,10 @@ export const SolutionRunner: React.FC = () => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '24px',
+                color: sol.color,
                 marginBottom: 'var(--space-3)'
               }}>
-                {sol.icon}
+                <SolutionFeatureIcon name={sol.name} size={26} />
               </div>
               <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
                 {sol.title}
@@ -635,12 +702,14 @@ export const SolutionRunner: React.FC = () => {
                 {sol.description}
               </p>
               <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                <span style={{ fontSize: '0.75rem', background: 'var(--gray-100)', padding: '2px 8px', borderRadius: '4px' }}>
-                  🖼️ 图片
+                <span style={{ fontSize: '0.75rem', background: 'var(--gray-100)', padding: '2px 8px', borderRadius: '4px', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <IconMediaImage size={13} />
+                  图片
                 </span>
                 {sol.supportsVideo && (
-                  <span style={{ fontSize: '0.75rem', background: 'var(--gray-100)', padding: '2px 8px', borderRadius: '4px' }}>
-                    🎬 视频
+                  <span style={{ fontSize: '0.75rem', background: 'var(--gray-100)', padding: '2px 8px', borderRadius: '4px', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <IconMediaVideo size={13} />
+                    视频
                   </span>
                 )}
               </div>
@@ -708,9 +777,9 @@ export const SolutionRunner: React.FC = () => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: '20px',
+          color: solution.color,
         }}>
-          {solution.icon}
+          <SolutionFeatureIcon name={solution.name} size={22} />
         </div>
         <div>
           <h1 style={{ fontFamily: 'DM Sans', fontWeight: 700, margin: 0 }}>
@@ -725,7 +794,14 @@ export const SolutionRunner: React.FC = () => {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 'var(--space-6)' }}>
         {/* 左侧：图片/视频预览 */}
         <Card>
-          <CardHeader icon={solution.icon} title="输入文件" />
+          <CardHeader
+            icon={(
+              <span style={{ color: solution.color, display: 'flex' }}>
+                <SolutionFeatureIcon name={solution.name} size={22} />
+              </span>
+            )}
+            title="输入文件"
+          />
           {!preview ? (
             <label style={{
               display: 'flex',
@@ -778,7 +854,14 @@ export const SolutionRunner: React.FC = () => {
           {/* 结果显示 */}
           {result && (
             <div style={{ marginTop: 'var(--space-6)' }}>
-              <CardHeader icon="📊" title="处理结果" />
+              <CardHeader
+                icon={(
+                  <span style={{ color: 'var(--primary-500, #3b82f6)', display: 'flex' }}>
+                    <IconResultChart size={20} />
+                  </span>
+                )}
+                title="处理结果"
+              />
               {result.success === false && (
                 <div style={{
                   padding: 'var(--space-3)',
@@ -791,7 +874,7 @@ export const SolutionRunner: React.FC = () => {
                   {result.message || '处理失败'}
                 </div>
               )}
-              {result.status === 'processing' && (
+              {selectedSolution === 'heatmap' && result.status === 'processing' && (
                 <div style={{
                   padding: 'var(--space-3)',
                   marginBottom: 'var(--space-3)',
@@ -921,25 +1004,269 @@ export const SolutionRunner: React.FC = () => {
                   打开处理结果文件
                 </a>
               )}
-              {/* 处理计数结果 - 支持 results / counting / 平铺返回 */}
-              {(
-                result.results ||
-                result.counting ||
-                result?.in_count != null ||
-                result?.out_count != null ||
-                result?.total_frames != null ||
-                result?.detected_objects != null ||
-                (result?.objects_by_class && typeof result.objects_by_class === 'object')
-              ) && (
+              {/* 处理统计：仅当前所选方案需要时展示，避免距离计算等出现进出计数块 */}
+              {SOLUTIONS_WITH_STATS_PANEL.has(selectedSolution ?? '') &&
+                (
+                  result.results ||
+                  result.counting ||
+                  result?.in_count != null ||
+                  result?.out_count != null ||
+                  result?.total_frames != null ||
+                  result?.detected_objects != null ||
+                  (result?.objects_by_class &&
+                    typeof result.objects_by_class === 'object' &&
+                    Object.keys(result.objects_by_class).length > 0)
+                ) && (
                 <div style={{ padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-                  <h4 style={{ marginBottom: 'var(--space-2)' }}>计数结果:</h4>
                   {(() => {
                     const counting = result.results || result.counting || result || {};
+                    const parkingShape =
+                      selectedSolution === 'parking-management' &&
+                      typeof counting.total_slots === 'number' &&
+                      typeof counting.current_occupied === 'number';
+
+                    if (parkingShape) {
+                      const totalSlots = Number(counting.total_slots);
+                      const occupied = Number(counting.current_occupied);
+                      const free =
+                        counting.current_free != null
+                          ? Number(counting.current_free)
+                          : Math.max(0, totalSlots - occupied);
+                      const avgOcc =
+                        counting.avg_occupied != null ? Number(counting.avg_occupied) : null;
+                      const maxOcc =
+                        counting.max_occupied != null ? Number(counting.max_occupied) : null;
+                      return (
+                        <>
+                          <h4 style={{ marginBottom: 'var(--space-2)' }}>车位占用（与画面一致）:</h4>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>占用（Occupied）:</span>
+                            <span style={{ fontWeight: 600 }}>
+                              {occupied} / {totalSlots}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>空闲（Free）:</span>
+                            <span style={{ fontWeight: 600 }}>{free}</span>
+                          </div>
+                          {avgOcc != null && !Number.isNaN(avgOcc) && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                              <span>全程平均占用车位数:</span>
+                              <span style={{ fontWeight: 600 }}>{avgOcc.toFixed(2)}</span>
+                            </div>
+                          )}
+                          {maxOcc != null && !Number.isNaN(maxOcc) && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                              <span>峰值占用车位数:</span>
+                              <span style={{ fontWeight: 600 }}>{maxOcc}</span>
+                            </div>
+                          )}
+                          {counting.total_frames != null && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                              <span>处理帧数:</span>
+                              <span style={{ fontWeight: 600 }}>{String(counting.total_frames)}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    }
+
+                    // 含 frame_counts 的即为队列接口形态；停车接口回退到队列时仍选「停车」也会走到此分支
+                    const queueShape =
+                      Array.isArray(counting.frame_counts) &&
+                      (selectedSolution === 'queue-management' || selectedSolution === 'parking-management');
+                    if (queueShape) {
+                      const fc = counting.frame_counts as number[];
+                      const lastCount = fc.length ? fc[fc.length - 1] : 0;
+                      const maxQ =
+                        counting.max_queue_count != null ? Number(counting.max_queue_count) : Math.max(0, ...fc);
+                      const avgQ =
+                        counting.avg_queue_count != null
+                          ? Number(counting.avg_queue_count)
+                          : fc.length
+                            ? fc.reduce((a, b) => a + b, 0) / fc.length
+                            : 0;
+                      return (
+                        <>
+                          <h4 style={{ marginBottom: 'var(--space-2)' }}>队列统计（与画面监测区一致）:</h4>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>末帧区域内目标数:</span>
+                            <span style={{ fontWeight: 600 }}>{lastCount}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>全程最大:</span>
+                            <span style={{ fontWeight: 600 }}>{maxQ}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>全程平均:</span>
+                            <span style={{ fontWeight: 600 }}>{avgQ.toFixed(1)}</span>
+                          </div>
+                          {counting.total_frames != null && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                              <span>处理帧数:</span>
+                              <span style={{ fontWeight: 600 }}>{String(counting.total_frames)}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    }
+
+                    const speedShape =
+                      selectedSolution === 'speed-estimation' && Array.isArray(counting.speeds);
+                    if (speedShape) {
+                      const speeds = counting.speeds as unknown[];
+                      const last = pickLastMeaningfulSpeed(speeds);
+                      const fc = counting.frame_count ?? counting.total_frames;
+                      return (
+                        <>
+                          <h4 style={{ marginBottom: 'var(--space-2)' }}>速度估算（与画面标注一致）:</h4>
+                          {fc != null && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                              <span>处理帧数:</span>
+                              <span style={{ fontWeight: 600 }}>{String(fc)}</span>
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>速度采样条数:</span>
+                            <span style={{ fontWeight: 600 }}>{speeds.length}</span>
+                          </div>
+                          {last ? (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                                <span>末次有效 track（像素/帧）:</span>
+                                <span style={{ fontWeight: 600 }}>{last.track.toFixed(2)}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                                <span>末次有效 solution（ms/帧）:</span>
+                                <span style={{ fontWeight: 600 }}>{last.solution.toFixed(2)}</span>
+                              </div>
+                            </>
+                          ) : (
+                            <p style={{ margin: 'var(--space-2) 0 0', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                              未记录到有效速度轨迹，请确认视频中有在标定区域内移动的目标。
+                            </p>
+                          )}
+                        </>
+                      );
+                    }
+
+                    if (selectedSolution === 'heatmap') {
+                      const tf = Number(result.total_frames ?? counting.total_frames ?? 0);
+                      return (
+                        <>
+                          <h4 style={{ marginBottom: 'var(--space-2)' }}>热力图处理:</h4>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>累计处理帧数:</span>
+                            <span style={{ fontWeight: 600 }}>{tf}</span>
+                          </div>
+                          {result.message && (
+                            <p style={{ margin: 'var(--space-2) 0 0', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                              {String(result.message)}
+                            </p>
+                          )}
+                          <p style={{ margin: 'var(--space-2) 0 0', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                            结果画面为检测密度热力叠加，无进出计数含义。
+                          </p>
+                        </>
+                      );
+                    }
+
+                    if (selectedSolution === 'object-blur') {
+                      const tf = Number(result.total_frames ?? counting.total_frames ?? 0);
+                      return (
+                        <>
+                          <h4 style={{ marginBottom: 'var(--space-2)' }}>目标模糊处理:</h4>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                            <span>处理帧数:</span>
+                            <span style={{ fontWeight: 600 }}>{tf}</span>
+                          </div>
+                          <p style={{ margin: 'var(--space-2) 0 0', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                            输出为对检测区域做模糊后的视频，无数值统计。
+                          </p>
+                        </>
+                      );
+                    }
+
+                    if (selectedSolution === 'workout-monitoring') {
+                      const logs = (counting.recent_inference_logs || []) as string[];
+                      const lastLine = logs.length ? String(logs[logs.length - 1]) : '';
+                      const fromLastLog = parseClassCountsFromInferenceLogLine(lastLine).sort(([a], [b]) =>
+                        detectionClassLabelZh(a).localeCompare(detectionClassLabelZh(b), 'zh-CN')
+                      );
+                      const fallbackClasses = deriveObjectsByClass(counting).sort(([a], [b]) =>
+                        detectionClassLabelZh(a).localeCompare(detectionClassLabelZh(b), 'zh-CN')
+                      );
+                      const classRows = fromLastLog.length > 0 ? fromLastLog : fallbackClasses;
+                      const inCountW = Number(counting.in_count || 0);
+                      const outCountW = Number(counting.out_count || 0);
+                      const netCountW = inCountW - outCountW;
+                      return (
+                        <>
+                          <h4 style={{ marginBottom: 'var(--space-2)' }}>健身监测统计:</h4>
+                          {counting.total_frames != null && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                              <span>处理帧数:</span>
+                              <span style={{ fontWeight: 600 }}>{String(counting.total_frames)}</span>
+                            </div>
+                          )}
+                          {counting.detected_objects != null && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                              <span>末帧跟踪目标数:</span>
+                              <span style={{ fontWeight: 600 }}>{String(counting.detected_objects)}</span>
+                            </div>
+                          )}
+                          {classRows.length > 0 && (
+                            <div style={{ marginTop: 'var(--space-3)', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--border-color)' }}>
+                              <div style={{ fontWeight: 600, marginBottom: 'var(--space-2)', fontSize: '0.875rem' }}>
+                                {fromLastLog.length > 0
+                                  ? '末帧各类检测数量（与下方「推理日志」最底一行英文摘要一致）:'
+                                  : '各类数量（后端返回；无日志末行时为此项）:'}
+                              </div>
+                              {classRows.map(([cls, num]) => (
+                                <div key={cls} style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                                  <span>{detectionClassLabelZh(cls)}</span>
+                                  <span style={{ fontWeight: 600 }}>{String(num)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <p style={{ marginTop: 'var(--space-3)', fontSize: '0.8125rem', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                            日志为滑动窗口，仅保留末尾若干条；<strong>最底部一行</strong>即处理结束时的该帧检测摘要，与上方「末帧各类检测数量」一致。
+                            向上滚动为更早帧，人数/类别会与末帧不同，属正常现象。「末帧跟踪目标数」为轨迹数，与按类相加可能略有差异。
+                          </p>
+                          <details style={{ marginTop: 'var(--space-2)' }}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                              跨线进入 / 离开（与健身场景无直接关系，仅供参考）
+                            </summary>
+                            <div style={{ marginTop: 'var(--space-2)', paddingLeft: 'var(--space-2)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                                <span>进入:</span>
+                                <span style={{ fontWeight: 600 }}>{inCountW}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                                <span>离开:</span>
+                                <span style={{ fontWeight: 600 }}>{outCountW}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
+                                <span>净计数:</span>
+                                <span style={{ fontWeight: 700, color: netCountW >= 0 ? '#16a34a' : '#dc2626' }}>{netCountW}</span>
+                              </div>
+                            </div>
+                          </details>
+                        </>
+                      );
+                    }
+
                     const inCount = Number(counting.in_count || 0);
                     const outCount = Number(counting.out_count || 0);
                     const netCount = inCount - outCount;
+                    const countingTitle =
+                      selectedSolution === 'vision-eye'
+                        ? '安防区域统计（与画面区域/跨线一致）:'
+                        : '目标计数结果（跨线进出与区域内检测）:';
                     return (
                       <>
+                        <h4 style={{ marginBottom: 'var(--space-2)' }}>{countingTitle}</h4>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
                           <span>进入总数:</span>
                           <span style={{ fontWeight: 600 }}>{inCount}</span>
@@ -987,46 +1314,26 @@ export const SolutionRunner: React.FC = () => {
                   })()}
                 </div>
               )}
-              {((result.results?.recent_inference_logs || result.counting?.recent_inference_logs || result?.recent_inference_logs) as string[] | undefined)?.length ? (
+              {['object-counting', 'vision-eye', 'workout-monitoring'].includes(selectedSolution ?? '') &&
+              ((result.results?.recent_inference_logs || result.counting?.recent_inference_logs || result?.recent_inference_logs) as string[] | undefined)?.length ? (
                 <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-                  <h4 style={{ marginBottom: 'var(--space-2)' }}>推理日志（最近20帧）:</h4>
-                  <div style={{ maxHeight: '180px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.8rem', lineHeight: 1.5 }}>
+                  <h4 style={{ marginBottom: 'var(--space-2)' }}>
+                    {selectedSolution === 'workout-monitoring'
+                      ? '推理日志（滑动窗口保留最近若干条；最底一行=处理结束时的帧摘要）:'
+                      : '推理日志（最近若干帧）:'}
+                  </h4>
+                  <div
+                    ref={selectedSolution === 'workout-monitoring' ? inferenceLogScrollRef : undefined}
+                    style={{ maxHeight: '180px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.8rem', lineHeight: 1.5 }}
+                  >
                     {((result.results?.recent_inference_logs || result.counting?.recent_inference_logs || result?.recent_inference_logs) as string[]).map((line, idx) => (
                       <div key={idx}>{line}</div>
                     ))}
                   </div>
                 </div>
               ) : null}
-              {/* 速度估算结果 */}
-              {(result.speeds || result.results?.speeds) && (
-                <div style={{ padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-                  <h4 style={{ marginBottom: 'var(--space-2)' }}>速度估算:</h4>
-                  {(() => {
-                    const speeds = result.speeds || result.results?.speeds || [];
-                    // 过滤有效的速度数据
-                    const validSpeeds = speeds.filter((s: any) => s && (s.track > 0 || s.solution > 0));
-                    // 取最后一个有效速度（通常是最终速度）
-                    const finalSpeed = validSpeeds.length > 0 ? validSpeeds[validSpeeds.length - 1] : null;
-                    if (finalSpeed) {
-                      return (
-                        <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
-                            <span>平均速度 (track):</span>
-                            <span style={{ fontWeight: 600 }}>{(finalSpeed.track || 0).toFixed(2)} px/frame</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-1) 0' }}>
-                            <span>处理速度:</span>
-                            <span style={{ fontWeight: 600 }}>{(finalSpeed.solution || 0).toFixed(2)} ms/帧</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    return <div>未检测到移动目标</div>;
-                  })()}
-                </div>
-              )}
               {/* 距离计算结果 */}
-              {(result.distances || result.results?.distances) && (
+              {selectedSolution === 'distance-calculation' && (result.distances || result.results?.distances) && (
                 <div style={{ padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
                   <h4 style={{ marginBottom: 'var(--space-2)' }}>距离计算:</h4>
                   {(result.distances || result.results?.distances || []).slice(0, 5).map((item: any, idx: number) => (
@@ -1035,21 +1342,6 @@ export const SolutionRunner: React.FC = () => {
                       <span style={{ fontWeight: 600 }}>{item.pixel_distance?.toFixed(1) || item.distance?.toFixed(1)} px</span>
                     </div>
                   ))}
-                </div>
-              )}
-              {/* 队列管理结果 */}
-              {(result.queue_info || result.results) && (
-                <div style={{ padding: 'var(--space-4)', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-                  <h4 style={{ marginBottom: 'var(--space-2)' }}>队列信息:</h4>
-                  <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
-                    {(result.queue_info || result.results || {})?.frame_counts?.[0] && (
-                      <>
-                        <div>当前人数: <strong>{(result.queue_info || result.results || {}).frame_counts?.[0] || 0}</strong></div>
-                        <div>平均队列: <strong>{((result.queue_info || result.results || {}).avg_queue_count || 0).toFixed(1)}</strong></div>
-                        <div>总帧数: <strong>{(result.queue_info || result.results || {}).total_frames || 0}</strong></div>
-                      </>
-                    )}
-                  </div>
                 </div>
               )}
             </div>

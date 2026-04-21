@@ -19,6 +19,8 @@ interface Props {
   tool: AnnotationTool;
   currentClass: string;
   classes: string[];
+  /** 若提供，仅用于工具栏「类别色条」芯片；下拉仍用 classes（可选未在本图出现的类） */
+  classPalette?: string[];
   suggestions?: ClassSuggestion[];
   samVersion?: 'sam2_lite' | 'sam2_base' | 'sam2_large' | 'sam3';
   onToolChange: (tool: AnnotationTool) => void;
@@ -38,6 +40,9 @@ interface Props {
   onRedo: () => void;
   onDeleteSelected?: () => void;
   onSave?: () => void;
+  /** 为 true 时保存按钮置灰（如未选项目），悬停可看 saveHint */
+  saveDisabled?: boolean;
+  saveHint?: string;
   onSamVersionChange?: (version: 'sam2_lite' | 'sam2_base' | 'sam2_large' | 'sam3') => void;
   loading?: boolean;
   shortcuts?: { key: string; desc: string }[];
@@ -56,6 +61,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
   tool,
   currentClass,
   classes,
+  classPalette,
   suggestions = [],
   samVersion = 'sam2_base',
   onToolChange,
@@ -74,6 +80,8 @@ export const AnnotationToolbar: React.FC<Props> = ({
   onRedo,
   onDeleteSelected,
   onSave,
+  saveDisabled = false,
+  saveHint,
   onSamVersionChange,
   loading = false,
   autoClassifyOnBox = true,
@@ -92,6 +100,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
     { key: '1-9', desc: '快速切换类别' },
   ],
 }) => {
+  const chipClasses = classPalette !== undefined ? classPalette : classes;
   const [showAddClass, setShowAddClass] = useState(false);
   const [newClassName, setNewClassName] = useState('');
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -196,7 +205,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
         <label style={{ fontSize: '13px', color: fgMuted, fontWeight: 500 }}>类别:</label>
         <div ref={classPickerRef} style={{ position: 'relative', zIndex: showAddClass ? 50 : undefined }}>
           <select
-            value={currentClass}
+            value={classes.includes(currentClass) ? currentClass : ''}
             onChange={(e) => onClassChange(e.target.value)}
             style={{
               padding: '6px 28px 6px 12px',
@@ -209,6 +218,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
               cursor: 'pointer',
             }}
           >
+            <option value="">请选择类别</option>
             {classes.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
@@ -403,19 +413,29 @@ export const AnnotationToolbar: React.FC<Props> = ({
     </>
   );
 
+  const saveBlocked = Boolean(loading || saveDisabled);
   const saveToolbarButton = onSave && (
     <button
+      type="button"
       onClick={onSave}
-      disabled={loading}
+      disabled={saveBlocked}
+      title={
+        loading
+          ? '处理中…'
+          : saveDisabled && saveHint
+            ? saveHint
+            : '将当前图的标注写入已选项目（服务器）'
+      }
       style={{
         padding: '8px 16px',
         border: 'none',
         borderRadius: '6px',
-        background: '#3b82f6',
+        background: saveBlocked ? '#94a3b8' : '#3b82f6',
         color: '#fff',
-        cursor: loading ? 'not-allowed' : 'pointer',
+        cursor: saveBlocked ? 'not-allowed' : 'pointer',
         fontSize: '13px',
         fontWeight: 500,
+        opacity: saveBlocked ? 0.92 : 1,
       }}
     >
       💾 保存
@@ -632,7 +652,7 @@ export const AnnotationToolbar: React.FC<Props> = ({
           maxHeight: compact ? '52px' : '72px',
           overflowY: 'auto',
         }}>
-          {classes.map((c, i) => {
+          {chipClasses.map((c, i) => {
             const col = colorForClassName(c);
             const active = c === currentClass;
             return (

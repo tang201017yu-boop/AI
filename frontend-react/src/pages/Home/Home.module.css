@@ -32,6 +32,17 @@
   justify-content: center;
 }
 
+.heroBtnInner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.heroBtnInner svg {
+  flex-shrink: 0;
+  opacity: 0.95;
+}
+
 .section {
   margin-bottom: var(--space-8);
 }
@@ -130,8 +141,15 @@
 }
 
 .solutionIcon {
-  font-size: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin-bottom: var(--space-3);
+  color: var(--primary-600);
+}
+
+.solutionIcon svg {
+  display: block;
 }
 
 .solutionTitle {

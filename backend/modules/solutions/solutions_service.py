@@ -127,6 +127,28 @@ def _remux_mp4_for_html5_video(path: Optional[str]) -> None:
                 pass
 
 
+def _partial_video_path(final_path: str) -> str:
+    """与最终 mp4 同目录的临时文件：写入/remux 完成后再 replace，避免半文件被静态 GET。"""
+    p = Path(final_path)
+    return str(p.with_name(f"{p.stem}.partial{p.suffix}"))
+
+
+def _finalize_solution_video_file(work_path: str, final_path: str) -> None:
+    """对临时 mp4 做浏览器友好 remux，再原子替换为最终文件名。"""
+    _remux_mp4_for_html5_video(work_path)
+    pw, fw = Path(work_path), Path(final_path)
+    if not pw.is_file() or pw.stat().st_size == 0:
+        return
+    try:
+        os.replace(str(pw), str(fw))
+    except OSError:
+        shutil.copy2(str(pw), str(fw))
+        try:
+            pw.unlink()
+        except OSError:
+            pass
+
+
 def _to_numpy(frame):
     """将帧转换为 numpy uint8 数组（兼容 MPS/tensor）"""
     if frame is None:
@@ -326,6 +348,9 @@ class SolutionsService:
         show_out: bool = True,
         classes: List[int] = None,
         conf: float = 0.25,
+        iou: float = 0.7,
+        max_det: int = 300,
+        tracker: str = None,
         line_width: int = 2,
         output_path: str = None
     ) -> Dict[str, Any]:
@@ -333,10 +358,26 @@ class SolutionsService:
 
         说明：Ultralytics ObjectCounter 的进出计数依赖连续帧轨迹；单张图片上 in/out 通常为 0。
         对图片会额外返回 detected_objects（当前画面跟踪到的目标数），便于静态图查看检测效果。
+        conf/iou/max_det/tracker 会传入 model.track()，用于调节漏检、重叠框合并与跟踪器。
         """
         try:
             model = self.load_model(model_name)
             model_path = get_model_path(model)
+
+            counter_kw: Dict[str, Any] = dict(
+                show=False,
+                model=model_path,
+                classes=classes,
+                show_in=show_in,
+                show_out=show_out,
+                line_width=line_width,
+                device=self.default_device,
+                conf=float(conf),
+                iou=float(iou),
+                max_det=int(max_det),
+            )
+            if tracker and str(tracker).strip():
+                counter_kw["tracker"] = str(tracker).strip()
 
             region_points = self._normalize_region_points(region_points)
             src_path = Path(source)
@@ -354,17 +395,7 @@ class SolutionsService:
                 if region_points is None:
                     region_points = self._default_counting_region(w, h, region_type)
 
-                counter = solutions.ObjectCounter(
-                    show=False,
-                    region=region_points,
-                    model=model_path,
-                    classes=classes,
-                    show_in=show_in,
-                    show_out=show_out,
-                    line_width=line_width,
-                    device=self.default_device,
-                    conf=conf,
-                )
+                counter = solutions.ObjectCounter(**{**counter_kw, "region": region_points})
                 result = counter(frame)
                 in_c = getattr(result, "in_count", 0)
                 out_c = getattr(result, "out_count", 0)
@@ -405,24 +436,17 @@ class SolutionsService:
             if region_points is None:
                 region_points = self._default_counting_region(fw, fh, region_type)
 
-            counter = solutions.ObjectCounter(
-                show=False,
-                region=region_points,
-                model=model_path,
-                classes=classes,
-                show_in=show_in,
-                show_out=show_out,
-                line_width=line_width,
-                device=self.default_device,
-                conf=conf,
-            )
+            counter = solutions.ObjectCounter(**{**counter_kw, "region": region_points})
 
             out = None
+            video_work_path: Optional[str] = None
             if output_path:
                 fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or fw
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or fh
-                out = _open_solution_mp4_writer(output_path, fps, width, height)
+                video_work_path = _partial_video_path(output_path)
+                Path(video_work_path).unlink(missing_ok=True)
+                out = _open_solution_mp4_writer(video_work_path, fps, width, height)
 
             results_data = {"in_count": 0, "out_count": 0, "total_frames": 0}
             last_tracks = 0
@@ -454,7 +478,8 @@ class SolutionsService:
                     f"{results_data['total_frames']}: {fh_i}x{fw_i} {sol_ms:.1f}ms, {cls_summary} | track {tr_ms:.1f}ms"
                 )
                 recent_logs.append(log_line)
-                if len(recent_logs) > 20:
+                # 保留更多末尾帧便于前端对照末帧摘要（仍滑动窗口，避免响应过大）
+                if len(recent_logs) > 80:
                     recent_logs.pop(0)
                 return r
 
@@ -468,8 +493,17 @@ class SolutionsService:
             cap.release()
             if out is not None:
                 out.release()
-            if output_path:
-                _remux_mp4_for_html5_video(output_path)
+            if output_path and video_work_path:
+                try:
+                    _finalize_solution_video_file(video_work_path, output_path)
+                except Exception as ex:
+                    logger.warning("[video] finalize counted video failed: %s", ex)
+                    if Path(video_work_path).is_file():
+                        try:
+                            Path(video_work_path).unlink()
+                        except OSError:
+                            pass
+                    raise
 
             results_data["detected_objects"] = last_tracks
             results_data["objects_by_class"] = last_class_counts
@@ -561,9 +595,12 @@ class SolutionsService:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
             out = None
+            video_work_path: Optional[str] = None
             if output_path:
                 fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
-                out = _open_solution_mp4_writer(output_path, fps, width, height)
+                video_work_path = _partial_video_path(output_path)
+                Path(video_work_path).unlink(missing_ok=True)
+                out = _open_solution_mp4_writer(video_work_path, fps, width, height)
 
             # 初始化热图累计器（2D 数组）
             heatmap_2d = np.zeros((height, width), dtype=np.float32)
@@ -621,9 +658,10 @@ class SolutionsService:
                     out.write(annotated_frame)
 
             cap.release()
-            if output_path and out is not None:
+            if out is not None:
                 out.release()
-                _remux_mp4_for_html5_video(output_path)
+            if output_path and video_work_path:
+                _finalize_solution_video_file(video_work_path, output_path)
 
             return {
                 "success": True,
@@ -666,11 +704,14 @@ class SolutionsService:
 
             cap = cv2.VideoCapture(source)
             out = None
+            video_work_path: Optional[str] = None
             if output_path:
                 fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                out = _open_solution_mp4_writer(output_path, fps, width, height)
+                video_work_path = _partial_video_path(output_path)
+                Path(video_work_path).unlink(missing_ok=True)
+                out = _open_solution_mp4_writer(video_work_path, fps, width, height)
 
             frame_count = 0
             speeds = []
@@ -690,9 +731,10 @@ class SolutionsService:
                     out.write(frame)
 
             cap.release()
-            if output_path and out is not None:
+            if out is not None:
                 out.release()
-                _remux_mp4_for_html5_video(output_path)
+            if output_path and video_work_path:
+                _finalize_solution_video_file(video_work_path, output_path)
 
             return {
                 "success": True,
@@ -843,11 +885,14 @@ class SolutionsService:
 
             cap = cv2.VideoCapture(source)
             out = None
+            video_work_path: Optional[str] = None
             if output_path:
                 fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                out = _open_solution_mp4_writer(output_path, fps, width, height)
+                video_work_path = _partial_video_path(output_path)
+                Path(video_work_path).unlink(missing_ok=True)
+                out = _open_solution_mp4_writer(video_work_path, fps, width, height)
 
             frame_count = 0
             while cap.isOpened():
@@ -862,9 +907,10 @@ class SolutionsService:
                     out.write(frame)
 
             cap.release()
-            if output_path and out is not None:
+            if out is not None:
                 out.release()
-                _remux_mp4_for_html5_video(output_path)
+            if output_path and video_work_path:
+                _finalize_solution_video_file(video_work_path, output_path)
 
             return {
                 "success": True,
@@ -957,11 +1003,14 @@ class SolutionsService:
 
             cap = cv2.VideoCapture(source)
             out = None
+            video_work_path: Optional[str] = None
             if output_path:
                 fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                out = _open_solution_mp4_writer(output_path, fps, width, height)
+                video_work_path = _partial_video_path(output_path)
+                Path(video_work_path).unlink(missing_ok=True)
+                out = _open_solution_mp4_writer(video_work_path, fps, width, height)
 
             queue_data = {"max_queue_count": 0, "frame_counts": [], "total_frames": 0}
 
@@ -982,9 +1031,10 @@ class SolutionsService:
                     out.write(frame)
 
             cap.release()
-            if output_path and out is not None:
+            if out is not None:
                 out.release()
-                _remux_mp4_for_html5_video(output_path)
+            if output_path and video_work_path:
+                _finalize_solution_video_file(video_work_path, output_path)
 
             if queue_data["frame_counts"]:
                 queue_data["avg_queue_count"] = sum(queue_data["frame_counts"]) / len(queue_data["frame_counts"])
@@ -1073,11 +1123,14 @@ class SolutionsService:
                     return {"success": False, "message": "无法打开视频文件"}
 
                 writer = None
+                video_work_path: Optional[str] = None
                 if output_path:
                     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
                     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    writer = _open_solution_mp4_writer(output_path, fps, width, height)
+                    video_work_path = _partial_video_path(output_path)
+                    Path(video_work_path).unlink(missing_ok=True)
+                    writer = _open_solution_mp4_writer(video_work_path, fps, width, height)
 
                 while cap.isOpened():
                     ok, frame = cap.read()
@@ -1090,7 +1143,8 @@ class SolutionsService:
                 cap.release()
                 if writer is not None:
                     writer.release()
-                    _remux_mp4_for_html5_video(output_path)
+                if output_path and video_work_path:
+                    _finalize_solution_video_file(video_work_path, output_path)
             else:
                 frame = cv2.imread(source)
                 if frame is None:

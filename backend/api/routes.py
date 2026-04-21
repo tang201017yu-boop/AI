@@ -857,6 +857,9 @@ async def solution_object_counting(
     show_out: bool = Form(True),
     classes: Optional[str] = Form(None),  # JSON string
     conf: float = Form(0.25),
+    iou: float = Form(0.7),
+    max_det: int = Form(300),
+    tracker: Optional[str] = Form(None),
     line_width: int = Form(2),
 ):
     """对象计数 - 统计进出区域的对象数量"""
@@ -902,6 +905,9 @@ async def solution_object_counting(
             show_out=show_out,
             classes=class_list,
             conf=conf,
+            iou=iou,
+            max_det=max_det,
+            tracker=tracker,
             line_width=line_width,
             output_path=output_path
         )

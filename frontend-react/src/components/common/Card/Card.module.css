@@ -49,4 +49,9 @@
   background: var(--primary-50);
   border-radius: var(--radius-md);
   font-size: 1.25rem;
+  color: var(--primary-600);
+}
+
+.icon svg {
+  display: block;
 }

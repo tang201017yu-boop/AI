@@ -682,11 +682,24 @@ class SAMService:
             with open(label_file, 'w') as f:
                 for ann in annotations:
                     class_id = ann.get("class_id", 0)
-                    segmentation = ann.get("segmentation", "")
+                    segmentation = (ann.get("segmentation") or "").strip()
+                    bbox = ann.get("bbox") or []
 
-                    # 写入 YOLO 格式: class_id x1 y1 x2 y2 ... (归一化)
                     if segmentation:
+                        # 分割：class_id + 归一化多边形点串
                         f.write(f"{class_id} {segmentation}\n")
+                    elif len(bbox) >= 4:
+                        # 检测框：class_id xc yc w h（归一化）
+                        x1, y1, x2, y2 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+                        xc = ((x1 + x2) / 2) / w
+                        yc = ((y1 + y2) / 2) / h
+                        bw = abs(x2 - x1) / w
+                        bh = abs(y2 - y1) / h
+                        xc = max(0.0, min(1.0, xc))
+                        yc = max(0.0, min(1.0, yc))
+                        bw = max(0.0, min(1.0, bw))
+                        bh = max(0.0, min(1.0, bh))
+                        f.write(f"{class_id} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}\n")
 
             # 复制图片
             import shutil

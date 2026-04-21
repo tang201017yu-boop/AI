@@ -4,6 +4,7 @@ YOLO 引擎模块 - YOLO Model Engine
 处理模型加载、推理和训练的核心功能模块
 """
 import os
+import re
 import time
 import copy
 import threading
@@ -47,6 +48,66 @@ from .config import settings
 
 # 创建日志记录器
 logger = logging.getLogger(__name__)
+
+# 模型缓存键分隔符：路径中常有 '_'（如 Vision_Platform），不能用「路径_设备」简单拼接
+_CACHE_KEY_SEP = "\x1f"
+
+_LEGACY_CACHE_TAIL_RE = re.compile(
+    r"^(.+)_((?:cpu|auto|mps|cuda(?::\d+)?)|\d+)$"
+)
+
+
+def _make_cache_key(resolved_path: str, device: Optional[str]) -> str:
+    dev = device if device is not None else "cpu"
+    return f"{resolved_path}{_CACHE_KEY_SEP}{dev}"
+
+
+def _normalize_device_for_cache(device: Optional[str], default_device: str) -> str:
+    """
+    统一缓存用设备串，避免同一权重因 auto / 0 / cuda:0 各缓存一份、列表出现两条「同名」。
+    """
+    if device is None:
+        return default_device
+    d = str(device).strip()
+    dl = d.lower()
+    if dl == "auto":
+        return default_device
+    if dl in ("cuda", "cuda:0"):
+        return "0" if str(default_device).lower() not in ("cpu", "mps") else default_device
+    return d
+
+
+def _canonical_loaded_dedupe_key(path_part: str, dev_part: str, default_device: str) -> Tuple[str, str]:
+    """已加载列表去重：解析路径 + 等效设备合并为一条。"""
+    try:
+        p = str(Path(path_part).resolve())
+    except Exception:
+        p = os.path.normpath(path_part)
+    d = _normalize_device_for_cache(
+        dev_part if dev_part not in ("?", "") else None,
+        default_device,
+    )
+    if str(d).lower() in ("cuda", "cuda:0"):
+        d = "0"
+    return (p, str(d))
+
+
+def _parse_cache_key(cache_key: str) -> Tuple[str, str]:
+    """从缓存键还原 (绝对或相对路径, 设备标识)。"""
+    if _CACHE_KEY_SEP in cache_key:
+        path, _, dev = cache_key.partition(_CACHE_KEY_SEP)
+        return path, (dev or "cpu")
+    m = _LEGACY_CACHE_TAIL_RE.match(cache_key)
+    if m:
+        return m.group(1), m.group(2)
+    return cache_key, "?"
+
+
+def _cache_lookup_keys(resolved_path: str, device: str) -> List[str]:
+    """新格式键 + 旧格式键（下划线拼接），便于兼容已驻留内存的缓存。device 须已规范化。"""
+    new_k = _make_cache_key(resolved_path, device)
+    old_k = f"{resolved_path}_{device}"
+    return [new_k, old_k] if new_k != old_k else [new_k]
 
 
 class YOLOEngine:
@@ -278,21 +339,18 @@ class YOLOEngine:
         Returns:
             YOLO: 加载的模型对象
         """
-        # 默认使用 GPU（如果可用）
-        if device is None:
-            device = self.default_device
-
         # 解析模型路径
         resolved_path = self._resolve_model_path(model_identifier)
 
-        # 生成缓存键（路径+设备组合）
-        cache_key = f"{resolved_path}_{device}"
+        # 统一设备（auto / cuda:0 / None 与显式 0 合并，避免同一模型出现两条缓存）
+        device = _normalize_device_for_cache(device, self.default_device)
 
-        # 检查缓存
+        # 检查缓存（新分隔符键 + 兼容旧的下划线键）
         with self.model_cache_lock:
-            if cache_key in self.models:
-                logger.debug(f"[YOLO引擎] 从缓存加载模型: {resolved_path}")
-                return self.models[cache_key]
+            for ck in _cache_lookup_keys(resolved_path, device):
+                if ck in self.models:
+                    logger.debug(f"[YOLO引擎] 从缓存加载模型: {resolved_path}")
+                    return self.models[ck]
 
         # 加载模型
         try:
@@ -311,9 +369,10 @@ class YOLOEngine:
             logger.error(f"[YOLO引擎] {error_msg}")
             raise FileNotFoundError(error_msg)
 
-        # 存入缓存
+        # 存入缓存（统一使用新键，避免路径中含 '_' 时被截断）
         with self.model_cache_lock:
-            self.models[cache_key] = model
+            store_key = _make_cache_key(resolved_path, device)
+            self.models[store_key] = model
 
         return model
 
@@ -325,18 +384,26 @@ class YOLOEngine:
             List: 已加载模型的信息列表
         """
         models_info = []
+        seen = set()
         with self.model_cache_lock:
             for cache_key, model in self.models.items():
                 try:
-                    # 提取模型名称
-                    model_name = cache_key.split('_')[0] if '_' in cache_key else cache_key
+                    path_part, dev_part = _parse_cache_key(cache_key)
+                    canon_p, canon_d = _canonical_loaded_dedupe_key(
+                        path_part, dev_part, self.default_device
+                    )
+                    dedupe = (canon_p, canon_d)
+                    if dedupe in seen:
+                        continue
+                    seen.add(dedupe)
 
-                    # 获取模型信息
+                    base = Path(canon_p).name or canon_p
                     info = {
                         "cache_key": cache_key,
-                        "model_name": model_name,
+                        "model_name": base,
+                        "model_path": canon_p,
                         "task": getattr(model, 'task', 'detect'),
-                        "device": cache_key.split('_')[-1] if '_' in cache_key else 'cpu',
+                        "device": canon_d,
                         "loaded": True,
                     }
 
@@ -345,7 +412,7 @@ class YOLOEngine:
                         if hasattr(model, 'model') and hasattr(model.model, 'names'):
                             info["classes"] = list(model.model.names.values()) if model.model.names else []
                             info["num_classes"] = len(model.model.names)
-                    except:
+                    except Exception:
                         pass
 
                     models_info.append(info)
@@ -365,20 +432,20 @@ class YOLOEngine:
         Returns:
             Dict: 模型状态信息
         """
-        if device is None:
-            device = "cpu"
-
         resolved_path = self._resolve_model_path(model_identifier)
-        cache_key = f"{resolved_path}_{device}"
+        device = _normalize_device_for_cache(device, self.default_device)
+        primary_key = _make_cache_key(resolved_path, device)
 
         with self.model_cache_lock:
-            is_loaded = cache_key in self.models
+            is_loaded = any(
+                ck in self.models for ck in _cache_lookup_keys(resolved_path, device)
+            )
 
         return {
             "model_identifier": model_identifier,
             "device": device,
             "loaded": is_loaded,
-            "cache_key": cache_key,
+            "cache_key": primary_key,
         }
 
     def infer(

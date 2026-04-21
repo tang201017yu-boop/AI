@@ -4,7 +4,7 @@ import styles from './Navbar.module.css';
 
 const navItems = [
   { path: '/', label: '首页' },
-  { path: '/ai-native', label: '🔮 AI原生' },
+  { path: '/ai-native', label: 'AI原生' },
   { path: '/inference', label: '模型推理' },
   { path: '/training', label: '模型训练' },
   { path: '/solutions', label: '智能方案' },

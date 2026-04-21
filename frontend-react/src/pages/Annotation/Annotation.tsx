@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Card, CardHeader, Button, Input } from '../../components/common';
 import { annotationApi, inferenceApi, samApi, modelApi, datasetApi } from '../../services/api';
 import type { AnnotationProject, SAMAnnotation, AnnotationTool, AnnotationPoint, AnnotationBox, AnnotationMask, ClassSuggestion } from '../../types';
+import { buildYoloSingleImageExport, stemFromImageName, triggerDownload } from './exportSamYolo';
+import { buildYoloSingleImageZipBlob, YoloZipExportError } from './exportSamYoloZip';
 import { AnnotationCanvas, AnnotationToolbar, AnnotationPanel } from '../../components/Annotation';
 import { useSearchParams } from 'react-router-dom';
 
@@ -13,6 +15,72 @@ interface UserYoloModelOption {
 
 /** 与 AnnotationToolbar 中 SAM 档位一致，供 loadModel 映射 */
 type SamToolbarVersion = 'sam2_lite' | 'sam2_base' | 'sam2_large' | 'sam3';
+
+const SMART_HOVER_IOU = 0.45;
+const DETECT_MERGE_IOU = 0.45;
+const DETECT_NMS_IOU = 0.5;
+
+/** 智能标注类别下拉：trim 后去重、保序（避免一键检测里多框同类 + 闭包陈旧 includes 造成 person 连刷） */
+function dedupeClassesPreserveOrder(classes: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of classes) {
+    const c = String(raw ?? '').trim();
+    if (!c || seen.has(c)) continue;
+    seen.add(c);
+    out.push(c);
+  }
+  return out;
+}
+
+function bboxIoU(a: number[], b: number[]): number {
+  if (!a || !b || a.length < 4 || b.length < 4) return 0;
+  const [ax1, ay1, ax2, ay2] = a.map(Number);
+  const [bx1, by1, bx2, by2] = b.map(Number);
+  const ix1 = Math.max(ax1, bx1);
+  const iy1 = Math.max(ay1, by1);
+  const ix2 = Math.min(ax2, bx2);
+  const iy2 = Math.min(ay2, by2);
+  const iw = Math.max(0, ix2 - ix1);
+  const ih = Math.max(0, iy2 - iy1);
+  const inter = iw * ih;
+  const areaA = Math.max(0, ax2 - ax1) * Math.max(0, ay2 - ay1);
+  const areaB = Math.max(0, bx2 - bx1) * Math.max(0, by2 - by1);
+  const union = areaA + areaB - inter;
+  return union > 1e-9 ? inter / union : 0;
+}
+
+function bboxOverlapsExistingAnnotations(bbox: number[], annotations: SAMAnnotation[], iouThreshold: number): boolean {
+  for (const ann of annotations) {
+    if (!ann.bbox || ann.bbox.length < 4) continue;
+    if (bboxIoU(bbox, ann.bbox) >= iouThreshold) return true;
+  }
+  return false;
+}
+
+/** 单次检测内框去重（高置信度优先保留） */
+function nmsAnnotationsByBoxIou(annotations: SAMAnnotation[], iouThreshold: number): SAMAnnotation[] {
+  const valid = annotations.filter((a) => a.bbox && a.bbox.length >= 4);
+  const sorted = [...valid].sort((a, b) => (b.confidence ?? 1) - (a.confidence ?? 1));
+  const kept: SAMAnnotation[] = [];
+  for (const cand of sorted) {
+    const bb = cand.bbox!;
+    let ok = true;
+    for (const k of kept) {
+      if (bboxIoU(bb, k.bbox!) >= iouThreshold) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) kept.push(cand);
+  }
+  return kept;
+}
+
+function smartHoverKey(cls: string, bbox: number[]): string {
+  const [x1, y1, x2, y2] = bbox.map(Number);
+  return `${cls}|${Math.round(x1)}|${Math.round(y1)}|${Math.round(x2)}|${Math.round(y2)}`;
+}
 
 export const Annotation: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -66,8 +134,8 @@ export const Annotation: React.FC = () => {
   const [samImagePath, setSamImagePath] = useState<string>('');
   const [samFile, setSamFile] = useState<File | null>(null);
   const [samTool, setSamTool] = useState<AnnotationTool>('box');
-  const [samCurrentClass, setSamCurrentClass] = useState('person');
-  const [samClasses, setSamClasses] = useState(['person', 'car', 'dog', 'cat', 'bicycle', 'bird']);
+  const [samCurrentClass, setSamCurrentClass] = useState('');
+  const [samClasses, setSamClasses] = useState<string[]>([]);
   const [samPoints, setSamPoints] = useState<AnnotationPoint[]>([]);
   const [samBoxes, setSamBoxes] = useState<AnnotationBox[]>([]);
   const [samMasks, setSamMasks] = useState<AnnotationMask[]>([]);
@@ -85,6 +153,21 @@ export const Annotation: React.FC = () => {
   >([]);
   const [samHistoryIndex, setSamHistoryIndex] = useState(-1);
   const [imgSize, setImgSize] = useState({ width: 800, height: 600 });
+
+  /** 工具栏色条：仅本图已标注类别（去重保序）+ 当前绘制类别（若尚未出现在图中则排在最前） */
+  const samClassPalette = useMemo(() => {
+    const used: string[] = [];
+    const seen = new Set<string>();
+    for (const ann of samAnnotations) {
+      const c = (ann.class || '').trim();
+      if (!c || seen.has(c)) continue;
+      seen.add(c);
+      used.push(c);
+    }
+    const cur = (samCurrentClass || '').trim();
+    if (cur && !seen.has(cur)) return [cur, ...used];
+    return used;
+  }, [samAnnotations, samCurrentClass]);
 
   useEffect(() => {
     if (annotationMode === 'draw' && samTool === 'auto') {
@@ -192,6 +275,18 @@ export const Annotation: React.FC = () => {
     }
   }, [samHistory, samHistoryIndex]);
 
+  /** 手绘/多边形落盘前：必须有已选类别名 */
+  const pickAnnotationClass = useCallback((): string | null => {
+    const cls = (samCurrentClass || '').trim();
+    if (cls) return cls;
+    if (samClasses.length === 0) {
+      alert('请先在工具栏类别旁点击「+」添加类别');
+    } else {
+      alert('请先在类别下拉框中选择要标注的类别');
+    }
+    return null;
+  }, [samCurrentClass, samClasses]);
+
   // 添加点
   const handleSamPointAdd = useCallback((point: AnnotationPoint) => {
     const newPoints = [...samPoints, point];
@@ -201,10 +296,13 @@ export const Annotation: React.FC = () => {
 
   // 添加框（手动框选必须同步写入 samAnnotations，右侧列表才能改类别/保存）
   const handleSamBoxAdd = useCallback(async (box: AnnotationBox) => {
+    const cls = pickAnnotationClass();
+    if (!cls) return;
+
     const newBoxes = [...samBoxes, box];
-    const cid = samClasses.indexOf(samCurrentClass);
+    const cid = samClasses.indexOf(cls);
     const newAnn: SAMAnnotation = {
-      class: samCurrentClass,
+      class: cls,
       class_id: cid >= 0 ? cid : 0,
       bbox: [box.x1, box.y1, box.x2, box.y2],
       segmentation: '',
@@ -277,7 +375,7 @@ export const Annotation: React.FC = () => {
         console.warn('[classify-bbox]', e);
       }
     }
-  }, [samBoxes, samMasks, samPoints, samLoaded, samImagePath, saveSamHistory, samAnnotations, samClasses, samCurrentClass, autoClassifyOnBox, samFile, selectedModel, confidence]);
+  }, [samBoxes, samMasks, samPoints, samLoaded, samImagePath, saveSamHistory, samAnnotations, samClasses, pickAnnotationClass, autoClassifyOnBox, samFile, selectedModel, confidence]);
 
   // Smart 模式：加载候选检测框（鼠标悬停自动采纳）
   useEffect(() => {
@@ -291,6 +389,7 @@ export const Annotation: React.FC = () => {
         const res = await samApi.detectAll(samFile, selectedModel, confidence);
         const result = res.data?.data || res.data;
         const anns: SAMAnnotation[] = result?.annotations || [];
+        smartAddedRef.current.clear();
         setSmartCandidates(anns);
       } catch {
         setSmartCandidates([]);
@@ -310,14 +409,19 @@ export const Annotation: React.FC = () => {
       if (b.length < 4) continue;
       const [x1, y1, x2, y2] = b;
       if (x >= x1 && x <= x2 && y >= y1 && y <= y2) {
-        const key = `${c.class}|${Math.round(x1)}|${Math.round(y1)}|${Math.round(x2)}|${Math.round(y2)}`;
+        if (bboxOverlapsExistingAnnotations(b, samAnnotations, SMART_HOVER_IOU)) return;
+        const key = smartHoverKey(String(c.class || ''), b);
         if (smartAddedRef.current.has(key)) return;
         smartAddedRef.current.add(key);
 
-        const cid = samClasses.indexOf(c.class);
+        const clsName = String(c.class ?? '').trim();
+        const displayClass = clsName || String(c.class ?? 'unknown');
+        const existingIdx = samClasses.indexOf(displayClass);
+        const resolvedClassId =
+          existingIdx >= 0 ? existingIdx : clsName ? samClasses.length : (c.class_id ?? 0);
         const ann: SAMAnnotation = {
-          class: c.class,
-          class_id: cid >= 0 ? cid : (c.class_id ?? 0),
+          class: displayClass,
+          class_id: resolvedClassId,
           bbox: [x1, y1, x2, y2],
           segmentation: '',
           confidence: c.confidence ?? 1,
@@ -329,16 +433,17 @@ export const Annotation: React.FC = () => {
         });
         setSamBoxes((prev) => [...prev, { x1, y1, x2, y2 }]);
         setSamMasks((prev) => [...prev, { polygons: [], color: getRandomColor() }]);
-        if (!samClasses.includes(c.class)) {
-          setSamClasses((prev) => [...prev, c.class]);
+        if (clsName) {
+          setSamClasses((prev) => (prev.includes(clsName) ? prev : [...prev, clsName]));
         }
         return;
       }
     }
-  }, [annotationMode, smartCandidates, samClasses]);
+  }, [annotationMode, smartCandidates, samClasses, samAnnotations]);
 
   // 清除
   const handleSamClear = useCallback(() => {
+    smartAddedRef.current.clear();
     setSamPoints([]);
     setSamBoxes([]);
     setSamMasks([]);
@@ -364,28 +469,35 @@ export const Annotation: React.FC = () => {
           return;
         }
 
-        // 合并到现有标注
-        const merged = [...samAnnotations, ...anns];
+        const deduped = nmsAnnotationsByBoxIou(anns, DETECT_NMS_IOU);
+        const fresh = deduped.filter(
+          (a) => a.bbox && a.bbox.length >= 4
+            && !bboxOverlapsExistingAnnotations(a.bbox, samAnnotations, DETECT_MERGE_IOU),
+        );
+        if (fresh.length === 0) {
+          alert('检测结果与当前图上已有框高度重叠，未重复加入。可删除重叠框或调低置信度后再试。');
+          return;
+        }
+
+        // 合并到现有标注（仅加入与已有标注不高度重叠的框）
+        const merged = [...samAnnotations, ...fresh];
         setSamAnnotations(merged);
 
         // 生成边界框显示
-        const newBoxes: AnnotationBox[] = anns.map((a: SAMAnnotation) => ({
+        const newBoxes: AnnotationBox[] = fresh.map((a: SAMAnnotation) => ({
           x1: a.bbox[0], y1: a.bbox[1], x2: a.bbox[2], y2: a.bbox[3]
         }));
         const allBoxes = [...samBoxes, ...newBoxes];
         setSamBoxes(allBoxes);
 
         // 与 annotations 索引对齐（检测无分割掩码时用空 mask，避免删除时错位）
-        const newMaskPlaceholders = anns.map(() => ({ polygons: [] as number[], color: getRandomColor() }));
+        const newMaskPlaceholders = fresh.map(() => ({ polygons: [] as number[], color: getRandomColor() }));
         const allMasks = [...samMasks, ...newMaskPlaceholders];
         setSamMasks(allMasks);
 
-        // 自动添加新检测到的类别
-        anns.forEach((a: SAMAnnotation) => {
-          if (!samClasses.includes(a.class)) {
-            setSamClasses(prev => [...prev, a.class]);
-          }
-        });
+        // 自动添加新检测到的类别（单次函数式合并，避免同批多框同类重复）
+        const detectedNames = dedupeClassesPreserveOrder(fresh.map((a) => String(a.class ?? '')));
+        setSamClasses((prev) => dedupeClassesPreserveOrder([...prev, ...detectedNames]));
 
         // 更新类别建议
         const classCounts: Record<string, number> = {};
@@ -397,7 +509,12 @@ export const Annotation: React.FC = () => {
         })));
 
         saveSamHistory(samPoints, allBoxes, allMasks, merged);
-        alert(`自动标注完成，检测到 ${anns.length} 个对象`);
+        const skipped = anns.length - fresh.length;
+        alert(
+          skipped > 0
+            ? `自动标注完成，新增 ${fresh.length} 个对象（已跳过与已有标注重叠或检测重复的 ${skipped} 个）`
+            : `自动标注完成，新增 ${fresh.length} 个对象`,
+        );
       } else {
         alert(result?.message || '自动标注失败');
       }
@@ -412,6 +529,10 @@ export const Annotation: React.FC = () => {
   // 自动标注（指定类别）
   const handleSamAutoLabel = useCallback(async () => {
     if (!samFile) return;
+    if (!(samCurrentClass || '').trim()) {
+      alert('请先在类别下拉框中选择要自动标注的类别');
+      return;
+    }
 
     setSamLoading(true);
     try {
@@ -449,12 +570,9 @@ export const Annotation: React.FC = () => {
 
         setClassSuggestions(suggestions);
 
-        // 自动添加未存在的类别
-        Object.keys(classCounts).forEach(cls => {
-          if (!samClasses.includes(cls)) {
-            setSamClasses(prev => [...prev, cls]);
-          }
-        });
+        // 自动添加未存在的类别（函数式合并，避免闭包陈旧）
+        const newNames = dedupeClassesPreserveOrder(Object.keys(classCounts));
+        setSamClasses((prev) => dedupeClassesPreserveOrder([...prev, ...newNames]));
 
         if ((result.annotations || []).length === 0) {
           alert(`未检测到 "${samCurrentClass}" 类别的对象，共检测到 ${result.total_detections ?? 0} 个其他对象`);
@@ -516,6 +634,10 @@ export const Annotation: React.FC = () => {
   // 删除标注
   const handleSamDelete = (id: string) => {
     const idx = parseInt(id);
+    const removed = samAnnotations[idx];
+    if (removed?.bbox && removed.bbox.length >= 4) {
+      smartAddedRef.current.delete(smartHoverKey(String(removed.class || ''), removed.bbox));
+    }
     const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
     const newMasks = samMasks.filter((_, i) => i !== idx);
     const newBoxes = samBoxes.filter((_, i) => i !== idx);
@@ -546,6 +668,13 @@ export const Annotation: React.FC = () => {
 
   const handleSamBulkDelete = (ids: string[]) => {
     const idSet = new Set(ids);
+    ids.forEach((sid) => {
+      const i = parseInt(sid, 10);
+      const ann = samAnnotations[i];
+      if (ann?.bbox && ann.bbox.length >= 4) {
+        smartAddedRef.current.delete(smartHoverKey(String(ann.class || ''), ann.bbox));
+      }
+    });
     const newAnnotations = samAnnotations.filter((_, i) => !idSet.has(String(i)));
     const newMasks = samMasks.filter((_, i) => !idSet.has(String(i)));
     const newBoxes = samBoxes.filter((_, i) => !idSet.has(String(i)));
@@ -571,25 +700,138 @@ export const Annotation: React.FC = () => {
     return colors[Math.floor(Math.random() * colors.length)];
   };
 
-  // 导出
-  const handleSamExport = () => {
-    console.log('导出标注:', samAnnotations);
-    // 可以调用导出 API
-    alert(`已导出 ${samAnnotations.length} 个标注到 YOLO 格式`);
-  };
+  /** 导出当前图为 YOLO 标签（txt）+ 仅本图出现的类别列表；txt 内 class_id 与 classes 行一一对应 */
+  const handleSamExport = useCallback(() => {
+    if (!samAnnotations.length) {
+      alert('当前没有标注可导出');
+      return;
+    }
+    const w = imgSize.width;
+    const h = imgSize.height;
+    if (!w || !h) {
+      alert('无法获取图片尺寸，请先加载一张图片');
+      return;
+    }
+    const { lines, classNames } = buildYoloSingleImageExport(samAnnotations, samClasses, w, h);
+    if (!lines.length) {
+      alert('没有可导出的行：每条标注需要「分割多边形」或「检测框」至少一种');
+      return;
+    }
+    const stem = stemFromImageName(samFile?.name || samImagePath || 'labels');
+    triggerDownload(`${stem}.txt`, lines.join('\n'));
+    triggerDownload(`${stem}_classes.txt`, classNames.join('\n'));
+    alert(
+      `已下载：\n• ${stem}.txt（${lines.length} 行；class_id 已按本图类别从 0 连续编号）\n• ${stem}_classes.txt（仅 ${classNames.length} 个本图出现的类别，与 class_id 顺序一致）\n请将 txt 放入 labels/，图片放入 images/，主文件名一致。`
+    );
+  }, [samAnnotations, imgSize, samFile, samImagePath, samClasses]);
+
+  /** 一键 ZIP：images/ + labels/ + classes.txt + README */
+  const handleSamExportZip = useCallback(async () => {
+    if (!samAnnotations.length) {
+      alert('当前没有标注可导出');
+      return;
+    }
+    const w = imgSize.width;
+    const h = imgSize.height;
+    if (!w || !h) {
+      alert('无法获取图片尺寸，请先加载一张图片');
+      return;
+    }
+    let imageBytes: ArrayBuffer;
+    let imageBaseName: string;
+    if (samFile) {
+      imageBytes = await samFile.arrayBuffer();
+      imageBaseName = samFile.name;
+    } else if (samImage?.startsWith('blob:')) {
+      try {
+        const r = await fetch(samImage);
+        imageBytes = await r.arrayBuffer();
+        imageBaseName = samImagePath || 'image.jpg';
+      } catch {
+        alert('无法读取当前预览图，请用「打开图片」重新选择本地文件后再导出 ZIP');
+        return;
+      }
+    } else {
+      alert('一键 ZIP 需要本地图片文件。请使用「打开图片」选择文件，或从项目图集打开（会下载为本地副本）后再试。');
+      return;
+    }
+    try {
+      const blob = await buildYoloSingleImageZipBlob({
+        annotations: samAnnotations,
+        samClasses,
+        imgW: w,
+        imgH: h,
+        imageBaseName,
+        imageBytes,
+      });
+      const stem = stemFromImageName(imageBaseName);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${stem}_yolo_export.zip`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      alert(
+        `已下载 ${stem}_yolo_export.zip：\n• images/ 内为原图\n• labels/ 内为 ${stem}.txt\n• classes.txt 为类别表\n• README.txt 为说明`,
+      );
+    } catch (e) {
+      if (e instanceof YoloZipExportError) {
+        alert(e.message);
+        return;
+      }
+      console.error('zip export', e);
+      alert('导出 ZIP 失败，请重试');
+    }
+  }, [samAnnotations, imgSize, samFile, samImage, samImagePath, samClasses]);
+
+  /** 导出当前项目全部图片的标注为 NDJSON（依赖后端 labels/ 下已有 txt） */
+  const handleProjectExportNdjson = useCallback(async () => {
+    if (!selectedProject) {
+      alert('请先选择项目');
+      return;
+    }
+    const pid = String(selectedProject.id || selectedProject.name);
+    try {
+      const res = await annotationApi.exportNdjson(pid);
+      const blob = res.data as unknown as Blob;
+      if (!(blob instanceof Blob) || blob.size === 0) {
+        alert('导出为空：请确认项目中已有图片，且 labels/ 目录下有对应 .txt');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${pid.replace(/[^\w.\-]+/g, '_')}.ndjson`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('export ndjson', e);
+      alert('NDJSON 导出失败，请检查网络与后端');
+    }
+  }, [selectedProject]);
 
   // 添加新类别
   const handleAddClass = (className: string) => {
-    if (!samClasses.includes(className)) {
-      setSamClasses([...samClasses, className]);
-      setSamCurrentClass(className);
-    }
+    const name = className.trim();
+    if (!name) return;
+    setSamClasses((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    setSamCurrentClass(name);
   };
 
   // 删除选中的标注
   const handleDeleteSelected = () => {
     if (samSelectedId) {
       const idx = parseInt(samSelectedId);
+      const removed = samAnnotations[idx];
+      if (removed?.bbox && removed.bbox.length >= 4) {
+        smartAddedRef.current.delete(smartHoverKey(String(removed.class || ''), removed.bbox));
+      }
       const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
       const newMasks = samMasks.filter((_, i) => i !== idx);
       const newBoxes = samBoxes.filter((_, i) => i !== idx);
@@ -606,6 +848,10 @@ export const Annotation: React.FC = () => {
     if (samSelectedId) {
       const idx = parseInt(samSelectedId, 10);
       if (!Number.isNaN(idx)) {
+        const removed = samAnnotations[idx];
+        if (removed?.bbox && removed.bbox.length >= 4) {
+          smartAddedRef.current.delete(smartHoverKey(String(removed.class || ''), removed.bbox));
+        }
         const newAnnotations = samAnnotations.filter((_, i) => i !== idx);
         const newMasks = samMasks.filter((_, i) => i !== idx);
         const newBoxes = samBoxes.filter((_, i) => i !== idx);
@@ -619,6 +865,7 @@ export const Annotation: React.FC = () => {
     }
     if (!samImage && !samFile) return;
     if (!window.confirm('确定移除当前图片？未保存的标注将丢失。')) return;
+    smartAddedRef.current.clear();
     if (samImage?.startsWith('blob:')) {
       URL.revokeObjectURL(samImage);
     }
@@ -635,15 +882,29 @@ export const Annotation: React.FC = () => {
     saveSamHistory([], [], [], []);
   }, [samSelectedId, samImage, samFile, samAnnotations, samMasks, samBoxes, samPoints, saveSamHistory]);
 
+  /** 保存按钮置灰原因（后端按 projectId 写库，无项目则无法落盘） */
+  const samSaveHint = useMemo(() => {
+    if (!selectedProject) {
+      return '标注与图片保存在服务器的「项目」下。请先在下方「标注项目」里选一个项目并点「开始标注」，再保存。';
+    }
+    if (!samFile) return '请先点击「打开图片」';
+    if (!samAnnotations.length) return '当前没有可写入的标注';
+    return '';
+  }, [selectedProject, samFile, samAnnotations.length]);
+  const samSaveDisabled = Boolean(samSaveHint);
+
   // 保存标注
   const handleSave = async () => {
     if (!selectedProject) {
-      alert('请先选择一个项目');
+      alert(
+        '无法保存：后端接口需要「项目 ID」，把每张图的标注 JSON 与图片放在该项目的目录里。\n\n' +
+          '请先在下方「标注项目」列表中点击某个项目的「开始标注」，进入工作台后再点「保存」。',
+      );
       return;
     }
 
     if (!samFile || !samAnnotations.length) {
-      alert('没有可保存的标注');
+      alert('没有可保存的标注（需已打开图片且画布上有标注）');
       return;
     }
 
@@ -740,9 +1001,10 @@ export const Annotation: React.FC = () => {
         setSamTool('polygon');
       } else if (e.key >= '1' && e.key <= '9') {
         const idx = parseInt(e.key, 10) - 1;
-        if (idx < samClasses.length) {
+        if (idx < samClassPalette.length) {
           e.preventDefault();
-          const nextClass = samClasses[idx];
+          const nextClass = samClassPalette[idx];
+          const cid = samClasses.indexOf(nextClass);
           setSamCurrentClass(nextClass);
 
           // 有选中框时，数字键直接改类（对齐主流标注器：数字=赋类）
@@ -754,7 +1016,7 @@ export const Annotation: React.FC = () => {
                   ? {
                       ...a,
                       class: nextClass,
-                      class_id: idx,
+                      class_id: cid >= 0 ? cid : idx,
                     }
                   : a
               )));
@@ -806,7 +1068,7 @@ export const Annotation: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [annotationMode, samSelectedId, samClasses, handleSamUndo, handleSamRedo, handleDeleteSelected, handleSamAutoLabel, samAnnotations.length, samPanelSelectedIds]);
+  }, [annotationMode, samSelectedId, samClasses, samClassPalette, handleSamUndo, handleSamRedo, handleDeleteSelected, handleSamAutoLabel, samAnnotations.length, samPanelSelectedIds]);
 
   useEffect(() => {
     loadProjects();
@@ -1009,8 +1271,12 @@ export const Annotation: React.FC = () => {
 
     // 如果项目有预定义类别，加载它们
     if (project.classes && project.classes.length > 0) {
-      setSamClasses(project.classes);
-      setSamCurrentClass(project.classes[0]);
+      const uniq = dedupeClassesPreserveOrder(project.classes);
+      setSamClasses(uniq);
+      setSamCurrentClass(uniq[0] || '');
+    } else {
+      setSamClasses([]);
+      setSamCurrentClass('');
     }
 
     // 清除当前标注状态
@@ -1106,7 +1372,7 @@ export const Annotation: React.FC = () => {
         setSamAnnotations(newAnnotations);
         setSamPoints(newPoints);
         if (extraClasses.length > 0) {
-          setSamClasses(prev => [...prev, ...extraClasses]);
+          setSamClasses((prev) => dedupeClassesPreserveOrder([...prev, ...extraClasses]));
         }
       }
     } catch (e) {
@@ -1803,12 +2069,6 @@ export const Annotation: React.FC = () => {
         {!compactWorkbenchMode && (
           <div style={{ marginBottom: 'var(--space-4)' }}>
             <CardHeader icon="✂️" title="标注工作台" />
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0 0', lineHeight: 1.55 }}>
-              左栏图集 · 中栏画布与工具 · 右栏对象列表；交互习惯参考
-              {' '}
-              <a href="https://platform.ultralytics.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--primary-600)' }}>Ultralytics Platform</a>
-              公开文档。类别条、数字键 1–9、框选后 YOLO 识别与上方「检测模型 / 我的模型」一致。
-            </p>
           </div>
         )}
 
@@ -1817,11 +2077,11 @@ export const Annotation: React.FC = () => {
             style={{
               display: 'grid',
               gridTemplateColumns: compactWorkbenchMode
-                ? 'minmax(130px, 156px) minmax(0, 1fr) minmax(210px, 248px)'
-                : 'minmax(196px, 220px) minmax(0, 1fr) minmax(280px, 320px)',
-              // 固定高度，确保左侧缩略图区域能正确计算高度并出现滚动条
-              height: compactWorkbenchMode ? 'min(90vh, 940px)' : 'min(85vh, 880px)',
-              maxHeight: '90vh',
+                ? 'minmax(120px, 148px) minmax(0, 1fr) minmax(200px, 236px)'
+                : 'minmax(168px, 200px) minmax(0, 1fr) minmax(252px, 300px)',
+              // 固定高度，确保左侧缩略图区域能正确计算高度并出现滚动条；略增高以放大中间画布区
+              height: compactWorkbenchMode ? 'min(94vh, 1040px)' : 'min(92vh, 1040px)',
+              maxHeight: '98vh',
               border: '1px solid var(--border-color)',
               borderRadius: 'var(--radius-lg)',
               overflow: 'hidden',
@@ -1856,9 +2116,26 @@ export const Annotation: React.FC = () => {
                   <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginTop: '4px' }}>{projectImages.length} 张</div>
                   <button
                     type="button"
-                    onClick={closeSamProjectContext}
+                    onClick={handleProjectExportNdjson}
                     style={{
                       marginTop: '10px',
+                      width: '100%',
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--primary-300, #93c5fd)',
+                      background: 'var(--primary-50, #eff6ff)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                    }}
+                  >
+                    导出项目 NDJSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeSamProjectContext}
+                    style={{
+                      marginTop: '8px',
                       width: '100%',
                       padding: '6px 10px',
                       borderRadius: '6px',
@@ -1924,7 +2201,8 @@ export const Annotation: React.FC = () => {
                   })
                 ) : (
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5, margin: '4px' }}>
-                    在下方「标注项目列表」中选择项目后，缩略图显示于此；或点击中栏「打开图片」上传单张标注。
+                    在下方「标注项目」中点击「开始标注」后，此处显示该项目图集；保存也会写入该项目。
+                    仅「打开图片」而未选项目时，可先标注，但保存前必须先进入某个项目。
                   </p>
                 )}
               </div>
@@ -1938,6 +2216,7 @@ export const Annotation: React.FC = () => {
                 minWidth: 0,
                 background: 'var(--bg-primary)',
                 minHeight: 0,
+                height: '100%',
               }}
             >
               <div
@@ -1980,6 +2259,7 @@ export const Annotation: React.FC = () => {
                 tool={samTool}
                 currentClass={samCurrentClass}
                 classes={samClasses}
+                classPalette={samClassPalette}
                 suggestions={classSuggestions}
                 onToolChange={setSamTool}
                 onClassChange={setSamCurrentClass}
@@ -1996,6 +2276,8 @@ export const Annotation: React.FC = () => {
                 onRedo={handleSamRedo}
                 onDeleteSelected={handleToolbarTrash}
                 onSave={handleSave}
+                saveDisabled={samSaveDisabled}
+                saveHint={samSaveHint || undefined}
                 loading={samLoading}
                 autoClassifyOnBox={autoClassifyOnBox}
                 onAutoClassifyChange={setAutoClassifyOnBox}
@@ -2020,13 +2302,25 @@ export const Annotation: React.FC = () => {
               <div
                 style={{
                   flex: 1,
-                  overflow: 'auto',
-                  padding: compactWorkbenchMode ? '8px' : '16px',
-                  minHeight: '280px',
+                  /* 无图时占位区用 flex 撑满，避免内部再出现滚动条 */
+                  overflow: samImage ? 'auto' : 'hidden',
+                  padding: compactWorkbenchMode ? '6px 8px' : '10px 12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  minHeight: 0,
                 }}
               >
                 {samImage ? (
-                  <div style={{ width: '100%', minHeight: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      width: '100%',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                  >
                     <AnnotationCanvas
                       image={samImage}
                       width={imgSize.width}
@@ -2044,6 +2338,8 @@ export const Annotation: React.FC = () => {
                       smartMode={annotationMode === 'smart'}
                       onCursorMove={handleSmartCursorMove}
                       onMaskAdd={(mask) => {
+                        const cls = pickAnnotationClass();
+                        if (!cls) return false;
                         const poly = mask.polygons;
                         let minXN = 1;
                         let minYN = 1;
@@ -2059,9 +2355,9 @@ export const Annotation: React.FC = () => {
                         const y1 = minYN * imgSize.height;
                         const x2 = maxXN * imgSize.width;
                         const y2 = maxYN * imgSize.height;
-                        const cid = samClasses.indexOf(samCurrentClass);
+                        const cid = samClasses.indexOf(cls);
                         const newAnn: SAMAnnotation = {
-                          class: samCurrentClass,
+                          class: cls,
                           class_id: cid >= 0 ? cid : 0,
                           bbox: [x1, y1, x2, y2],
                           segmentation: mask.polygons.join(' '),
@@ -2085,20 +2381,22 @@ export const Annotation: React.FC = () => {
                   <label
                     onClick={triggerSamFilePick}
                     style={{
+                      flex: 1,
+                      minHeight: 0,
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
                       width: '100%',
-                      minHeight: '360px',
+                      boxSizing: 'border-box',
                       cursor: 'pointer',
                       border: '2px dashed var(--border-color)',
                       borderRadius: '12px',
                       background: 'var(--bg-secondary)',
                     }}
                   >
-                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>🖼️</div>
-                    <p style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-primary)' }}>点击选择图片</p>
+                    <div style={{ fontSize: 'clamp(40px, 8vmin, 64px)', marginBottom: '12px' }}>🖼️</div>
+                    <p style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-primary)', fontSize: 'clamp(15px, 2vmin, 18px)' }}>点击选择图片</p>
                     <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>JPG、PNG、WebP</p>
                   </label>
                 )}
@@ -2144,6 +2442,7 @@ export const Annotation: React.FC = () => {
                 onHover={setSamHoveredId}
                 onClassChange={handleSamClassChange}
                 onExport={handleSamExport}
+                onExportZip={handleSamExportZip}
                 onBulkClassChange={handleSamBulkClassChange}
                 onBulkDelete={handleSamBulkDelete}
                 onSelectionIdsChange={setSamPanelSelectedIds}

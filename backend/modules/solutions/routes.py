@@ -39,6 +39,9 @@ async def solution_object_counting(
     show_out: bool = Form(True),
     classes: Optional[str] = Form(None),
     conf: float = Form(0.25),
+    iou: float = Form(0.7),
+    max_det: int = Form(300),
+    tracker: Optional[str] = Form(None),
     line_width: int = Form(2)
 ):
     """对象计数 - 支持区域计数和分类统计"""
@@ -80,6 +83,9 @@ async def solution_object_counting(
             show_out=show_out,
             classes=class_list,
             conf=conf,
+            iou=iou,
+            max_det=max_det,
+            tracker=tracker,
             line_width=line_width,
             output_path=output_path
         )

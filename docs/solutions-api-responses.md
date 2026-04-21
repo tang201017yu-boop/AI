@@ -21,6 +21,24 @@
 
 ## 2. 对象计数 — `POST /solutions/object-counting`
 
+`multipart/form-data` 常用字段（与智能方案页表单一致；路由前缀以实际部署为准，如 `/api/v1/solutions/object-counting`）：
+
+| 字段名 | 类型 | 默认 | 含义 |
+|--------|------|------|------|
+| `file` | file | — | 必填，图片或视频。 |
+| `model_name` | string | 后端默认权重 | YOLO 权重文件名或路径。 |
+| `region_type` | string | `polygon` | `polygon` 区域统计或 `line` 跨线进出。 |
+| `region_points` | string (JSON) | 空则后端按分辨率生成默认区域 | `[[x,y],...]` 像素坐标。 |
+| `show_in` / `show_out` | bool | `true` | 是否在画面上绘制进/出计数。 |
+| `classes` | string (JSON) | 空 | 仅检测的类别 ID 列表，如 `[0,2]`。 |
+| `conf` | float | `0.25` | 检测置信度阈值，传入 `model.track`。 |
+| `iou` | float | `0.7` | NMS IoU，传入 `model.track`；重叠多时略降。 |
+| `max_det` | int | `300` | 单帧最大检测数。 |
+| `tracker` | string | 空则 Ultralytics 默认 `botsort.yaml` | 如 `bytetrack.yaml`。 |
+| `line_width` | int | `2` | 边线/框线粗细。 |
+
+响应主要字段：
+
 | 字段 | 类型 | 含义 |
 |------|------|------|
 | `success` | bool | 处理是否成功。 |

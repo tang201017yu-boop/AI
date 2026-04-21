@@ -186,7 +186,11 @@ logger.info("中间件注册完成: CORS, 日志, 代理(开发模式)")
 # ============================================================================
 uploads_dir = settings.UPLOADS_DIR
 uploads_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+app.mount(
+    "/uploads",
+    StaticFiles(directory=str(uploads_dir), follow_symlink=True),
+    name="uploads",
+)
 logger.info(f"上传文件服务: /uploads -> {uploads_dir}")
 
 annotation_images_dir = settings.ANNOTATION_PROJECTS_DIR

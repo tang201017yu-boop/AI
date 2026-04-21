@@ -14,7 +14,8 @@ interface Props {
   hoveredId?: string | null;
   onPointAdd: (point: AnnotationPoint) => void;
   onBoxAdd: (box: AnnotationBox) => void;
-  onMaskAdd?: (mask: AnnotationMask) => void;
+  /** 返回 false 时不闭合多边形（例如尚未选择类别） */
+  onMaskAdd?: (mask: AnnotationMask) => void | boolean;
   onBoxDrag?: (index: number, box: AnnotationBox) => void;
   onMaskSelect?: (index: string | number) => void;
   onAnnotationSelect?: (id: string) => void;
@@ -156,7 +157,28 @@ const AnnotationCanvas: React.FC<Props> = ({
         }
       });
 
-      // 绘制边界框（来自 SAM 标注结果）
+      // 交互式边界框（底层）：必须在 annotations 之前绘制，否则会盖住右侧列表选中时的白边/光晕
+      boxes.forEach((box, idx) => {
+        const isHovered = hoveredBox === idx;
+        const isSelected = selectedId === String(idx);
+        const ann = annotations[idx];
+        const hasAnnBbox = Boolean(ann?.bbox && ann.bbox.length >= 4);
+        ctx.strokeStyle = isSelected ? '#86efac' : isHovered ? '#fbbf24' : '#00ff00';
+        ctx.lineWidth = isSelected ? 2 : isHovered ? 3 : 2;
+        ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+
+        // 有标注层时会画序号角标；仅交互框阶段仍画绿底编号
+        if (!isSelected || !hasAnnBbox) {
+          ctx.fillStyle = '#00ff00';
+          ctx.fillRect(box.x1, box.y1 - 22, 22, 20);
+          ctx.fillStyle = '#000';
+          ctx.font = 'bold 11px Arial';
+          ctx.textAlign = 'left';
+          ctx.fillText(String(idx + 1), box.x1 + 6, box.y1 - 6);
+        }
+      });
+
+      // 绘制边界框（来自 SAM 标注结果，盖在绿色交互框之上；选中时加粗高亮便于与右栏联动）
       annotations.forEach((ann, idx) => {
         if (!ann.bbox) return;
 
@@ -165,17 +187,24 @@ const AnnotationCanvas: React.FC<Props> = ({
         const isHovered = hoveredId === String(idx);
         const color = getColorForClass(ann.class);
 
-        // 绘制框
-        ctx.strokeStyle = isSelected ? '#fff' : isHovered ? '#f59e0b' : color;
-        ctx.lineWidth = isSelected ? 3 : isHovered ? 3 : 2;
+        ctx.strokeStyle = isSelected ? '#ffffff' : isHovered ? '#f59e0b' : color;
+        ctx.lineWidth = isSelected ? 4 : isHovered ? 3 : 2;
 
         if (isSelected || isHovered) {
-          ctx.shadowColor = color;
-          ctx.shadowBlur = isSelected ? 10 : 6;
+          ctx.shadowColor = isSelected ? '#3b82f6' : color;
+          ctx.shadowBlur = isSelected ? 14 : 6;
         }
 
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
         ctx.shadowBlur = 0;
+
+        if (isSelected) {
+          ctx.strokeStyle = 'rgba(59, 130, 246, 0.95)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.strokeRect(x1 - 1, y1 - 1, x2 - x1 + 2, y2 - y1 + 2);
+          ctx.setLineDash([]);
+        }
 
         // 绘制标签背景
         if (showLabels) {
@@ -201,21 +230,6 @@ const AnnotationCanvas: React.FC<Props> = ({
           ctx.textAlign = 'center';
           ctx.fillText(String(idx + 1), x1 + 10, y1 + 14);
         }
-      });
-
-      // 绘制交互式边界框
-      boxes.forEach((box, idx) => {
-        const isHovered = hoveredBox === idx;
-        ctx.strokeStyle = isHovered ? '#fbbf24' : '#00ff00';
-        ctx.lineWidth = isHovered ? 3 : 2;
-        ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
-
-        // 绘制编号
-        ctx.fillStyle = '#00ff00';
-        ctx.fillRect(box.x1, box.y1 - 22, 22, 20);
-        ctx.fillStyle = '#000';
-        ctx.font = 'bold 11px Arial';
-        ctx.fillText(String(idx + 1), box.x1 + 6, box.y1 - 6);
       });
 
       // 绘制点（SAM 交互点）
@@ -494,9 +508,11 @@ const AnnotationCanvas: React.FC<Props> = ({
           });
           if (onMaskAdd) {
             const colors = ['#ef4444','#3b82f6','#22c55e','#f97316','#8b5cf6','#06b6d4'];
-            onMaskAdd({ polygons: flatCoords, color: colors[Math.floor(Math.random() * colors.length)] });
+            const ok = onMaskAdd({ polygons: flatCoords, color: colors[Math.floor(Math.random() * colors.length)] });
+            if (ok !== false) setPolygonPoints([]);
+          } else {
+            setPolygonPoints([]);
           }
-          setPolygonPoints([]);
           return;
         }
       }
@@ -558,7 +574,8 @@ const AnnotationCanvas: React.FC<Props> = ({
         width: 'auto',
         height: 'auto',
         maxWidth: '100%',
-        maxHeight: 'calc(100vh - 230px)',
+        /* 父级为 flex 时可吃满剩余高度；单独打开时仍受视口约束（原 230px 留白过大） */
+        maxHeight: 'min(100%, min(92vh, calc(100dvh - 72px)))',
         cursor: getCursor(),
         border: '1px solid #e2e8f0',
         borderRadius: '8px',

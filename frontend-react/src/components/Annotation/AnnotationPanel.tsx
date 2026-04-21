@@ -13,6 +13,8 @@ interface Props {
   onBulkDelete?: (ids: string[]) => void;
   onSelectionIdsChange?: (ids: string[]) => void;
   onExport: () => void;
+  /** 一键 ZIP：images + labels + classes.txt */
+  onExportZip?: () => void | Promise<void>;
   classes: string[];
   variant?: 'card' | 'studio';
 }
@@ -29,6 +31,7 @@ export const AnnotationPanel: React.FC<Props> = ({
   onBulkDelete,
   onSelectionIdsChange,
   onExport,
+  onExportZip,
   classes,
   variant = 'card',
 }) => {
@@ -48,7 +51,7 @@ export const AnnotationPanel: React.FC<Props> = ({
   const [lastAnchorIdx, setLastAnchorIdx] = React.useState<number | null>(null);
 
   React.useEffect(() => {
-    setBulkClass((prev) => prev || classes[0] || '');
+    setBulkClass((prev) => (classes.includes(prev) ? prev : (classes[0] || '')));
   }, [classes]);
 
   React.useEffect(() => {
@@ -132,6 +135,7 @@ export const AnnotationPanel: React.FC<Props> = ({
       minHeight: studio ? 0 : undefined,
       flex: studio ? 1 : undefined,
       height: studio ? '100%' : undefined,
+      overflow: 'hidden',
     }}>
       {/* 头部 */}
       <div style={{
@@ -170,13 +174,17 @@ export const AnnotationPanel: React.FC<Props> = ({
           </div>
           <div style={{ display: 'flex', gap: '6px' }}>
             <select
-              value={bulkClass}
+              value={classes.includes(bulkClass) ? bulkClass : ''}
               onChange={(e) => setBulkClass(e.target.value)}
               style={{ flex: 1, padding: '4px', fontSize: '12px', border: `1px solid ${line}`, borderRadius: '4px', background: surface, color: fgTitle }}
             >
-              {classes.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
+              {classes.length === 0 ? (
+                <option value="">无可用类别</option>
+              ) : (
+                classes.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))
+              )}
             </select>
             <button
               onClick={applyBulkClass}
@@ -212,8 +220,8 @@ export const AnnotationPanel: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 标注列表 */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '8px' }}>
+      {/* 标注列表（minHeight:0 保证中间区可收缩，底部导出按钮不被挤出可视区） */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px' }}>
         {annotations.length === 0 ? (
           <div style={{
             textAlign: 'center',
@@ -264,9 +272,28 @@ export const AnnotationPanel: React.FC<Props> = ({
                     onClick={(e) => e.stopPropagation()}
                   />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 500, fontSize: '14px', color: fgTitle }}>{ann.class}</span>
-                  <span style={{ fontSize: '12px', color: fgMuted }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                    <span
+                      title="与画布、导出 txt 中的行顺序一致（从 1 起）"
+                      style={{
+                        flexShrink: 0,
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        color: studio ? '#a1a1aa' : '#64748b',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        background: studio ? '#3f3f46' : '#e2e8f0',
+                      }}
+                    >
+                      #{idx + 1}
+                    </span>
+                    <span style={{ fontWeight: 500, fontSize: '14px', color: fgTitle, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {ann.class}
+                    </span>
+                  </span>
+                  <span style={{ fontSize: '12px', color: fgMuted, flexShrink: 0 }}>
                     {ann.confidence != null ? ann.confidence.toFixed(2) : '—'}
                   </span>
                 </div>
@@ -291,6 +318,9 @@ export const AnnotationPanel: React.FC<Props> = ({
                       color: fgTitle,
                     }}
                   >
+                    {!classes.includes(ann.class) && ann.class ? (
+                      <option value={ann.class}>{ann.class}</option>
+                    ) : null}
                     {classes.map((c) => (
                       <option key={c} value={c}>{c}</option>
                     ))}
@@ -321,28 +351,56 @@ export const AnnotationPanel: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 底部操作 */}
+      {/* 底部操作：flexShrink 0 防止被挤没；双按钮并排便于窄栏一眼看到 */}
       {annotations.length > 0 && (
         <div style={{
           padding: '12px 16px',
           borderTop: `1px solid ${line}`,
+          flexShrink: 0,
+          display: 'grid',
+          gridTemplateColumns: onExportZip ? '1fr 1fr' : '1fr',
+          gap: '8px',
         }}>
           <button
+            type="button"
             onClick={onExport}
+            title="会连续下载 2 个纯文本：与图同名的 .txt（YOLO 标签行）和 _classes.txt（本图类别名，与 class_id 对应）。不包含图片，请自行放入 images/ 并与 labels/ 中 txt 同名配对。"
             style={{
               width: '100%',
-              padding: '10px',
+              padding: '10px 6px',
               border: 'none',
               borderRadius: '6px',
               background: '#3b82f6',
               color: '#fff',
               cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: 500,
+              fontSize: '12px',
+              fontWeight: 600,
+              lineHeight: 1.35,
             }}
           >
-            📥 导出 YOLO 格式
+            📥 TXT
           </button>
+          {onExportZip ? (
+            <button
+              type="button"
+              onClick={() => void onExportZip()}
+              title="下载一个 ZIP：内含 images/原图、labels/同名标签 txt、classes.txt 与 README.txt，解压即可对齐 YOLO 目录结构。"
+              style={{
+                width: '100%',
+                padding: '10px 6px',
+                border: `1px solid ${line}`,
+                borderRadius: '6px',
+                background: studio ? '#2d2d2d' : '#f8fafc',
+                color: fgTitle,
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+                lineHeight: 1.35,
+              }}
+            >
+              📦 ZIP
+            </button>
+          ) : null}
         </div>
       )}
     </div>

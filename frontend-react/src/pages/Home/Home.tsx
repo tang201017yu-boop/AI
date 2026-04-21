@@ -3,17 +3,25 @@ import { Link } from 'react-router-dom';
 import { Card, CardHeader, Button, StatCard } from '../../components/common';
 import { systemApi } from '../../services/api';
 import type { SystemInfo } from '../../types';
+import { SolutionFeatureIcon } from '../Solutions/solutionIcons';
+import {
+  IconHomeAnnotation,
+  IconHomeChart,
+  IconHomeSolutions,
+  IconHomeTrain,
+  IconHomeWorkflow,
+} from './homeIcons';
 import styles from './Home.module.css';
 
-const solutions = [
-  { icon: '📊', title: '对象计数', desc: '统计区域对象数量' },
-  { icon: '🔥', title: '热图分析', desc: '可视化检测密度' },
-  { icon: '🚗', title: '速度估算', desc: '计算移动对象速度' },
-  { icon: '📏', title: '距离计算', desc: '测量对象间距离' },
-  { icon: '🔒', title: '隐私保护', desc: '对象模糊处理' },
-  { icon: '✂️', title: '对象裁剪', desc: '自动提取检测对象' },
-  { icon: '👥', title: '队列管理', desc: '监控队列长度' },
-  { icon: '🏮', title: '虚拟围栏', desc: '区域入侵检测' },
+const solutions: { id: string; title: string; desc: string }[] = [
+  { id: 'object-counting', title: '对象计数', desc: '统计区域对象数量' },
+  { id: 'heatmap', title: '热图分析', desc: '可视化检测密度' },
+  { id: 'speed-estimation', title: '速度估算', desc: '计算移动对象速度' },
+  { id: 'distance-calculation', title: '距离计算', desc: '测量对象间距离' },
+  { id: 'object-blur', title: '隐私保护', desc: '对象模糊处理' },
+  { id: 'object-crop', title: '对象裁剪', desc: '自动提取检测对象' },
+  { id: 'queue-management', title: '队列管理', desc: '监控队列长度' },
+  { id: 'vision-eye', title: '虚拟围栏', desc: '区域入侵检测' },
 ];
 
 export const Home: React.FC = () => {
@@ -39,10 +47,20 @@ export const Home: React.FC = () => {
         </p>
         <div className={styles.heroButtons}>
           <Link to="/annotation">
-            <Button variant="primary" size="lg">⭐ 智能标注</Button>
+            <Button variant="primary" size="lg">
+              <span className={styles.heroBtnInner}>
+                <IconHomeAnnotation size={20} />
+                智能标注
+              </span>
+            </Button>
           </Link>
           <Link to="/training">
-            <Button variant="secondary" size="lg">🚀 开始训练</Button>
+            <Button variant="secondary" size="lg">
+              <span className={styles.heroBtnInner}>
+                <IconHomeTrain size={20} />
+                开始训练
+              </span>
+            </Button>
           </Link>
         </div>
       </div>
@@ -50,7 +68,7 @@ export const Home: React.FC = () => {
       {/* System Stats */}
       <div className={styles.section}>
         <Card>
-          <CardHeader title="系统状态" icon="📈" />
+          <CardHeader title="系统状态" icon={<IconHomeChart />} />
           <div className={styles.grid4}>
             <StatCard value={systemInfo?.total_models || '-'} label="模型数量" />
             <StatCard value={systemInfo?.total_datasets || '-'} label="数据集数量" variant="accent" />
@@ -63,7 +81,7 @@ export const Home: React.FC = () => {
       {/* AI Workflow */}
       <div className={styles.section}>
         <Card>
-          <CardHeader title="AI 工作流" icon="⚙️" />
+          <CardHeader title="AI 工作流" icon={<IconHomeWorkflow />} />
           <div className={styles.grid3}>
             <div className={styles.workflowStep} data-step="1">
               <h3 className={styles.workflowTitle}>
@@ -111,11 +129,13 @@ export const Home: React.FC = () => {
       {/* Solutions */}
       <div className={styles.section}>
         <Card>
-          <CardHeader title="Ultralytics 智能解决方案" icon="💡" />
+          <CardHeader title="Ultralytics 智能解决方案" icon={<IconHomeSolutions />} />
           <div className={styles.grid4}>
-            {solutions.map((item, index) => (
-              <div key={index} className={styles.solutionCard}>
-                <div className={styles.solutionIcon}>{item.icon}</div>
+            {solutions.map((item) => (
+              <div key={item.id} className={styles.solutionCard}>
+                <div className={styles.solutionIcon} aria-hidden>
+                  <SolutionFeatureIcon name={item.id} size={32} />
+                </div>
                 <div className={styles.solutionTitle}>{item.title}</div>
                 <div className={styles.solutionDesc}>{item.desc}</div>
               </div>

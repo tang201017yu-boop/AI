@@ -8,11 +8,23 @@ import type { Model } from '../../types';
 interface LoadedModel {
   cache_key: string;
   model_name: string;
+  /** 完整路径（后端修复缓存键解析后提供，用于悬停提示） */
+  model_path?: string;
   task: string;
   device: string;
   loaded: boolean;
   classes?: string[];
   num_classes?: number;
+}
+
+function formatLoadedDevice(device: string): string {
+  const d = String(device ?? '').trim();
+  if (d === 'cpu') return 'CPU';
+  if (d === 'mps') return 'MPS';
+  if (d === 'auto') return '自动';
+  if (/^\d+$/.test(d)) return `GPU ${d}`;
+  if (d.startsWith('cuda')) return d;
+  return d || '?';
 }
 
 // 用户上传的模型类型
@@ -203,7 +215,8 @@ export const Models: React.FC = () => {
           <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
             {loadedModels.map((model, idx) => (
               <div
-                key={idx}
+                key={model.cache_key || `${model.model_name}-${model.device}-${idx}`}
+                title={model.model_path ? model.model_path : undefined}
                 style={{
                   padding: '8px 16px',
                   background: '#10b981',
@@ -213,11 +226,12 @@ export const Models: React.FC = () => {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
+                  maxWidth: '100%',
                 }}
               >
                 <span>✓</span>
-                <span>{model.model_name}</span>
-                <span style={{ opacity: 0.7, fontSize: '12px' }}>({model.device})</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.model_name}</span>
+                <span style={{ opacity: 0.85, fontSize: '12px', flexShrink: 0 }}>· {formatLoadedDevice(model.device)}</span>
               </div>
             ))}
           </div>
