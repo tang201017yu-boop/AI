@@ -23,6 +23,12 @@ if [[ -d "$TARGET/.git" ]]; then
   git pull origin "$BRANCH"
   echo "==> 当前提交: $(git rev-parse --short HEAD) ($(git log -1 --oneline))"
 else
+  if [[ -d "$TARGET" ]]; then
+    # 目录已存在但不是 git 仓库时，git clone 会报错「已存在且非空」
+    BAK="${TARGET}.bak.$(date +%Y%m%d%H%M%S)"
+    echo "==> 目录已存在且无 .git，先备份为: $BAK"
+    mv "$TARGET" "$BAK"
+  fi
   echo "==> 克隆 $BRANCH 到: $TARGET"
   git clone -b "$BRANCH" "$REPO" "$TARGET"
   echo "==> 当前提交: $(git -C "$TARGET" rev-parse --short HEAD) ($(git -C "$TARGET" log -1 --oneline))"
