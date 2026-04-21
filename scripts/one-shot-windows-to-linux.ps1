@@ -66,7 +66,7 @@ $remoteLines = @(
   "git clone -b $Branch `"$remoteBundle`" `"$RemoteDir`""
   "rm -f `"$remoteBundle`""
   ('echo "==> done: ' + $RemoteDir + '"')
-  ('git -C "' + $RemoteDir + '" log -1 --pretty=oneline')
+  ('git -C "' + $RemoteDir + '" log -1 -s --pretty=%h')
 )
 # 只用 LF，避免 bash 收到 CRLF 把参数拆坏
 $remoteScript = ($remoteLines -join "`n") -replace "`r`n", "`n"
