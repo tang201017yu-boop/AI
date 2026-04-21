@@ -10,6 +10,7 @@
 
 set -euo pipefail
 ROOT="${1:-/root/Vision_Platform}"
+ROOT="${ROOT//$'\r'/}"
 cd "$ROOT"
 
 if [[ ! -f "app.py" ]]; then
