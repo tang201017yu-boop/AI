@@ -36,7 +36,8 @@ fi
 mkdir -p logs
 PORT="${API_PORT:-8000}"
 if command -v fuser &>/dev/null; then
-  fuser -k "${PORT}/tcp" 2>/dev/null || true
+  # fuser -k 默认会把 PID 打到 stdout，与后面 echo 连在一起；全部重定向
+  fuser -k "${PORT}/tcp" >/dev/null 2>&1 || true
 else
   pkill -f "uvicorn app:app" 2>/dev/null || true
 fi
