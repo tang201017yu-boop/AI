@@ -428,6 +428,8 @@ async def get_experiments():
     """
     logger.debug("[训练] 查询所有实验")
 
+    training_service._reconcile_stale_running_experiments()
+
     experiments = list(training_service.experiments.values())
     logger.info(f"[训练] 找到 {len(experiments)} 个实验")
 

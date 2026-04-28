@@ -1,0 +1,103 @@
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.muted {
+  color: #94a3b8;
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.back {
+  color: #64748b;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.back:hover {
+  color: #1d4ed8;
+}
+
+.desc {
+  color: #64748b;
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+
+.section {
+  margin-top: 20px;
+}
+
+.subheading {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: #0f172a;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.label {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ruleGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.ruleCard {
+  padding: 16px;
+}
+
+.ruleList {
+  margin: 0;
+  padding-left: 18px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.metricLines {
+  margin-top: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.metricLines p {
+  margin: 4px 0 0;
+}
+
+@media (max-width: 700px) {
+  .top,
+  .metaGrid,
+  .ruleGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .top {
+    display: grid;
+    gap: 10px;
+  }
+}

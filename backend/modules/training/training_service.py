@@ -6,6 +6,7 @@
 import os
 import time
 import json
+import csv
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -51,6 +52,130 @@ class TrainingService:
         self.experiments: Dict[str, Dict] = {}  # 实验记录字典
         self.experiments_file = Path(settings.MODELS_DIR) / "experiments.json"  # 持久化文件
         self._load_experiments()  # 加载已有实验
+        self._reconcile_stale_running_experiments()
+
+    def _experiment_start_timestamp(self, exp: Dict[str, Any]) -> Optional[float]:
+        raw = exp.get("created_at")
+        if not raw or not isinstance(raw, str):
+            return None
+        try:
+            s = raw.replace("Z", "+00:00")
+            return datetime.fromisoformat(s).timestamp()
+        except Exception:
+            return None
+
+    def _max_epoch_from_results_csv(self, project_name: str) -> Optional[int]:
+        """
+        results.csv 中 epoch 列为 Ultralytics 的 epoch 序号；显示用 epoch_display = epoch + 1（与图表一致）。
+        返回已完成的「显示用」最大 epoch，无文件或为空则返回 None。
+        """
+        results_file = Path(settings.MODELS_DIR) / project_name / "train" / "results.csv"
+        if not results_file.exists():
+            return None
+
+        def safe_float(v):
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        max_ep = 0
+        try:
+            with open(results_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    row = {k.strip(): v.strip() for k, v in row.items()}
+                    epoch = safe_float(row.get('epoch', row.get('                   epoch', '')))
+                    if epoch is None:
+                        continue
+                    ep = int(epoch) + 1
+                    max_ep = max(max_ep, ep)
+            return max_ep if max_ep > 0 else None
+        except Exception as e:
+            logger.debug(f"[训练] 读取 results.csv 推断 epoch 失败: {e}")
+            return None
+
+    def _training_finished_on_disk(self, exp: Dict[str, Any]) -> bool:
+        """根据磁盘上的 results.csv / 权重判断本次实验是否已完成（用于修正未落盘的 running 状态）"""
+        project_name = exp.get("project_name")
+        expected_epochs = int(exp.get("epochs") or 0)
+        if not project_name or expected_epochs <= 0:
+            return False
+
+        weights_dir = Path(settings.MODELS_DIR) / project_name / "train" / "weights"
+        best_pt = weights_dir / "best.pt"
+        last_pt = weights_dir / "last.pt"
+        if not best_pt.exists() and not last_pt.exists():
+            return False
+
+        csv_max = self._max_epoch_from_results_csv(project_name)
+        if csv_max is not None and csv_max >= expected_epochs:
+            return True
+
+        start_ts = self._experiment_start_timestamp(exp)
+        if start_ts is None:
+            return False
+        chosen = best_pt if best_pt.exists() else last_pt
+        try:
+            mtime = chosen.stat().st_mtime
+        except OSError:
+            return False
+        # 磁盘上无权重的旧项目被复用同名时，避免因旧文件误判：权重须不早于实验创建时间（允许时钟偏差）
+        if mtime + 120 < start_ts:
+            return False
+        # 无可读 csv、仅有本实验开始后写出的权重时，兜底认为已结束（finish 回调漏写但仍写了权重）
+        return csv_max is None
+
+    def _is_task_active_in_yolo_engine(self, task_id: str) -> bool:
+        try:
+            from backend.core.yolo_engine import yolo_engine
+            if yolo_engine is None:
+                return False
+            st = yolo_engine.get_training_status(task_id)
+            if not st:
+                return False
+            status = getattr(st, "status", None)
+            return status in ("pending", "running")
+        except Exception:
+            return False
+
+    def _maybe_complete_stale_experiment(self, task_id: str) -> bool:
+        """
+        若该 task 持久化为 running，但引擎中无活跃训练且磁盘已表明本轮结束，则改为 completed。
+        返回是否在内存中做了修改（是否仍需 _save_experiments 由调用方决定）。
+        """
+        exp = self.experiments.get(task_id)
+        if not isinstance(exp, dict) or exp.get("status") != "running":
+            return False
+        if self._is_task_active_in_yolo_engine(task_id):
+            return False
+        if not self._training_finished_on_disk(exp):
+            return False
+
+        exp["status"] = "completed"
+        project_name = exp.get("project_name")
+        if project_name:
+            wd = Path(settings.MODELS_DIR) / project_name / "train" / "weights"
+            best_pt = wd / "best.pt"
+            last_pt = wd / "last.pt"
+            if best_pt.exists():
+                exp["checkpoint_path"] = str(best_pt)
+            elif last_pt.exists():
+                exp["checkpoint_path"] = str(last_pt)
+        logger.info("[训练] 已自动修正异常的「训练中」状态为已完成: task_id=%s project=%s", task_id, project_name)
+        return True
+
+    def _reconcile_stale_running_experiments(self) -> None:
+        """
+        持久化中为 running，但进程内已无训练任务且磁盘显示已结束时，更正为 completed 并保存。
+        解决 Ultralytics on_train_end 未同步 experiments.json、epoch 已满仍显示训练中等问题。
+        """
+        changed = False
+        for tid in list(self.experiments.keys()):
+            if self._maybe_complete_stale_experiment(tid):
+                changed = True
+        if changed:
+            self._save_experiments()
 
     def _load_experiments(self):
         """
@@ -374,6 +499,8 @@ class TrainingService:
         # 1. 首先尝试从 experiments 中获取历史任务状态
         experiment = self.experiments.get(task_id)
         if experiment:
+            if self._maybe_complete_stale_experiment(task_id):
+                self._save_experiments()
             # 2. 检查 yolo_engine 中是否有正在运行的任务
             try:
                 if yolo_engine:

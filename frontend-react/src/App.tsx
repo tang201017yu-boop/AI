@@ -14,6 +14,9 @@ import { TrainingMonitor } from './pages/TrainingMonitor/TrainingMonitor';
 import { TrainingDetails } from './pages/TrainingDetails/TrainingDetails';
 import { Projects } from './pages/Projects/Projects';
 import { AINative } from './pages/AINative/AINative';
+import { RulesList, RuleDetailPage, RuleEditor } from './modules/rules';
+import { ArbitrationCenter, DisputeDetailPage } from './modules/arbitration';
+import { AnnotationShowcase } from './modules/annotation';
 
 export const App: React.FC = () => {
   return (
@@ -33,6 +36,13 @@ export const App: React.FC = () => {
         <Route path="training-monitor" element={<TrainingMonitor />} />
         <Route path="training/:taskId/details" element={<TrainingDetails />} />
         <Route path="projects" element={<Projects />} />
+        <Route path="governance/rules" element={<RulesList />} />
+        <Route path="governance/rules/new" element={<RuleEditor />} />
+        <Route path="governance/rules/:id/edit" element={<RuleEditor />} />
+        <Route path="governance/rules/:id" element={<RuleDetailPage />} />
+        <Route path="governance/arbitration" element={<ArbitrationCenter />} />
+        <Route path="governance/arbitration/:id" element={<DisputeDetailPage />} />
+        <Route path="governance/annotation" element={<AnnotationShowcase />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

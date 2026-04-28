@@ -1,0 +1,28 @@
+.page {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.top {
+  margin-bottom: 16px;
+}
+
+.back {
+  color: #64748b;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.back:hover {
+  color: #1d4ed8;
+}
+
+.warn {
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  margin: 0 0 16px;
+}

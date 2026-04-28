@@ -1,7 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Card, CardHeader, Button, Input } from '../../components/common';
 import { annotationApi, inferenceApi, samApi, modelApi, datasetApi } from '../../services/api';
-import type { AnnotationProject, SAMAnnotation, AnnotationTool, AnnotationPoint, AnnotationBox, AnnotationMask, ClassSuggestion } from '../../types';
+import type {
+  AnnotationProject,
+  SAMAnnotation,
+  AnnotationTool,
+  AnnotationPoint,
+  AnnotationBox,
+  AnnotationMask,
+  ClassSuggestion,
+  ArbitrationEvaluatePayload,
+  AgentSuggestionItem,
+} from '../../types';
+import { useDisputeDetection } from '../../modules/annotation/hooks/useDisputeDetection';
+import { DisputeAlert } from '../../modules/annotation/components/DisputeAlert';
+import { AgentSuggestion } from '../../modules/annotation/components/AgentSuggestion';
 import { buildYoloSingleImageExport, stemFromImageName, triggerDownload } from './exportSamYolo';
 import { buildYoloSingleImageZipBlob, YoloZipExportError } from './exportSamYoloZip';
 import { AnnotationCanvas, AnnotationToolbar, AnnotationPanel } from '../../components/Annotation';
@@ -50,6 +63,69 @@ function bboxIoU(a: number[], b: number[]): number {
   return union > 1e-9 ? inter / union : 0;
 }
 
+/** 仲裁服务缺陷类型：由类别名粗映射（对齐专利：裂缝/渗水/脱落/空鼓），其余走通用物理规则 */
+function defectTypeFromClassLabel(label: string): string {
+  const c = (label || '').toLowerCase();
+  if (c.includes('crack') || c.includes('裂缝') || c.includes('fissure')) return 'crack';
+  if (c.includes('seepage') || c.includes('渗') || c.includes('leak')) return 'seepage';
+  if (c.includes('spalling') || c.includes('脱落')) return 'spalling';
+  if (c.includes('hollow') || c.includes('void') || c.includes('空鼓')) return 'hollow';
+  return 'defect';
+}
+
+function metricsPayloadFromBboxTuple(b: [number, number, number, number]): Record<string, number> {
+  const [x1, y1, x2, y2] = b;
+  const w = Math.abs(x2 - x1);
+  const h = Math.abs(y2 - y1);
+  const longSide = Math.max(w, h);
+  const shortSide = Math.min(w, h);
+  return {
+    area: w * h,
+    width_length_ratio: longSide > 0 ? shortSide / longSide : 0,
+    wetness_index: 0.5,
+    connected_components: 1,
+  };
+}
+
+/** 无模型候选时的弱代理框：与手绘框保持较高 IoU（≥T_iou 时进入专利所述仲裁入口） */
+function syntheticAgentBboxFromHuman(h: [number, number, number, number]): [number, number, number, number] {
+  const [x1, y1, x2, y2] = h;
+  const w = x2 - x1;
+  const hgt = y2 - y1;
+  const dx = Math.max(4, Math.abs(w) * 0.04);
+  const dy = Math.max(3, Math.abs(hgt) * 0.04);
+  return [
+    Math.round(x1 + dx * 0.2),
+    Math.round(y1 + dy * 0.15),
+    Math.round(x2 - dx * 0.15),
+    Math.round(y2 - dy * 0.2),
+  ];
+}
+
+function pickAgentDetectionForArbitration(
+  humanBbox: [number, number, number, number],
+  humanLabel: string,
+  detections: SAMAnnotation[],
+): SAMAnnotation | null {
+  const hLabel = (humanLabel || '').trim().toLowerCase();
+  let best: { ann: SAMAnnotation; iou: number } | null = null;
+  for (const d of detections) {
+    if (!d.bbox || d.bbox.length < 4) continue;
+    const iou = bboxIoU(humanBbox, d.bbox);
+    const dLabel = String(d.class ?? '').trim().toLowerCase();
+    if (hLabel && dLabel && dLabel !== hLabel) continue;
+    if (!best || iou > best.iou) best = { ann: d, iou };
+  }
+  if (best && best.iou >= 0.01) return best.ann;
+  best = null;
+  for (const d of detections) {
+    if (!d.bbox || d.bbox.length < 4) continue;
+    const iou = bboxIoU(humanBbox, d.bbox);
+    if (iou >= 0.01 && (!best || iou > best.iou)) best = { ann: d, iou };
+  }
+  return best?.ann ?? null;
+}
+
 function bboxOverlapsExistingAnnotations(bbox: number[], annotations: SAMAnnotation[], iouThreshold: number): boolean {
   for (const ann of annotations) {
     if (!ann.bbox || ann.bbox.length < 4) continue;
@@ -82,6 +158,36 @@ function smartHoverKey(cls: string, bbox: number[]): string {
   return `${cls}|${Math.round(x1)}|${Math.round(y1)}|${Math.round(x2)}|${Math.round(y2)}`;
 }
 
+/** 项目侧栏 / API 返回的相对路径在「中文文件名」等场景下需统一编码，fetch 时才能稳定命中静态原图。 */
+function safeEncodePathnameSegments(pathname: string): string {
+  if (!pathname || pathname === '/') return pathname;
+  return pathname
+    .split('/')
+    .map((part) => {
+      if (part === '') return '';
+      try {
+        return encodeURIComponent(decodeURIComponent(part));
+      } catch {
+        return encodeURIComponent(part);
+      }
+    })
+    .join('/');
+}
+
+/** 将标注项目图片的 href 规范为可 fetch 的地址（同域相对路径会保留查询串）。 */
+function resolveAnnotationImageFetchUrl(href: string): string {
+  if (!href) return href;
+  if (href.startsWith('http://') || href.startsWith('https://')) {
+    const u = new URL(href);
+    u.pathname = safeEncodePathnameSegments(u.pathname);
+    return u.toString();
+  }
+  const q = href.indexOf('?');
+  const path = q >= 0 ? href.slice(0, q) : href;
+  const search = q >= 0 ? href.slice(q) : '';
+  return safeEncodePathnameSegments(path) + search;
+}
+
 export const Annotation: React.FC = () => {
   const [searchParams] = useSearchParams();
   const compactWorkbenchMode = searchParams.get('compact') === 'workspace';
@@ -98,7 +204,9 @@ export const Annotation: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [uploadingProjectId, setUploadingProjectId] = useState<string | null>(null);
   const [projectUploadTargetId, setProjectUploadTargetId] = useState<string | null>(null);
-  const [projectImages, setProjectImages] = useState<{ name: string; url: string }[]>([]);
+  const [projectImages, setProjectImages] = useState<
+    { name: string; url: string; original_url?: string }[]
+  >([]);
   const [, setLoadingImages] = useState(false);
 
   // 智能标注状态
@@ -144,6 +252,15 @@ export const Annotation: React.FC = () => {
   const [samHoveredId, setSamHoveredId] = useState<string | null>(null);
   const [samPanelSelectedIds, setSamPanelSelectedIds] = useState<string[]>([]);
   const [smartCandidates, setSmartCandidates] = useState<SAMAnnotation[]>([]);
+  /** 与 Smart 共用一次 detectAll：作为仲裁里「Agent 候选框」来源 */
+  const [arbitrationModelDetections, setArbitrationModelDetections] = useState<SAMAnnotation[]>([]);
+  const {
+    alerts: arbitrationAlerts,
+    evaluation: arbitrationEvaluation,
+    loading: arbitrationScanLoading,
+    scan: scanArbitrationForBox,
+    clear: clearArbitrationScan,
+  } = useDisputeDetection();
   const [samLoading, setSamLoading] = useState(false);
   const [samLoaded, setSamLoaded] = useState(false);
   const [samVersion, setSamVersion] = useState<SamToolbarVersion>('sam2_base');
@@ -153,6 +270,8 @@ export const Annotation: React.FC = () => {
   >([]);
   const [samHistoryIndex, setSamHistoryIndex] = useState(-1);
   const [imgSize, setImgSize] = useState({ width: 800, height: 600 });
+  /** 全屏图预览（中栏画布上当前打开的原图） */
+  const [imageFullscreenOpen, setImageFullscreenOpen] = useState(false);
 
   /** 工具栏色条：仅本图已标注类别（去重保序）+ 当前绘制类别（若尚未出现在图中则排在最前） */
   const samClassPalette = useMemo(() => {
@@ -174,6 +293,26 @@ export const Annotation: React.FC = () => {
       setSamTool('box');
     }
   }, [annotationMode, samTool]);
+
+  useEffect(() => {
+    if (!samImage) {
+      setImageFullscreenOpen(false);
+    }
+  }, [samImage]);
+
+  useEffect(() => {
+    if (!imageFullscreenOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setImageFullscreenOpen(false);
+    };
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [imageFullscreenOpen]);
 
   // 类别建议（基于检测结果）
   const [classSuggestions, setClassSuggestions] = useState<ClassSuggestion[]>([]);
@@ -340,6 +479,8 @@ export const Annotation: React.FC = () => {
     setSamMasks(newMasks);
     saveSamHistory(samPoints, newBoxes, newMasks, newAnnotations);
 
+    let resolvedLabel = cls;
+
     if (autoClassifyOnBox && samFile && annIdx >= 0) {
       try {
         const res = await samApi.classifyBbox(
@@ -351,6 +492,7 @@ export const Annotation: React.FC = () => {
         const r = res.data?.data ?? res.data;
         if (r?.success && r.class_name) {
           const clsName = String(r.class_name);
+          resolvedLabel = clsName;
           setSamClasses((prev) => {
             const next = prev.includes(clsName) ? prev : [...prev, clsName];
             const cid = next.indexOf(clsName);
@@ -375,28 +517,130 @@ export const Annotation: React.FC = () => {
         console.warn('[classify-bbox]', e);
       }
     }
-  }, [samBoxes, samMasks, samPoints, samLoaded, samImagePath, saveSamHistory, samAnnotations, samClasses, pickAnnotationClass, autoClassifyOnBox, samFile, selectedModel, confidence]);
 
-  // Smart 模式：加载候选检测框（鼠标悬停自动采纳）
-  useEffect(() => {
-    const loadSmartCandidates = async () => {
-      if (annotationMode !== 'smart' || !samFile) {
-        setSmartCandidates([]);
-        smartAddedRef.current.clear();
-        return;
+    if (samFile) {
+      const hb: [number, number, number, number] = [box.x1, box.y1, box.x2, box.y2];
+      let dets = arbitrationModelDetections;
+      if (dets.length === 0) {
+        try {
+          const detRes = await samApi.detectAll(samFile, selectedModel, confidence);
+          const detData = detRes.data?.data || detRes.data;
+          dets = detData?.annotations || [];
+        } catch {
+          dets = [];
+        }
       }
+      const agentAnn = pickAgentDetectionForArbitration(hb, resolvedLabel, dets);
+      let agentBbox: [number, number, number, number];
+      let agentLabel: string;
+      if (agentAnn?.bbox && agentAnn.bbox.length >= 4) {
+        agentBbox = [agentAnn.bbox[0], agentAnn.bbox[1], agentAnn.bbox[2], agentAnn.bbox[3]];
+        agentLabel = String(agentAnn.class ?? resolvedLabel);
+      } else {
+        agentBbox = syntheticAgentBboxFromHuman(hb);
+        agentLabel = resolvedLabel;
+      }
+      const arbPayload: ArbitrationEvaluatePayload = {
+        annotation_id: `${samImagePath || samFile.name}:${annIdx}:${Date.now()}`,
+        defect_type: defectTypeFromClassLabel(resolvedLabel),
+        iou_threshold: 0.3,
+        source: {
+          project: selectedProject?.name,
+          project_id: selectedProject?.id,
+          image: samImagePath || samFile.name,
+        },
+        agent_annotation: {
+          label: agentLabel,
+          bbox: agentBbox,
+          attributes: metricsPayloadFromBboxTuple(agentBbox),
+        },
+        human_annotation: {
+          label: resolvedLabel,
+          bbox: hb,
+          attributes: metricsPayloadFromBboxTuple(hb),
+        },
+      };
+      await scanArbitrationForBox(arbPayload);
+    }
+  }, [
+    samBoxes,
+    samMasks,
+    samPoints,
+    samLoaded,
+    samImagePath,
+    saveSamHistory,
+    samAnnotations,
+    samClasses,
+    pickAnnotationClass,
+    autoClassifyOnBox,
+    samFile,
+    selectedModel,
+    confidence,
+    arbitrationModelDetections,
+    scanArbitrationForBox,
+    selectedProject,
+  ]);
+
+  // 全图检测：Smart 悬停采纳 + 仲裁 Agent 候选（单次 detectAll）
+  useEffect(() => {
+    if (!samFile) {
+      setSmartCandidates([]);
+      setArbitrationModelDetections([]);
+      smartAddedRef.current.clear();
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
       try {
         const res = await samApi.detectAll(samFile, selectedModel, confidence);
         const result = res.data?.data || res.data;
         const anns: SAMAnnotation[] = result?.annotations || [];
-        smartAddedRef.current.clear();
-        setSmartCandidates(anns);
+        if (cancelled) return;
+        setArbitrationModelDetections(anns);
+        if (annotationMode === 'smart') {
+          smartAddedRef.current.clear();
+          setSmartCandidates(anns);
+        } else {
+          smartAddedRef.current.clear();
+          setSmartCandidates([]);
+        }
       } catch {
-        setSmartCandidates([]);
+        if (!cancelled) {
+          setArbitrationModelDetections([]);
+          setSmartCandidates([]);
+        }
       }
     };
-    loadSmartCandidates();
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [annotationMode, samFile, selectedModel, confidence]);
+
+  useEffect(() => {
+    clearArbitrationScan();
+  }, [samImagePath, clearArbitrationScan]);
+
+  const arbitrationSuggestionItems = useMemo<AgentSuggestionItem[]>(() => {
+    if (!arbitrationEvaluation) return [];
+    const winner = arbitrationEvaluation.decisionWinner;
+    const reason = `${arbitrationEvaluation.scenarioLabel}，${arbitrationEvaluation.decisionAction}`;
+    return [
+      {
+        id: 'arbitration-winner',
+        className:
+          winner === 'agent'
+            ? '采信 Agent（模型检测）'
+            : winner === 'human'
+              ? '采信人类（手绘框）'
+              : winner === 'expert'
+                ? '升级专家复核'
+                : '双方均合法 · 可融合',
+        confidence: Math.max(0.55, arbitrationEvaluation.iou),
+        reason,
+      },
+    ];
+  }, [arbitrationEvaluation]);
 
   const handleSmartCursorMove = useCallback((x: number, y: number) => {
     if (annotationMode !== 'smart') return;
@@ -444,12 +688,13 @@ export const Annotation: React.FC = () => {
   // 清除
   const handleSamClear = useCallback(() => {
     smartAddedRef.current.clear();
+    clearArbitrationScan();
     setSamPoints([]);
     setSamBoxes([]);
     setSamMasks([]);
     setSamAnnotations([]);
     saveSamHistory([], [], [], []);
-  }, [saveSamHistory]);
+  }, [saveSamHistory, clearArbitrationScan]);
 
   // 一键自动标注（检测所有类别）
   const handleDetectAll = useCallback(async () => {
@@ -1303,13 +1548,20 @@ export const Annotation: React.FC = () => {
     }
   };
 
-  // 点击已标注图片缩略图，加载到编辑区
-  const handleThumbnailClick = async (img: { name: string; url: string }) => {
+  // 点击项目图集缩略图：在画布中加载该图的完整原图（不沿用过期的缓存响应）
+  const handleThumbnailClick = async (img: { name: string; url: string; original_url?: string }) => {
     if (!selectedProject) return;
     setSamLoading(true);
     try {
-      // 从 URL 加载图片
-      const resp = await fetch(img.url);
+      if (samImage?.startsWith('blob:')) {
+        URL.revokeObjectURL(samImage);
+      }
+      const sourceHref = img.original_url || img.url;
+      const fetchUrl = resolveAnnotationImageFetchUrl(sourceHref);
+      const resp = await fetch(fetchUrl, { cache: 'no-store', credentials: 'same-origin' });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      }
       const blob = await resp.blob();
       const file = new File([blob], img.name, { type: blob.type || 'image/jpeg' });
       const imageUrl = URL.createObjectURL(blob);
@@ -2159,7 +2411,7 @@ export const Annotation: React.FC = () => {
                         key={i}
                         type="button"
                         onClick={() => handleThumbnailClick(img)}
-                        title={img.name}
+                        title={`${img.name} — 点击在画布中加载原图`}
                         style={{
                           display: 'block',
                           width: '100%',
@@ -2172,7 +2424,7 @@ export const Annotation: React.FC = () => {
                         }}
                       >
                         <img
-                          src={img.url}
+                          src={resolveAnnotationImageFetchUrl(img.url)}
                           alt=""
                           style={{
                             width: '100%',
@@ -2313,6 +2565,7 @@ export const Annotation: React.FC = () => {
                 {samImage ? (
                   <div
                     style={{
+                      position: 'relative',
                       flex: 1,
                       minHeight: 0,
                       width: '100%',
@@ -2321,6 +2574,32 @@ export const Annotation: React.FC = () => {
                       alignItems: 'center',
                     }}
                   >
+                    <button
+                      type="button"
+                      aria-label="全屏查看当前图"
+                      title="全屏查看当前原图；Smart 模式下可双击画布同样打开"
+                      onClick={() => setImageFullscreenOpen(true)}
+                      style={{
+                        position: 'absolute',
+                        top: 6,
+                        right: 6,
+                        zIndex: 3,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '6px 10px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        background: 'var(--bg-primary)',
+                        color: 'var(--text-primary)',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 6px rgba(0,0,0,0.12)',
+                      }}
+                    >
+                      <span aria-hidden>⛶</span> 全屏
+                    </button>
                     <AnnotationCanvas
                       image={samImage}
                       width={imgSize.width}
@@ -2336,6 +2615,7 @@ export const Annotation: React.FC = () => {
                       onBoxAdd={handleSamBoxAdd}
                       onBoxDrag={handleSamBoxDrag}
                       smartMode={annotationMode === 'smart'}
+                      onSmartImageDoubleClick={() => setImageFullscreenOpen(true)}
                       onCursorMove={handleSmartCursorMove}
                       onMaskAdd={(mask) => {
                         const cls = pickAnnotationClass();
@@ -2419,6 +2699,7 @@ export const Annotation: React.FC = () => {
                   <span>🔴 Shift+点击 — 负样本点</span>
                   <span>⬜ 拖动 — 框选（SAM 分割）</span>
                   <span>🔺 L — 多边形 · Esc / Backspace 撤销点</span>
+                  <span style={{ gridColumn: '1 / -1' }}>⛶ 画布右上角「全屏」查看大图；Smart 下可双击画布同效</span>
                 </div>
               )}
             </div>
@@ -2433,27 +2714,175 @@ export const Annotation: React.FC = () => {
                 background: 'var(--bg-primary)',
               }}
             >
-              <AnnotationPanel
-                annotations={samAnnotations}
-                selectedId={samSelectedId}
-                hoveredId={samHoveredId}
-                onSelect={setSamSelectedId}
-                onDelete={handleSamDelete}
-                onHover={setSamHoveredId}
-                onClassChange={handleSamClassChange}
-                onExport={handleSamExport}
-                onExportZip={handleSamExportZip}
-                onBulkClassChange={handleSamBulkClassChange}
-                onBulkDelete={handleSamBulkDelete}
-                onSelectionIdsChange={setSamPanelSelectedIds}
-                classes={samClasses}
-                variant="card"
-              />
+              <div
+                style={{
+                  flexShrink: 0,
+                  maxHeight: compactWorkbenchMode ? '38%' : '42%',
+                  overflowY: 'auto',
+                  borderBottom: '1px solid var(--border-color)',
+                  padding: compactWorkbenchMode ? '8px' : '10px 12px',
+                  background: 'var(--bg-secondary)',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: 'var(--text-primary)',
+                    marginBottom: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  仲裁提示
+                  {arbitrationScanLoading ? (
+                    <span style={{ fontWeight: 500, fontSize: '11px', color: 'var(--text-muted)' }}>分析中…</span>
+                  ) : null}
+                </div>
+                <DisputeAlert items={arbitrationAlerts} />
+                {!arbitrationScanLoading && arbitrationEvaluation ? (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr 1fr',
+                      gap: '6px',
+                      marginBottom: '10px',
+                      fontSize: '11px',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>触发仲裁</span>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {arbitrationEvaluation.triggered ? '是 (IoU≥T_iou)' : '否'}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>IoU</span>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {arbitrationEvaluation.iou.toFixed(3)}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>T_iou</span>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {(arbitrationEvaluation.case?.iouThreshold ?? 0.3).toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                <AgentSuggestion items={arbitrationSuggestionItems} />
+                {!samFile ? (
+                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '8px 0 0' }}>
+                    打开图片后，手绘框完成即可对比模型检测与手绘结果（IoU≥0.3 时进入仲裁）。
+                  </p>
+                ) : null}
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <AnnotationPanel
+                  annotations={samAnnotations}
+                  selectedId={samSelectedId}
+                  hoveredId={samHoveredId}
+                  onSelect={setSamSelectedId}
+                  onDelete={handleSamDelete}
+                  onHover={setSamHoveredId}
+                  onClassChange={handleSamClassChange}
+                  onExport={handleSamExport}
+                  onExportZip={handleSamExportZip}
+                  onBulkClassChange={handleSamBulkClassChange}
+                  onBulkDelete={handleSamBulkDelete}
+                  onSelectionIdsChange={setSamPanelSelectedIds}
+                  classes={samClasses}
+                  variant="card"
+                />
+              </div>
             </aside>
           </div>
         )}
       </Card>
 
+      {imageFullscreenOpen && samImage && (
+        <div
+          role="dialog"
+          aria-modal
+          aria-label="全屏图片预览"
+          onClick={() => setImageFullscreenOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(15, 23, 42, 0.96)',
+            padding: '12px',
+            boxSizing: 'border-box',
+          }}
+        >
+          <button
+            type="button"
+            aria-label="关闭全屏"
+            onClick={(e) => {
+              e.stopPropagation();
+              setImageFullscreenOpen(false);
+            }}
+            style={{
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              zIndex: 1,
+              width: 40,
+              height: 40,
+              border: '1px solid rgba(255,255,255,0.25)',
+              borderRadius: '8px',
+              background: 'rgba(0,0,0,0.45)',
+              color: '#fff',
+              fontSize: '20px',
+              lineHeight: 1,
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
+          <div
+            role="presentation"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: '100%',
+              maxHeight: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxSizing: 'border-box',
+              filter: 'drop-shadow(0 4px 24px rgba(0,0,0,0.45))',
+            }}
+          >
+            <AnnotationCanvas
+              viewOnly
+              maxHeightOverride="min(100%, calc(100dvh - 72px))"
+              image={samImage}
+              width={imgSize.width}
+              height={imgSize.height}
+              points={samPoints}
+              boxes={samBoxes}
+              masks={samMasks}
+              annotations={samAnnotations}
+              tool="select"
+              selectedId={samSelectedId}
+              hoveredId={samHoveredId}
+              onPointAdd={() => {}}
+              onBoxAdd={() => {}}
+              onBoxDrag={() => {}}
+              smartMode={false}
+              onMaskAdd={() => false}
+              onMaskSelect={() => {}}
+              onAnnotationSelect={() => {}}
+              currentClass={samCurrentClass}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

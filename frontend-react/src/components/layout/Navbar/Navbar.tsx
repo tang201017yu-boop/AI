@@ -12,6 +12,9 @@ const navItems = [
   { path: '/datasets', label: '数据集' },
   { path: '/annotation', label: '智能标注' },
   { path: '/augmentation', label: '数据增强' },
+  { path: '/governance/rules', label: '规则库' },
+  { path: '/governance/arbitration', label: '仲裁' },
+  { path: '/governance/annotation', label: '标注增强' },
 ];
 
 export const Navbar: React.FC = () => {

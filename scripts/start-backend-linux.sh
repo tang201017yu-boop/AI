@@ -7,6 +7,7 @@
 # 环境变量:
 #   SKIP_PIP=1     跳过 pip install（venv 已装好依赖时快速重启）
 #   API_PORT=8000  监听端口
+#   TORCH_FORCE_CPU=1  强制 PyTorch 用 CPU（仍报 CUDA no kernel 时可设，或升级 cu128 见 scripts/install-pytorch-gpu-cu128.sh）
 
 set -euo pipefail
 ROOT="${1:-/root/Vision_Platform}"
@@ -45,7 +46,20 @@ sleep 1
 
 nohup ./venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port "$PORT" >>logs/uvicorn.log 2>&1 &
 echo $! > /tmp/vision-platform-uvicorn.pid
-sleep 2
 echo "==> 已后台启动 uvicorn PID=$(cat /tmp/vision-platform-uvicorn.pid) 端口=$PORT"
 echo "==> 日志: $ROOT/logs/uvicorn.log"
-curl -s -o /dev/null -w "HTTP %{http_code}\n" "http://127.0.0.1:${PORT}/api/v1/system/health" || echo "(curl 失败请手动检查防火墙/依赖)"
+HEALTH_URL="http://127.0.0.1:${PORT}/api/v1/system/health"
+code="000"
+for _ in $(seq 1 45); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "$HEALTH_URL" 2>/dev/null || true)
+  if [[ "$code" == "200" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "$code" == "200" ]]; then
+  echo "==> 健康检查: HTTP $code"
+else
+  echo "==> 健康检查: HTTP ${code:-000}（若服务仍在加载，请过几秒再: curl -s -o /dev/null -w '%{http_code}' $HEALTH_URL ）"
+  echo "==> 或查看: tail -50 $ROOT/logs/uvicorn.log"
+fi

@@ -236,3 +236,8 @@ export interface ClassSuggestion {
   count: number;
   color: string;
 }
+
+// 治理域：规则 / 仲裁 / 标注增强
+export * from './rule';
+export * from './arbitration';
+export * from './annotation';

@@ -105,9 +105,12 @@ class SAMService:
                         "download_url": download_url
                     }
 
-            # 加载模型
-            logger.info(f"[SAM] 加载 SAM 模型: {model_path}")
+            # 加载模型（与 yolo 一致走 torch_compat，不兼容 GPU 时强制 CPU，避免 no kernel image）
+            from backend.core.torch_compat import model_device
+            dev = model_device()
+            logger.info(f"[SAM] 加载 SAM 模型: {model_path} 设备: {dev}")
             sam = sam_model_registry[model_type](checkpoint=model_path)
+            sam = sam.to(dev)
             self.predictor = SamPredictor(sam)
             self.model_type = model_type
             self.model_loaded = True

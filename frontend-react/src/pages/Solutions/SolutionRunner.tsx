@@ -202,8 +202,8 @@ const SOLUTIONS = {
     color: '#3b82f6',
     supportsVideo: true,
     params: [
-      { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo26n.pt', options: DETECTION_MODELS,
-        help: '模型越小越快；精度要求高可选 s/m。' },
+      { name: 'model_name', label: '检测模型', type: 'select', default: 'yolo11n.pt', options: DETECTION_MODELS,
+        help: '默认 yolo11n 兼容各版 Ultralytics；若已升级 YOLO26 可选手动选 yolo26n 等。' },
       { name: 'conf', label: '置信度阈值', type: 'number', default: 0.25, min: 0, max: 1, step: 0.05,
         help: '越高框越少但更准；越低检出更多但易误报。' },
       { name: 'iou', label: '检测 NMS IoU', type: 'number', default: 0.7, min: 0.1, max: 0.95, step: 0.05,
@@ -1365,7 +1365,9 @@ export const SolutionRunner: React.FC = () => {
                       />
                       <span>
                         {param.label}
-                        {param.help ? <p style={{ ...paramHelpStyle, marginTop: '4px', fontWeight: 400 }}>{param.help}</p> : null}
+                        {(param as Param).help ? (
+                          <p style={{ ...paramHelpStyle, marginTop: '4px', fontWeight: 400 }}>{(param as Param).help}</p>
+                        ) : null}
                       </span>
                     </label>
                   ) : (
@@ -1440,7 +1442,9 @@ export const SolutionRunner: React.FC = () => {
                           ) : null}
                         </>
                       )}
-                      {param.help && param.type !== 'checkbox' ? <p style={paramHelpStyle}>{param.help}</p> : null}
+                      {(param as Param).help && param.type !== 'checkbox' ? (
+                        <p style={paramHelpStyle}>{(param as Param).help}</p>
+                      ) : null}
                     </>
                   )}
                 </div>

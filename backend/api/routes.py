@@ -6,7 +6,7 @@ import re
 import os
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ from backend.models.schemas import (
 )
 from backend.services.yolo_service import yolo_service
 from backend.core.yolo_engine import yolo_engine
-from backend.services import annotation_service, dataset_service, solutions_service
+from backend.services import annotation_service, arbitration_service, dataset_service, solutions_service
 from backend.services.supervision_service import supervision_service
 from backend.modules.training.training_service import training_service
 from backend.modules.training.project_service import project_service
@@ -46,6 +46,30 @@ class DatasetProjectCreate(BaseModel):
 
 class DatasetProjectRename(BaseModel):
     new_name: str = Field(..., min_length=1)
+
+
+class ArbitrationAnnotationPayload(BaseModel):
+    label: str = Field(default="object")
+    bbox: List[float] = Field(..., min_length=4, max_length=4)
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ArbitrationEvaluateRequest(BaseModel):
+    annotation_id: Optional[str] = None
+    defect_type: str = Field(default="crack", min_length=1)
+    source: Dict[str, Any] = Field(default_factory=dict)
+    iou_threshold: float = Field(
+        default=0.3,
+        gt=0,
+        description="T_iou：Agent 与人类框 IoU ≥ 此值时进入仲裁入口（与专利流程图一致）",
+    )
+    agent_annotation: ArbitrationAnnotationPayload
+    human_annotation: ArbitrationAnnotationPayload
+
+
+class ArbitrationJudgeRequest(BaseModel):
+    valid: bool
+    reason: Optional[str] = None
 
 
 # 挂载训练模块路由
@@ -840,6 +864,86 @@ async def visualize_annotations(project_id: str, image_name: str):
             raise HTTPException(status_code=500, detail="Failed to visualize annotations")
         
         return FileResponse(path=str(output_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/governance/arbitration/evaluate")
+async def evaluate_arbitration_case(payload: ArbitrationEvaluateRequest):
+    """Evaluate a human-vs-agent dispute with physical constraints."""
+    try:
+        result = arbitration_service.evaluate(payload.model_dump())
+        return {
+            "success": True,
+            "data": result,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/governance/arbitration/disputes")
+async def list_arbitration_disputes(
+    page: int = 1,
+    page_size: int = 20,
+    status: Optional[str] = None,
+):
+    """List arbitration disputes."""
+    try:
+        result = arbitration_service.list_cases(status=status, page=page, page_size=page_size)
+        return {
+            "success": True,
+            "data": result,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/governance/arbitration/disputes/{case_id}")
+async def get_arbitration_dispute(case_id: str):
+    """Get arbitration dispute detail."""
+    try:
+        case = arbitration_service.get_case(case_id)
+        if not case:
+            raise HTTPException(status_code=404, detail="Dispute not found")
+        return {
+            "success": True,
+            "data": case,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/governance/arbitration/stats")
+async def get_arbitration_stats():
+    """Get arbitration dashboard statistics."""
+    try:
+        return {
+            "success": True,
+            "data": arbitration_service.get_stats(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/governance/arbitration/disputes/{case_id}/judge")
+async def submit_arbitration_judgement(case_id: str, payload: ArbitrationJudgeRequest):
+    """Submit arbitration judgement."""
+    try:
+        updated = arbitration_service.submit_judgement(
+            case_id,
+            valid=payload.valid,
+            reason=payload.reason,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Dispute not found")
+        return {
+            "success": True,
+            "message": "Judgement saved",
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

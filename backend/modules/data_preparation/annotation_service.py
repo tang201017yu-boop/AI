@@ -7,6 +7,14 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from urllib.parse import quote
+
+
+def _public_annotation_image_url(project_name: str, file_name: str) -> str:
+    """静态服务 /annotation-images 下文件的可访问 URL（对路径段编码，支持中文/空格文件名）。"""
+    p = quote(str(project_name), safe="")
+    f = quote(str(file_name), safe="")
+    return f"/annotation-images/{p}/images/{f}"
 
 try:
     from ultralytics import YOLO
@@ -315,7 +323,7 @@ class AnnotationService:
         disk_names_set = set()
         for f in images_dir.iterdir():
             if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
-                url = f"/annotation-images/{project_name}/images/{f.name}"
+                url = _public_annotation_image_url(project_name, f.name)
                 disk_to_url[f.name] = url
                 disk_names_set.add(f.name)
 
@@ -325,20 +333,22 @@ class AnnotationService:
             url = disk_to_url.get(img_name)
             if url:
                 # 原文件名存在于磁盘上
-                images.append({"name": img_name, "url": url})
+                images.append({"name": img_name, "url": url, "original_url": url})
             else:
                 # 原文件名不在磁盘上（可能被重命名了）
                 # 尝试模糊匹配：在 disk_names 中找包含原文件名的
                 matched = False
                 for disk_name in disk_names_set:
                     if disk_name.startswith(img_name.rsplit('.', 1)[0]) or img_name.startswith(disk_name.rsplit('.', 1)[0]):
-                        images.append({"name": disk_name, "url": disk_to_url[disk_name]})
+                        u = disk_to_url[disk_name]
+                        images.append({"name": disk_name, "url": u, "original_url": u})
                         matched = True
                         break
                 if not matched:
                     # 最后尝试：直接用原文件名作为 name，构造 URL
                     # (服务器应该能处理这种情况)
-                    images.append({"name": img_name, "url": f"/annotation-images/{project_name}/images/{img_name}"})
+                    u = _public_annotation_image_url(project_name, img_name)
+                    images.append({"name": img_name, "url": u, "original_url": u})
 
         return images
 

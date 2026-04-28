@@ -23,6 +23,12 @@ interface Props {
   currentClass?: string;
   smartMode?: boolean;
   onCursorMove?: (x: number, y: number) => void;
+  /** Smart 模式下双击画布时触发（如全屏预览），不占用单点/框选 */
+  onSmartImageDoubleClick?: () => void;
+  /** 只读展示：不响应交互（全屏带标注预览等） */
+  viewOnly?: boolean;
+  /** 覆盖画布的 maxHeight 样式，例如全屏时吃满视口 */
+  maxHeightOverride?: string;
 }
 
 const AnnotationCanvas: React.FC<Props> = ({
@@ -46,6 +52,9 @@ const AnnotationCanvas: React.FC<Props> = ({
   currentClass = 'object',
   smartMode = false,
   onCursorMove,
+  onSmartImageDoubleClick,
+  viewOnly = false,
+  maxHeightOverride,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -533,6 +542,7 @@ const AnnotationCanvas: React.FC<Props> = ({
 
   // 获取光标样式
   const getCursor = () => {
+    if (viewOnly) return 'default';
     if (smartMode) return 'crosshair';
     if (tool === 'point') return 'crosshair';
     if (tool === 'box') return isDrawing ? 'crosshair' : 'crosshair';
@@ -561,10 +571,21 @@ const AnnotationCanvas: React.FC<Props> = ({
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [tool, polygonPoints.length]);
 
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (smartMode && onSmartImageDoubleClick) {
+        e.preventDefault();
+        onSmartImageDoubleClick();
+      }
+    },
+    [smartMode, onSmartImageDoubleClick],
+  );
+
   return (
     <canvas
       ref={canvasRef}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -574,12 +595,15 @@ const AnnotationCanvas: React.FC<Props> = ({
         width: 'auto',
         height: 'auto',
         maxWidth: '100%',
-        /* 父级为 flex 时可吃满剩余高度；单独打开时仍受视口约束（原 230px 留白过大） */
-        maxHeight: 'min(100%, min(92vh, calc(100dvh - 72px)))',
+        maxHeight:
+          maxHeightOverride !== undefined
+            ? maxHeightOverride
+            : 'min(100%, min(92vh, calc(100dvh - 72px)))',
         cursor: getCursor(),
-        border: '1px solid #e2e8f0',
+        border: viewOnly ? 'none' : '1px solid #e2e8f0',
         borderRadius: '8px',
         background: '#1e293b',
+        pointerEvents: viewOnly ? 'none' : 'auto',
       }}
     />
   );

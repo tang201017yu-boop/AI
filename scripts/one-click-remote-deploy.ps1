@@ -8,7 +8,13 @@
   2) SSH：ufw/firewalld 放行 8000/tcp
   3) SSH：bash scripts/start-backend-linux.sh
 
+  同步时 data/ 默认会从本次备份目录合并回 {RemoteDir}/data/（与 one-shot 内说明一致）；
+  见 one-shot-windows-to-linux.ps1 顶部注释。若需全新空 data/，传 -SkipDataRestore。
+
   依赖：OpenSSH（ssh/scp）、本机当前分支 dev 有提交、能登录 root@192.168.2.102
+
+.PARAMETER SkipDataRestore
+  传入 one-shot，不从 .bak 时间戳目录合并 data/
 
 .PARAMETER SkipSync
   仅重启/装依赖，不再打 bundle（代码已在服务器上时加快）
@@ -26,7 +32,8 @@ param(
   [string]$RemoteDir = "/root/Vision_Platform",
   [string]$Branch = "dev",
   [switch]$SkipSync,
-  [switch]$SkipPip
+  [switch]$SkipPip,
+  [switch]$SkipDataRestore
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,7 +51,7 @@ if (-not (Test-Path $oneShot)) { Write-Error "Missing: $oneShot" }
 
 if (-not $SkipSync) {
   Write-Host "========== [1/3] Sync code (bundle -> server) ==========" -ForegroundColor Cyan
-  & $oneShot -LinuxHost $LinuxHost -LinuxUser $LinuxUser -RemoteDir $RemoteDir -Branch $Branch
+  & $oneShot -LinuxHost $LinuxHost -LinuxUser $LinuxUser -RemoteDir $RemoteDir -Branch $Branch -SkipDataRestore:$SkipDataRestore
 } else {
   Write-Host "========== [1/3] Skip sync (SkipSync) ==========" -ForegroundColor Yellow
 }

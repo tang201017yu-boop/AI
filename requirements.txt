@@ -68,6 +68,8 @@ s3transfer==0.16.0
 scipy==1.17.0
 segment-anything
 setuptools==80.10.1
+shapely==2.0.6
+lap==0.5.12
 simsimd==6.5.12
 six==1.17.0
 starlette==0.50.0

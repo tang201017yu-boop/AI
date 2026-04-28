@@ -1,0 +1,130 @@
+[
+  {
+    "id": "seed-demo-case",
+    "title": "Crack 物理约束仲裁",
+    "annotationId": "demo-crack-001",
+    "status": "open",
+    "openedAt": "2026-04-27T10:52:21.433700",
+    "updatedAt": "2026-04-27T10:52:21.433700",
+    "defectType": "crack",
+    "scenario": "ILLEGAL-AB",
+    "scenarioLabel": "双方违规",
+    "decisionAction": "推送 L4 专家重标",
+    "decisionWinner": "expert",
+    "description": "IoU=0.182，阈值=0.30，根据物理约束进入 双方违规 场景。",
+    "claimantNote": "Agent 标注候选",
+    "respondentNote": "人类标注候选",
+    "triggered": true,
+    "triggerIou": 0.1823,
+    "iouThreshold": 0.3,
+    "source": {
+      "project": "demo",
+      "image_name": "sample-crack.jpg"
+    },
+    "leftAnnotation": {
+      "id": "agent-标注",
+      "label": "Agent 标注",
+      "bbox": [
+        40,
+        80,
+        212,
+        94
+      ],
+      "legality": "violation",
+      "notes": [
+        "裂缝宽长比 未通过",
+        "最小像素面积 通过"
+      ],
+      "jsonSummary": "{\n  \"label\": \"crack\",\n  \"bbox\": [\n    40,\n    80,\n    212,\n    94\n  ],\n  \"legality\": \"violation\",\n  \"metrics\": {\n    \"width\": 172.0,\n    \"height\": 14.0,\n    \"area\": 2408.0,\n    \"width_length_ratio\": 0.08139534883720931,\n    \"wetness_index\": 0.22,\n    \"connected_components\": 1.0\n  }\n}",
+      "attributes": {
+        "area": 2408.0,
+        "width_length_ratio": 0.0814,
+        "wetness_index": 0.22,
+        "connected_components": 1.0
+      }
+    },
+    "rightAnnotation": {
+      "id": "人类标注",
+      "label": "人类标注",
+      "bbox": [
+        44,
+        84,
+        145,
+        125
+      ],
+      "legality": "violation",
+      "notes": [
+        "裂缝宽长比 未通过",
+        "最小像素面积 通过"
+      ],
+      "jsonSummary": "{\n  \"label\": \"crack\",\n  \"bbox\": [\n    44,\n    84,\n    145,\n    125\n  ],\n  \"legality\": \"violation\",\n  \"metrics\": {\n    \"width\": 101.0,\n    \"height\": 41.0,\n    \"area\": 4141.0,\n    \"width_length_ratio\": 0.40594059405940597,\n    \"wetness_index\": 0.18,\n    \"connected_components\": 2.0\n  }\n}",
+      "attributes": {
+        "area": 4141.0,
+        "width_length_ratio": 0.4059,
+        "wetness_index": 0.18,
+        "connected_components": 2.0
+      }
+    },
+    "metrics": {
+      "agent": {
+        "width": 172.0,
+        "height": 14.0,
+        "area": 2408.0,
+        "width_length_ratio": 0.08139534883720931,
+        "wetness_index": 0.22,
+        "connected_components": 1.0
+      },
+      "human": {
+        "width": 101.0,
+        "height": 41.0,
+        "area": 4141.0,
+        "width_length_ratio": 0.40594059405940597,
+        "wetness_index": 0.18,
+        "connected_components": 2.0
+      }
+    },
+    "ruleHits": {
+      "agent": [
+        {
+          "id": "R_crack_001",
+          "label": "裂缝宽长比",
+          "metric": "width_length_ratio",
+          "operator": "<=",
+          "threshold": 0.08,
+          "value": 0.08139534883720931,
+          "passed": false
+        },
+        {
+          "id": "R_crack_002",
+          "label": "最小像素面积",
+          "metric": "area",
+          "operator": ">=",
+          "threshold": 180.0,
+          "value": 2408.0,
+          "passed": true
+        }
+      ],
+      "human": [
+        {
+          "id": "R_crack_001",
+          "label": "裂缝宽长比",
+          "metric": "width_length_ratio",
+          "operator": "<=",
+          "threshold": 0.08,
+          "value": 0.40594059405940597,
+          "passed": false
+        },
+        {
+          "id": "R_crack_002",
+          "label": "最小像素面积",
+          "metric": "area",
+          "operator": ">=",
+          "threshold": 180.0,
+          "value": 4141.0,
+          "passed": true
+        }
+      ]
+    },
+    "judgement": null
+  }
+]

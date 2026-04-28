@@ -35,16 +35,15 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-# 检测GPU显存，如果不足则禁用CUDA（必须在导入torch之前设置）
+# 须最早：统一处理 PyTorch 与 GPU 架构兼容性(如 RTX50 + 旧 cu124 无 sm_120 kernel)
+project_root = Path(__file__).resolve().parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 try:
-    import torch
-    if torch.cuda.is_available():
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        if gpu_memory < 2:
-            print(f"[启动] GPU显存不足 ({gpu_memory:.1f}GB < 2GB)，强制使用CPU模式")
-            os.environ['CUDA_VISIBLE_DEVICES'] = ''
-except:
-    pass
+    from backend.core.torch_compat import apply_torch_device_safety
+    apply_torch_device_safety()
+except Exception as _e:  # noqa: BLE001
+    print(f"[启动] torch_compat 未应用(沿用 PyTorch 默认): {_e}")
 
 # ============================================================================
 # 日志配置
@@ -64,11 +63,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# 路径初始化
+# 路径初始化 (project_root 已在文件首段设置)
 # ============================================================================
-project_root = Path(__file__).resolve().parent
-sys.path.insert(0, str(project_root))
-
 logger.info("=" * 60)
 logger.info("OpenCV Platform API 服务启动中...")
 logger.info(f"项目路径: {project_root}")

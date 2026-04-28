@@ -8,6 +8,8 @@ pillow
 opencv-python
 imageio-ffmpeg
 ultralytics
+shapely
+lap
 supervision
 torch
 torchvision

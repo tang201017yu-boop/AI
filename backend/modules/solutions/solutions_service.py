@@ -361,6 +361,21 @@ class SolutionsService:
         conf/iou/max_det/tracker 会传入 model.track()，用于调节漏检、重叠框合并与跟踪器。
         """
         try:
+            try:
+                import shapely  # noqa: F401  # Ultralytics ObjectCounter 依赖
+            except ImportError:
+                return {
+                    "success": False,
+                    "message": "缺少依赖 shapely（目标/对象计数所需）。请在后端所在机器执行: pip install shapely 后重启 API 服务。",
+                }
+            try:
+                import lap  # noqa: F401  # 部分 track 关联匹配依赖
+            except ImportError:
+                return {
+                    "success": False,
+                    "message": "缺少依赖 lap（对象计数/跟踪关联所需）。请在后端执行: pip install lap 后重启 API 服务。",
+                }
+
             model = self.load_model(model_name)
             model_path = get_model_path(model)
 
