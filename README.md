@@ -1,3 +1,5 @@
+**仓库：** [tang201017yu-boop/AI](https://github.com/tang201017yu-boop/AI)（私有，分支 `dev`）
+
 # OpenCV Platform - YOLO Edition
 
 <div align="center">
