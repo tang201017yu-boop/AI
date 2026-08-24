@@ -233,7 +233,41 @@ export const Annotation: React.FC = () => {
   const [projectBatchConf, setProjectBatchConf] = useState(0.25);
   const [projectBatchLoading, setProjectBatchLoading] = useState(false);
   const [projectBatchProgress, setProjectBatchProgress] = useState({ current: 0, total: 0 });
-  const [projectBatchDone, setProjectBatchDone] = useState<{ success: number; failed: number } | null>(null);
+  const [projectBatchDone, setProjectBatchDone] = useState<{ success: number; failed: number; total_detections?: number } | null>(null);
+
+  // ============ 生成数据集版本（Generate New Version）状态 ============
+  const [showVersionModal, setShowVersionModal] = useState(false);
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [versionForm, setVersionForm] = useState<{
+    dataset_name: string;
+    val_ratio: number;
+    test_ratio: number;
+    seed: number;
+    overwrite: boolean;
+    resize: boolean;
+    resize_size: number;
+    aug_enabled: boolean;
+    aug_horizontal_flip: boolean;
+    aug_vertical_flip: boolean;
+    aug_rotate: boolean;
+    aug_brightness_contrast: boolean;
+    aug_num: number;
+  }>({
+    dataset_name: '',
+    val_ratio: 0.2,
+    test_ratio: 0,
+    seed: 42,
+    overwrite: false,
+    resize: false,
+    resize_size: 640,
+    aug_enabled: false,
+    aug_horizontal_flip: true,
+    aug_vertical_flip: false,
+    aug_rotate: false,
+    aug_brightness_contrast: true,
+    aug_num: 2,
+  });
+  const [generatedVersions, setGeneratedVersions] = useState<Array<Record<string, any>>>([]);
 
   // ============ SAM 标注功能状态 ============
   /** 与 Ultralytics Hub 一致：Draw=手绘优先布局；Smart=AI 辅助优先（功能相同） */
@@ -481,7 +515,10 @@ export const Annotation: React.FC = () => {
 
     let resolvedLabel = cls;
 
-    if (autoClassifyOnBox && samFile && annIdx >= 0) {
+    // 仅在「用户没有手动选类别」时才让 YOLO 推断；否则用户手动选的 person/xxx 视为最终意图，不被覆盖。
+    // 即便启用自动识别也不再 setSamCurrentClass —— 避免下一次画框时全局当前类别被切走。
+    const userPickedClass = String(samCurrentClass || '').trim();
+    if (autoClassifyOnBox && !userPickedClass && samFile && annIdx >= 0) {
       try {
         const res = await samApi.classifyBbox(
           samFile,
@@ -511,7 +548,6 @@ export const Annotation: React.FC = () => {
             });
             return next;
           });
-          setSamCurrentClass(clsName);
         }
       } catch (e) {
         console.warn('[classify-bbox]', e);
@@ -573,6 +609,7 @@ export const Annotation: React.FC = () => {
     samClasses,
     pickAnnotationClass,
     autoClassifyOnBox,
+    samCurrentClass,
     samFile,
     selectedModel,
     confidence,
@@ -1061,12 +1098,168 @@ export const Annotation: React.FC = () => {
     }
   }, [selectedProject]);
 
+  /** 加载当前项目已有的数据集版本列表 */
+  const refreshDatasetVersions = useCallback(async () => {
+    if (!selectedProject) {
+      setGeneratedVersions([]);
+      return;
+    }
+    const pid = String(selectedProject.id || selectedProject.name);
+    try {
+      const res = await annotationApi.listVersions(pid);
+      const data = (res.data as any)?.versions ?? [];
+      setGeneratedVersions(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.warn('listVersions failed', e);
+      setGeneratedVersions([]);
+    }
+  }, [selectedProject]);
+
+  useEffect(() => {
+    refreshDatasetVersions();
+  }, [refreshDatasetVersions]);
+
+  /** 打开「生成新版本」弹窗，自动建议下一个版本号作为数据集名 */
+  const handleOpenVersionModal = useCallback(() => {
+    if (!selectedProject) {
+      alert('请先选择项目');
+      return;
+    }
+    const baseName = String(selectedProject.id || selectedProject.name || 'dataset')
+      .replace(/[^\w\u4e00-\u9fa5\-]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'dataset';
+    const nextIndex = (generatedVersions?.length || 0) + 1;
+    setVersionForm((prev) => ({
+      ...prev,
+      dataset_name: `${baseName}_v${nextIndex}`,
+    }));
+    setShowVersionModal(true);
+  }, [selectedProject, generatedVersions]);
+
+  /** 提交生成数据集版本 */
+  const handleGenerateVersion = useCallback(async () => {
+    if (!selectedProject) return;
+    const pid = String(selectedProject.id || selectedProject.name);
+    if (versionForm.val_ratio + versionForm.test_ratio >= 1) {
+      alert('val + test 比例之和必须小于 1');
+      return;
+    }
+    setVersionLoading(true);
+    try {
+      const payload = {
+        dataset_name: versionForm.dataset_name?.trim() || undefined,
+        val_ratio: Number(versionForm.val_ratio) || 0,
+        test_ratio: Number(versionForm.test_ratio) || 0,
+        seed: Number(versionForm.seed) || 42,
+        overwrite: versionForm.overwrite,
+        preprocessing: {
+          resize: versionForm.resize,
+          size: Number(versionForm.resize_size) || 640,
+        },
+        augmentation: {
+          enabled: versionForm.aug_enabled,
+          horizontal_flip: versionForm.aug_horizontal_flip,
+          vertical_flip: versionForm.aug_vertical_flip,
+          rotate: versionForm.aug_rotate,
+          brightness_contrast: versionForm.aug_brightness_contrast,
+          num_augmented: Math.max(1, Number(versionForm.aug_num) || 2),
+        },
+      };
+      const res = await annotationApi.generateVersion(pid, payload);
+      const data = res.data as any;
+      const v = data?.version || {};
+      const counts = v.split_counts || {};
+      alert(
+        `数据集版本已生成 ✅\n\n` +
+          `名称：${v.dataset_name}\n` +
+          `路径：${v.dataset_path || data?.dataset_path}\n` +
+          `切分：train ${counts.train || 0} / val ${counts.val || 0} / test ${counts.test || 0}\n` +
+          (v.augmentation?.augmented_images
+            ? `增强：${v.augmentation.augmented_images} 张\n`
+            : '') +
+          `\n现在可以前往「数据集」页面，或直接到「模型训练」选择该数据集开始训练。`,
+      );
+      setShowVersionModal(false);
+      await refreshDatasetVersions();
+    } catch (e: any) {
+      console.error('generateVersion failed', e);
+      const msg = e?.response?.data?.detail || e?.message || '生成失败';
+      alert(`生成数据集版本失败：${msg}`);
+    } finally {
+      setVersionLoading(false);
+    }
+  }, [selectedProject, versionForm, refreshDatasetVersions]);
+
   // 添加新类别
   const handleAddClass = (className: string) => {
     const name = className.trim();
     if (!name) return;
     setSamClasses((prev) => (prev.includes(name) ? prev : [...prev, name]));
     setSamCurrentClass(name);
+  };
+
+  // 重命名类别：同步更新所有引用此类别的标注（class_id 因索引未变保持不变）
+  const handleRenameClass = (oldName: string, newName: string) => {
+    const o = oldName.trim();
+    const n = newName.trim();
+    if (!o || !n || o === n) return;
+    setSamClasses((prev) => {
+      if (!prev.includes(o)) return prev;
+      if (prev.includes(n)) return prev;
+      return prev.map((c) => (c === o ? n : c));
+    });
+    setSamAnnotations((prev) => prev.map((a) => (a.class === o ? { ...a, class: n } : a)));
+    setClassSuggestions((prev) => prev.map((s) => (s.name === o ? { ...s, name: n } : s)));
+    setSamCurrentClass((cur) => (cur === o ? n : cur));
+  };
+
+  // 删除类别：同步删除所有引用此类别的标注（标注框 + 掩膜 + 选框），其余标注按新顺序重算 class_id
+  const handleRemoveClass = (className: string) => {
+    const target = className.trim();
+    if (!target) return;
+    if (!samClasses.includes(target)) return;
+    const usedCount = samAnnotations.filter((a) => a.class === target).length;
+    const tip =
+      usedCount > 0
+        ? `类别「${target}」已被 ${usedCount} 个标注引用，删除后这些标注框也会一并删除。是否继续？`
+        : `确认删除类别「${target}」？`;
+    if (!window.confirm(tip)) return;
+
+    const nextClasses = samClasses.filter((c) => c !== target);
+    const keepIdx: number[] = [];
+    samAnnotations.forEach((a, i) => {
+      if (a.class === target) {
+        if (a.bbox && a.bbox.length >= 4) {
+          smartAddedRef.current.delete(smartHoverKey(String(a.class || ''), a.bbox));
+        }
+      } else {
+        keepIdx.push(i);
+      }
+    });
+
+    const newAnnotations = keepIdx.map((i) => {
+      const a = samAnnotations[i];
+      const idx = nextClasses.indexOf(a.class);
+      return idx === a.class_id ? a : { ...a, class_id: idx };
+    });
+    const newMasks = keepIdx.map((i) => samMasks[i]);
+    const newBoxes = keepIdx.map((i) => samBoxes[i]);
+
+    setSamClasses(nextClasses);
+    setSamAnnotations(newAnnotations);
+    setSamMasks(newMasks);
+    setSamBoxes(newBoxes);
+    setClassSuggestions((prev) => prev.filter((s) => s.name !== target));
+    saveSamHistory(samPoints, newBoxes, newMasks, newAnnotations);
+
+    setSamCurrentClass((cur) => (cur === target ? '' : cur));
+    setSamSelectedId((cur) => {
+      if (cur == null) return cur;
+      const oldIdx = parseInt(cur, 10);
+      if (Number.isNaN(oldIdx)) return cur;
+      const newIdx = keepIdx.indexOf(oldIdx);
+      return newIdx >= 0 ? String(newIdx) : null;
+    });
   };
 
   // 删除选中的标注
@@ -1169,12 +1362,19 @@ export const Annotation: React.FC = () => {
 
       // 2. 保存标注
       const imageName = samFile.name;
+      // 关键：必须把图片真实尺寸带给后端，否则后端按默认 640×640 归一化，
+      // 切换图片再回来反归一化会按真实尺寸还原 → bbox 位置漂移
+      const sizeForSave: [number, number] = [
+        imgSize.width || 640,
+        imgSize.height || 640,
+      ];
       const annotationsToSave = samAnnotations.map(ann => ({
         class: ann.class,
         class_id: ann.class_id,
         bbox: ann.bbox,
         segmentation: ann.segmentation,
         confidence: ann.confidence,
+        image_size: sizeForSave,
       }));
 
       const saveRes = await annotationApi.saveAnnotations(
@@ -1707,6 +1907,24 @@ export const Annotation: React.FC = () => {
       (uploadRes.data?.data?.name_map || uploadRes.data?.name_map || {}) as Record<string, string>;
     console.log('nameMap:', nameMap);
 
+    /** 量出原图像素尺寸，用于把 bbox 正确归一化（后端无 image_size 默认按 640） */
+    const measureFileSize = (file: File): Promise<[number, number]> =>
+      new Promise((resolve) => {
+        const url = URL.createObjectURL(file);
+        const im = new Image();
+        im.onload = () => {
+          const w = im.naturalWidth || im.width || 640;
+          const h = im.naturalHeight || im.height || 640;
+          URL.revokeObjectURL(url);
+          resolve([w, h]);
+        };
+        im.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve([640, 640]);
+        };
+        im.src = url;
+      });
+
     for (let i = 0; i < batchFiles.length; i++) {
       const file = batchFiles[i];
       setBatchProgress({ current: i + 1, total: batchFiles.length });
@@ -1721,14 +1939,29 @@ export const Annotation: React.FC = () => {
         // 用实际保存的文件名保存标注
         const savedName = nameMap[file.name] || file.name;
         if (detections.length > 0) {
-          const annotations = detections.map((det: any) => ({
-            class: det.class_name,
-            class_id: det.class_id ?? 0,
-            bbox: [det.x1, det.y1, det.x2, det.y2],
-            confidence: det.confidence,
-          }));
-          await annotationApi.saveAnnotations(batchTargetProject, savedName, annotations);
-          console.log('保存标注:', { savedName, count: detections.length });
+          const [imgW, imgH] = await measureFileSize(file);
+          // 后端 schema：DetectionResult.bbox = [x1,y1,x2,y2]（不是 det.x1/x2/y1/y2）
+          const annotations = detections
+            .map((det: any) => {
+              const raw = Array.isArray(det.bbox) ? det.bbox : null;
+              const x1 = raw ? Number(raw[0]) : Number(det.x1);
+              const y1 = raw ? Number(raw[1]) : Number(det.y1);
+              const x2 = raw ? Number(raw[2]) : Number(det.x2);
+              const y2 = raw ? Number(raw[3]) : Number(det.y2);
+              if (![x1, y1, x2, y2].every((v) => Number.isFinite(v))) return null;
+              return {
+                class: det.class_name ?? det.class ?? 'object',
+                class_id: det.class_id ?? 0,
+                bbox: [x1, y1, x2, y2],
+                confidence: typeof det.confidence === 'number' ? det.confidence : undefined,
+                image_size: [imgW, imgH],
+              };
+            })
+            .filter(Boolean);
+          if (annotations.length > 0) {
+            await annotationApi.saveAnnotations(batchTargetProject, savedName, annotations);
+            console.log('保存标注:', { savedName, count: annotations.length });
+          }
         }
 
         total_detections += detections.length;
@@ -1757,6 +1990,15 @@ export const Annotation: React.FC = () => {
     setProjectBatchProgress({ current: 0, total: 0 });
     setProjectBatchDone(null);
 
+    /** 拿到图片真实像素尺寸，用于把推理 bbox 正确归一化（后端无 image_size 默认按 640 计算会压扁） */
+    const measureImageSize = (objectUrl: string): Promise<[number, number]> =>
+      new Promise((resolve) => {
+        const im = new Image();
+        im.onload = () => resolve([im.naturalWidth || im.width || 640, im.naturalHeight || im.height || 640]);
+        im.onerror = () => resolve([640, 640]);
+        im.src = objectUrl;
+      });
+
     try {
       const projectId = project.id || project.name;
       const res = await annotationApi.getImages(projectId);
@@ -1766,38 +2008,99 @@ export const Annotation: React.FC = () => {
 
       let success = 0;
       let failed = 0;
+      let totalBoxes = 0;
 
       for (let i = 0; i < images.length; i++) {
         const img = images[i];
         setProjectBatchProgress({ current: i + 1, total: images.length });
-        // 让出主线程，使进度 UI 得以更新
         await new Promise(resolve => setTimeout(resolve, 0));
+        let blobUrl: string | null = null;
         try {
-          // 通过 URL 获取图片 Blob
-          const blob = await fetch(img.url).then(r => r.blob());
+          // 通过 URL 获取图片 Blob，并量出原图尺寸（推理在原图坐标系下返回 bbox）
+          const fetchUrl = resolveAnnotationImageFetchUrl(img.url);
+          const blob = await fetch(fetchUrl, { cache: 'no-store' }).then(r => r.blob());
           const file = new File([blob], img.name, { type: blob.type || 'image/jpeg' });
+          blobUrl = URL.createObjectURL(blob);
+          const [imgW, imgH] = await measureImageSize(blobUrl);
 
           const inferRes = await inferenceApi.image(file, projectBatchModel, projectBatchConf);
-          const result = inferRes.data?.data || inferRes.data as any;
-          const detections = result?.detections || [];
+          const result = (inferRes.data as any)?.data ?? (inferRes.data as any);
+          const detections: any[] = result?.detections || [];
 
           if (detections.length > 0) {
-            const annotations = detections.map((det: any) => ({
-              class: det.class_name,
-              class_id: det.class_id ?? 0,
-              bbox: [det.x1, det.y1, det.x2, det.y2],
-              confidence: det.confidence,
-            }));
-            await annotationApi.saveAnnotations(projectId, img.name, annotations);
+            // 后端 schema：DetectionResult.bbox = [x1,y1,x2,y2]（不是 det.x1/x2/y1/y2）
+            const annotations = detections
+              .map((det: any) => {
+                const raw = Array.isArray(det.bbox) ? det.bbox : null;
+                const x1 = raw ? Number(raw[0]) : Number(det.x1);
+                const y1 = raw ? Number(raw[1]) : Number(det.y1);
+                const x2 = raw ? Number(raw[2]) : Number(det.x2);
+                const y2 = raw ? Number(raw[3]) : Number(det.y2);
+                if (![x1, y1, x2, y2].every((v) => Number.isFinite(v))) return null;
+                return {
+                  class: det.class_name ?? det.class ?? 'object',
+                  class_id: det.class_id ?? 0,
+                  bbox: [x1, y1, x2, y2],
+                  confidence: typeof det.confidence === 'number' ? det.confidence : undefined,
+                  // 关键：把原图尺寸一起带上，后端会按真实尺寸归一化
+                  image_size: [imgW, imgH],
+                };
+              })
+              .filter(Boolean);
+
+            if (annotations.length > 0) {
+              await annotationApi.saveAnnotations(projectId, img.name, annotations);
+              totalBoxes += annotations.length;
+            }
           }
           success++;
         } catch (e) {
           console.error(`项目批量标注失败 [${img.name}]:`, e);
           failed++;
+        } finally {
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
         }
       }
 
-      setProjectBatchDone({ success, failed });
+      console.log('[batch label] done', { success, failed, totalBoxes });
+      setProjectBatchDone({ success, failed, total_detections: totalBoxes });
+
+      // 若当前正打开的图片属于刚批量标注完的项目，刷新画布上的标注
+      if (selectedProject && (selectedProject.id || selectedProject.name) === projectId && samImagePath) {
+        try {
+          const annRes = await annotationApi.getAnnotations(projectId, samImagePath);
+          const annData = (annRes.data as any)?.annotations
+            ?? (annRes.data as any)?.data?.annotations
+            ?? [];
+          const newAnnotations: SAMAnnotation[] = [];
+          const newBoxes: AnnotationBox[] = [];
+          const extraClasses: string[] = [];
+          (annData as any[]).forEach((ann: any) => {
+            if (ann.bbox && ann.bbox.length === 4) {
+              newBoxes.push({ x1: ann.bbox[0], y1: ann.bbox[1], x2: ann.bbox[2], y2: ann.bbox[3] });
+            }
+            const clsName = ann.class || ann.class_name || 'unknown';
+            if (!samClasses.includes(clsName) && !extraClasses.includes(clsName)) {
+              extraClasses.push(clsName);
+            }
+            const clsIdx = samClasses.indexOf(clsName);
+            newAnnotations.push({
+              class: clsName,
+              class_id: clsIdx >= 0 ? clsIdx : (ann.class_id ?? 0),
+              bbox: ann.bbox || [],
+              segmentation: '',
+              confidence: ann.confidence ?? 1,
+            });
+          });
+          if (extraClasses.length > 0) {
+            setSamClasses((prev) => [...prev, ...extraClasses]);
+          }
+          setSamBoxes(newBoxes);
+          setSamAnnotations(newAnnotations);
+        } catch (e) {
+          console.warn('刷新当前图标注失败:', e);
+        }
+      }
     } catch (e) {
       console.error('项目批量标注异常:', e);
     } finally {
@@ -2282,7 +2585,9 @@ export const Annotation: React.FC = () => {
                     )}
                     {projectBatchDone && (
                       <div style={{ marginBottom: '8px', fontSize: '13px', color: 'var(--success)', fontWeight: 500 }}>
-                        ✅ 完成！成功 {projectBatchDone.success} 张{projectBatchDone.failed > 0 ? `，失败 ${projectBatchDone.failed} 张` : ''}
+                        ✅ 完成！成功 {projectBatchDone.success} 张
+                        {typeof projectBatchDone.total_detections === 'number' && `，共写入 ${projectBatchDone.total_detections} 个框`}
+                        {projectBatchDone.failed > 0 ? `，失败 ${projectBatchDone.failed} 张` : ''}
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -2314,6 +2619,239 @@ export const Annotation: React.FC = () => {
         onChange={(e) => handleProjectUploadSelect(e.target.files)}
         style={{ display: 'none' }}
       />
+      )}
+
+      {/* 生成新版本（数据集）弹窗 */}
+      {showVersionModal && selectedProject && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => !versionLoading && setShowVersionModal(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            background: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(640px, 100%)',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              background: 'var(--bg-primary)',
+              borderRadius: '12px',
+              boxShadow: '0 24px 60px rgba(15, 23, 42, 0.35)',
+              border: '1px solid var(--border-color)',
+              padding: '20px 24px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div>
+                <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  🚀 生成数据集新版本
+                </div>
+                <div style={{ marginTop: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                  从项目「{selectedProject.name}」派生一个 YOLO 标准结构的数据集，可直接用于模型训练。
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !versionLoading && setShowVersionModal(false)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: '20px',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ marginTop: '16px', display: 'grid', gap: '14px' }}>
+              {/* 基础设置 */}
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  数据集名称
+                </label>
+                <input
+                  type="text"
+                  value={versionForm.dataset_name}
+                  onChange={(e) => setVersionForm((p) => ({ ...p, dataset_name: e.target.value }))}
+                  placeholder="留空将自动命名为 <project>_v{N}"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    fontSize: '13px',
+                  }}
+                />
+                <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  目录会创建在 data/datasets/&lt;name&gt;/，并附带 data.yaml
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Val 比例
+                  </label>
+                  <input
+                    type="number" min={0} max={0.9} step={0.05}
+                    value={versionForm.val_ratio}
+                    onChange={(e) => setVersionForm((p) => ({ ...p, val_ratio: Number(e.target.value) }))}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Test 比例
+                  </label>
+                  <input
+                    type="number" min={0} max={0.9} step={0.05}
+                    value={versionForm.test_ratio}
+                    onChange={(e) => setVersionForm((p) => ({ ...p, test_ratio: Number(e.target.value) }))}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    随机种子
+                  </label>
+                  <input
+                    type="number" step={1}
+                    value={versionForm.seed}
+                    onChange={(e) => setVersionForm((p) => ({ ...p, seed: Number(e.target.value) }))}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }}
+                  />
+                </div>
+              </div>
+
+              {/* 预处理 */}
+              <fieldset style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '10px 14px' }}>
+                <legend style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', padding: '0 6px' }}>
+                  预处理（可选）
+                </legend>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-primary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={versionForm.resize}
+                    onChange={(e) => setVersionForm((p) => ({ ...p, resize: e.target.checked }))}
+                  />
+                  对图像进行 Resize（按长边等比缩放，YOLO 归一化标签无需改写）
+                </label>
+                {versionForm.resize && (
+                  <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>长边（像素）</span>
+                    <input
+                      type="number" min={64} max={2048} step={32}
+                      value={versionForm.resize_size}
+                      onChange={(e) => setVersionForm((p) => ({ ...p, resize_size: Number(e.target.value) }))}
+                      style={{ width: '120px', padding: '6px 8px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }}
+                    />
+                  </div>
+                )}
+              </fieldset>
+
+              {/* 数据增强 */}
+              <fieldset style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '10px 14px' }}>
+                <legend style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', padding: '0 6px' }}>
+                  数据增强（仅作用于 train，可选）
+                </legend>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-primary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={versionForm.aug_enabled}
+                    onChange={(e) => setVersionForm((p) => ({ ...p, aug_enabled: e.target.checked }))}
+                  />
+                  开启增强（首次生成 v1 通常可保持关闭）
+                </label>
+                {versionForm.aug_enabled && (
+                  <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 14px' }}>
+                    <label style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                      <input
+                        type="checkbox" style={{ marginRight: '6px' }}
+                        checked={versionForm.aug_horizontal_flip}
+                        onChange={(e) => setVersionForm((p) => ({ ...p, aug_horizontal_flip: e.target.checked }))}
+                      />
+                      水平翻转
+                    </label>
+                    <label style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                      <input
+                        type="checkbox" style={{ marginRight: '6px' }}
+                        checked={versionForm.aug_vertical_flip}
+                        onChange={(e) => setVersionForm((p) => ({ ...p, aug_vertical_flip: e.target.checked }))}
+                      />
+                      垂直翻转
+                    </label>
+                    <label style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                      <input
+                        type="checkbox" style={{ marginRight: '6px' }}
+                        checked={versionForm.aug_rotate}
+                        onChange={(e) => setVersionForm((p) => ({ ...p, aug_rotate: e.target.checked }))}
+                      />
+                      旋转
+                    </label>
+                    <label style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                      <input
+                        type="checkbox" style={{ marginRight: '6px' }}
+                        checked={versionForm.aug_brightness_contrast}
+                        onChange={(e) => setVersionForm((p) => ({ ...p, aug_brightness_contrast: e.target.checked }))}
+                      />
+                      亮度 / 对比度
+                    </label>
+                    <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-primary)' }}>
+                      每张训练图生成
+                      <input
+                        type="number" min={1} max={10} step={1}
+                        value={versionForm.aug_num}
+                        onChange={(e) => setVersionForm((p) => ({ ...p, aug_num: Number(e.target.value) }))}
+                        style={{ width: '70px', padding: '4px 8px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                      />
+                      张增强
+                    </label>
+                  </div>
+                )}
+              </fieldset>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <input
+                  type="checkbox"
+                  checked={versionForm.overwrite}
+                  onChange={(e) => setVersionForm((p) => ({ ...p, overwrite: e.target.checked }))}
+                />
+                若数据集名称已存在则覆盖（谨慎勾选）
+              </label>
+            </div>
+
+            <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <Button
+                variant="secondary"
+                onClick={() => setShowVersionModal(false)}
+                disabled={versionLoading}
+              >
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleGenerateVersion}
+                disabled={versionLoading}
+              >
+                {versionLoading ? '生成中…' : '生成版本并写入 data.yaml'}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* SAM / Ultralytics Hub 风格三栏工作台 */}
@@ -2368,9 +2906,48 @@ export const Annotation: React.FC = () => {
                   <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginTop: '4px' }}>{projectImages.length} 张</div>
                   <button
                     type="button"
-                    onClick={handleProjectExportNdjson}
+                    onClick={handleOpenVersionModal}
+                    title="把当前项目的所有标注切分为 train/val(/test)，写入数据集目录并生成 data.yaml，可直接用于模型训练"
                     style={{
                       marginTop: '10px',
+                      width: '100%',
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--success-300, #86efac)',
+                      background: 'var(--success-50, #f0fdf4)',
+                      color: 'var(--success-700, #15803d)',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                    }}
+                  >
+                    🚀 生成新版本（v{(generatedVersions?.length || 0) + 1}）
+                  </button>
+                  {generatedVersions.length > 0 && (
+                    <div
+                      style={{
+                        marginTop: '6px',
+                        fontSize: '11px',
+                        color: 'var(--text-muted)',
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        已生成 {generatedVersions.length} 个版本
+                      </div>
+                      {generatedVersions.slice(0, 3).map((v) => (
+                        <div key={v.version || v.dataset_name} title={v.dataset_path}>
+                          • {v.version || ''} {v.dataset_name}（
+                          {(v.split_counts?.train || 0) + (v.split_counts?.val || 0) + (v.split_counts?.test || 0)} 张）
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleProjectExportNdjson}
+                    style={{
+                      marginTop: '8px',
                       width: '100%',
                       padding: '6px 10px',
                       borderRadius: '6px',
@@ -2516,6 +3093,8 @@ export const Annotation: React.FC = () => {
                 onToolChange={setSamTool}
                 onClassChange={setSamCurrentClass}
                 onAddClass={handleAddClass}
+                onRenameClass={handleRenameClass}
+                onRemoveClass={handleRemoveClass}
                 onAutoLabel={handleSamAutoLabel}
                 onDetectAll={handleDetectAll}
                 onClear={handleSamClear}
@@ -2849,18 +3428,22 @@ export const Annotation: React.FC = () => {
             role="presentation"
             onClick={(e) => e.stopPropagation()}
             style={{
+              width: 'calc(100vw - 24px)',
+              height: 'calc(100dvh - 24px)',
               maxWidth: '100%',
               maxHeight: '100%',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               boxSizing: 'border-box',
+              overflow: 'hidden',
               filter: 'drop-shadow(0 4px 24px rgba(0,0,0,0.45))',
             }}
           >
             <AnnotationCanvas
               viewOnly
-              maxHeightOverride="min(100%, calc(100dvh - 72px))"
+              fitMode="contain"
+              maxHeightOverride="100%"
               image={samImage}
               width={imgSize.width}
               height={imgSize.height}

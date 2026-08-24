@@ -6,15 +6,6 @@ import { arbitrationApi } from '../api/arbitrationApi';
 import type { ArbitrationStats, DisputeSummary } from '../../../types';
 import styles from './ArbitrationCenter.module.css';
 
-function unwrapList(data: unknown): DisputeSummary[] {
-  if (data == null) return [];
-  if (Array.isArray(data)) return data as DisputeSummary[];
-  const payload = data as { items?: DisputeSummary[]; data?: { items?: DisputeSummary[] } };
-  if (Array.isArray(payload.items)) return payload.items;
-  if (Array.isArray(payload.data?.items)) return payload.data.items;
-  return [];
-}
-
 export const ArbitrationCenter: React.FC = () => {
   const [list, setList] = useState<DisputeSummary[]>([]);
   const [stats, setStats] = useState<ArbitrationStats | null>(null);
@@ -24,9 +15,12 @@ export const ArbitrationCenter: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const [listRes, statsRes] = await Promise.all([arbitrationApi.list(), arbitrationApi.stats()]);
+        const [items, statsRes] = await Promise.all([
+          arbitrationApi.listNormalized(),
+          arbitrationApi.stats(),
+        ]);
         if (cancelled) return;
-        setList(unwrapList((listRes.data as { data?: unknown })?.data ?? listRes.data));
+        setList(items);
         setStats((statsRes.data as { data?: ArbitrationStats })?.data ?? null);
       } finally {
         if (!cancelled) setLoading(false);

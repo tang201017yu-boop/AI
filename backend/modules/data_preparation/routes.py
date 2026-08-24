@@ -292,6 +292,59 @@ async def export_dataset(project_name: str, format: str = "yolo"):
     return annotation_service.export_dataset(project_name, format)
 
 
+# ----- 生成新版本 / Generate New Version (Roboflow 风格) -----
+
+@router.post("/annotation/projects/{project_name}/generate-version")
+async def generate_dataset_version(project_name: str, payload: dict):
+    """
+    将标注项目派生为可训练数据集版本。
+
+    Body 示例：
+    {
+      "dataset_name": null,                # 可选，留空自动 v1, v2, ...
+      "val_ratio": 0.2,
+      "test_ratio": 0.0,
+      "seed": 42,
+      "preprocessing": { "resize": false, "size": 640 },
+      "augmentation": {
+        "enabled": false,
+        "horizontal_flip": true,
+        "brightness_contrast": true,
+        "rotate": false,
+        "num_augmented": 2
+      },
+      "overwrite": false
+    }
+    """
+    payload = payload or {}
+    try:
+        result = annotation_service.generate_version(
+            project_name=project_name,
+            dataset_name=payload.get("dataset_name") or None,
+            val_ratio=float(payload.get("val_ratio", 0.2)),
+            test_ratio=float(payload.get("test_ratio", 0.0)),
+            seed=int(payload.get("seed", 42)),
+            preprocessing=payload.get("preprocessing") or {},
+            augmentation=payload.get("augmentation") or {},
+            overwrite=bool(payload.get("overwrite", False)),
+        )
+    except Exception as e:
+        logger.exception("生成数据集版本失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"生成数据集版本失败: {e}")
+
+    if not result.get("success"):
+        # 业务校验失败（例如还没标注），用 400 让前端能区分
+        raise HTTPException(status_code=400, detail=result.get("message") or "生成失败")
+    return result
+
+
+@router.get("/annotation/projects/{project_name}/versions")
+async def list_dataset_versions(project_name: str):
+    """列出某项目已生成的所有数据集版本"""
+    versions = annotation_service.list_versions(project_name)
+    return {"success": True, "versions": versions}
+
+
 @router.post("/annotation/projects/{project_name}/upload-video")
 async def upload_project_video(
     project_name: str,

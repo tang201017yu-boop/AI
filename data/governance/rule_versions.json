@@ -1,0 +1,29 @@
+{
+  "R_crack_001": [
+    {
+      "id": "R_crack_001-v1",
+      "version": "1.0.0",
+      "summary": "系统初始化规则",
+      "createdAt": "2026-05-07T15:18:00.421601",
+      "createdBy": "system"
+    }
+  ],
+  "R_crack_002": [
+    {
+      "id": "R_crack_002-v1",
+      "version": "1.0.0",
+      "summary": "系统初始化规则",
+      "createdAt": "2026-05-07T15:18:00.421601",
+      "createdBy": "system"
+    }
+  ],
+  "R_seep_001": [
+    {
+      "id": "R_seep_001-v1",
+      "version": "1.0.0",
+      "summary": "系统初始化规则",
+      "createdAt": "2026-05-07T15:18:00.421601",
+      "createdBy": "system"
+    }
+  ]
+}

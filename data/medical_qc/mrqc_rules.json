@@ -1,0 +1,36 @@
+[
+  {
+    "rule_id": "general_discharge_001",
+    "name": "出院小结必填字段完整性",
+    "category": "missing_required_field",
+    "severity": "major",
+    "scope": "general",
+    "hospital_id": null,
+    "department_id": null,
+    "record_types": [
+      "discharge_record"
+    ],
+    "enabled": true,
+    "version": "1.0",
+    "description": "检查患者信息、入出院日期、主诉、现病史、既往史、体格检查、辅助检查、诊断、诊疗经过、出院医嘱等是否齐全。",
+    "prompt_hint": "对照通用出院病历结构检查缺漏项。",
+    "updated_at": "2026-05-09T09:12:01.656442"
+  },
+  {
+    "rule_id": "general_discharge_002",
+    "name": "诊断与检查证据一致性",
+    "category": "insufficient_evidence",
+    "severity": "major",
+    "scope": "general",
+    "hospital_id": null,
+    "department_id": null,
+    "record_types": [
+      "discharge_record"
+    ],
+    "enabled": true,
+    "version": "1.0",
+    "description": "重大诊断应有相应检验、影像或病程记录支撑。",
+    "prompt_hint": "标注证据不足的诊断条目。",
+    "updated_at": "2026-05-09T09:12:01.656442"
+  }
+]

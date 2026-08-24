@@ -6,6 +6,7 @@ import { DisputeAlert } from '../components/DisputeAlert';
 import { LegalBadge } from '../components/LegalBadge';
 import { useDisputeDetection } from '../hooks/useDisputeDetection';
 import { usePhysicalJudge } from '../hooks/usePhysicalJudge';
+import { annotationEnhancementApi, type AnnotationEnhancementSamples } from '../api/annotationEnhancementApi';
 import type { AgentSuggestionItem, ArbitrationEvaluatePayload, AttributeField } from '../../../types';
 import styles from './AnnotationShowcase.module.css';
 
@@ -71,10 +72,29 @@ function fieldsFromRecord(title: string, input?: Record<string, string | number>
 
 export const AnnotationShowcase: React.FC = () => {
   const [sampleKey, setSampleKey] = useState<'crack' | 'seepage'>('crack');
+  const [samplesState, setSamplesState] = useState<AnnotationEnhancementSamples>(samples);
   const { alerts, evaluation, loading, scan, clear } = useDisputeDetection();
   const { judgement, evaluate, reset } = usePhysicalJudge();
 
-  const payload = samples[sampleKey];
+  const payload = samplesState[sampleKey] ?? samples[sampleKey];
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await annotationEnhancementApi.samples();
+        const payloads = (res.data as { data?: AnnotationEnhancementSamples })?.data;
+        if (!cancelled && payloads && Object.keys(payloads).length > 0) {
+          setSamplesState(payloads);
+        }
+      } catch {
+        if (!cancelled) setSamplesState(samples);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     void scan(payload);

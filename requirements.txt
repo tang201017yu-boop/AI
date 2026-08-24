@@ -65,7 +65,7 @@ python-multipart==0.0.21
 PyYAML==6.0.3
 requests==2.32.5
 s3transfer==0.16.0
-scipy==1.17.0
+scipy==1.14.1
 segment-anything
 setuptools==80.10.1
 shapely==2.0.6

@@ -25,7 +25,7 @@
    │   └── ai_native/          # AI原生应用模块
    └── api/               # API 路由
 
- 前端: 独立运行在 http://localhost:3000 (React + Vite)
+  前端: 独立运行在 http://localhost:5173 (React + Vite)
 ================================================================================
 """
 import sys

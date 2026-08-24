@@ -29,6 +29,8 @@ interface Props {
   viewOnly?: boolean;
   /** 覆盖画布的 maxHeight 样式，例如全屏时吃满视口 */
   maxHeightOverride?: string;
+  /** 只读预览时让整张画布以 contain 方式塞进父容器，避免大图被视口裁切 */
+  fitMode?: 'intrinsic' | 'contain';
 }
 
 const AnnotationCanvas: React.FC<Props> = ({
@@ -55,6 +57,7 @@ const AnnotationCanvas: React.FC<Props> = ({
   onSmartImageDoubleClick,
   viewOnly = false,
   maxHeightOverride,
+  fitMode = 'intrinsic',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -592,8 +595,9 @@ const AnnotationCanvas: React.FC<Props> = ({
       onMouseLeave={handleMouseLeave}
       style={{
         display: 'block',
-        width: 'auto',
-        height: 'auto',
+        width: fitMode === 'contain' ? '100%' : 'auto',
+        height: fitMode === 'contain' ? '100%' : 'auto',
+        objectFit: fitMode === 'contain' ? 'contain' : undefined,
         maxWidth: '100%',
         maxHeight:
           maxHeightOverride !== undefined

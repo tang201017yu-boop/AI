@@ -166,6 +166,13 @@ class AnnotationService:
         task_type = project["task_type"]
         labels_dir = project_dir / "labels"
         labels_dir.mkdir(exist_ok=True)
+        images_dir = project_dir / "images"
+
+        # 兜底：若任一标注没有提供 image_size，则从磁盘读图片真实尺寸塞回去，
+        # 避免后端按默认 640×640 归一化（这样切换图片再回来反归一化时 bbox 会漂移）
+        annotations = self._ensure_image_size_on_annotations(
+            annotations, images_dir, image_name
+        )
 
         # 转换标注为 YOLO 格式
         yolo_labels = self._convert_to_yolo_format(annotations, task_type, project["classes"])
@@ -360,6 +367,7 @@ class AnnotationService:
 
         project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
         labels_dir = project_dir / "labels"
+        images_dir = project_dir / "images"
 
         # 尝试精确匹配
         label_path = labels_dir / Path(image_name).with_suffix('.txt').name
@@ -376,13 +384,113 @@ class AnnotationService:
         if not label_path.exists():
             return {"success": True, "annotations": []}
 
+        # 解析标签前先取一次原图尺寸，让 bbox / 多边形按真实分辨率还原（避免按固定 640 显示错位）
+        img_w, img_h = self._read_image_size(images_dir, image_name, label_path)
+
         with open(label_path, 'r') as f:
             content = f.read()
 
         return {
             "success": True,
-            "annotations": self._parse_yolo_labels(content, project)
+            "annotations": self._parse_yolo_labels(content, project, img_w, img_h),
+            "image_size": [img_w, img_h],
         }
+
+    def _ensure_image_size_on_annotations(
+        self,
+        annotations: List[Dict[str, Any]],
+        images_dir: Path,
+        image_name: str,
+    ) -> List[Dict[str, Any]]:
+        """对没有 image_size 的标注，统一补上图片真实 (W, H)；找不到原图则保留默认 [640,640]。"""
+        if not annotations:
+            return annotations
+
+        # 是否所有标注已有合法 image_size
+        def _ok(sz: Any) -> bool:
+            return (
+                isinstance(sz, (list, tuple))
+                and len(sz) >= 2
+                and all(isinstance(v, (int, float)) and v > 0 for v in sz[:2])
+            )
+
+        if all(_ok(a.get("image_size")) for a in annotations):
+            return annotations
+
+        # 通过 stem 模糊匹配（避免大小写后缀差异）解析图片真实尺寸
+        stem = Path(image_name).stem
+        candidates: List[Path] = []
+        direct = images_dir / image_name
+        if direct.exists():
+            candidates.append(direct)
+        else:
+            for ext in ('.jpg', '.jpeg', '.png', '.bmp', '.webp'):
+                p = images_dir / f"{stem}{ext}"
+                if p.exists():
+                    candidates.append(p)
+                    break
+            if not candidates and images_dir.exists():
+                for p in images_dir.iterdir():
+                    if p.is_file() and p.stem == stem:
+                        candidates.append(p)
+                        break
+
+        size_pair = None
+        for cand in candidates:
+            try:
+                img = cv2.imread(str(cand))
+                if img is not None:
+                    h, w = img.shape[:2]
+                    if w > 0 and h > 0:
+                        size_pair = [int(w), int(h)]
+                        break
+            except Exception:
+                continue
+
+        if size_pair is None:
+            return annotations
+
+        patched: List[Dict[str, Any]] = []
+        for ann in annotations:
+            if _ok(ann.get("image_size")):
+                patched.append(ann)
+            else:
+                new_ann = dict(ann)
+                new_ann["image_size"] = size_pair
+                patched.append(new_ann)
+        return patched
+
+    @staticmethod
+    def _read_image_size(images_dir: Path, image_name: str, label_path: Path) -> tuple:
+        """根据图片名（必要时通过 stem 模糊匹配）读出真实 (width, height)。失败时回退 640x640。"""
+        candidates: List[Path] = []
+        direct = images_dir / image_name
+        if direct.exists():
+            candidates.append(direct)
+        else:
+            stem = label_path.stem
+            for ext in ('.jpg', '.jpeg', '.png', '.bmp', '.webp'):
+                p = images_dir / f"{stem}{ext}"
+                if p.exists():
+                    candidates.append(p)
+                    break
+            if not candidates and images_dir.exists():
+                # 兜底：在 images_dir 找 stem 为前缀的文件
+                for p in images_dir.iterdir():
+                    if p.is_file() and p.stem.startswith(label_path.stem):
+                        candidates.append(p)
+                        break
+
+        for cand in candidates:
+            try:
+                img = cv2.imread(str(cand))
+                if img is not None:
+                    h, w = img.shape[:2]
+                    if w > 0 and h > 0:
+                        return int(w), int(h)
+            except Exception:
+                continue
+        return 640, 640
 
     def _load_project(self, project_name: str) -> Optional[Dict]:
         """加载项目"""
@@ -399,59 +507,86 @@ class AnnotationService:
         with open(project_path, 'w') as f:
             json.dump(project, f, indent=2, ensure_ascii=False)
 
-    def _parse_yolo_labels(self, content: str, project: Dict) -> List[Dict]:
-        """解析 YOLO 标签文件"""
-        annotations = []
+    def _parse_yolo_labels(
+        self,
+        content: str,
+        project: Dict,
+        img_w: int = 640,
+        img_h: int = 640,
+    ) -> List[Dict]:
+        """解析 YOLO 标签文件，使用真实图片宽高反归一化坐标。"""
+        annotations: List[Dict] = []
         classes = project.get("classes", [])
         task_type = project.get("task_type", "detect")
+        W = max(1, int(img_w))
+        H = max(1, int(img_h))
 
         for line in content.strip().split('\n'):
             if not line.strip():
                 continue
 
             parts = line.split()
-            class_id = int(parts[0])
+            try:
+                class_id = int(float(parts[0]))
+            except (ValueError, IndexError):
+                continue
             class_name = classes[class_id] if class_id < len(classes) else f"class_{class_id}"
 
             if task_type == "detect":
+                if len(parts) < 5:
+                    continue
                 x_center, y_center, width, height = map(float, parts[1:5])
-                x1 = int((x_center - width/2) * 640)
-                y1 = int((y_center - height/2) * 640)
-                x2 = int((x_center + width/2) * 640)
-                y2 = int((y_center + height/2) * 640)
+                x1 = int(round((x_center - width / 2) * W))
+                y1 = int(round((y_center - height / 2) * H))
+                x2 = int(round((x_center + width / 2) * W))
+                y2 = int(round((y_center + height / 2) * H))
                 annotations.append({
                     "class": class_name,
-                    "bbox": [x1, y1, x2, y2]
+                    "class_id": class_id,
+                    "bbox": [x1, y1, x2, y2],
                 })
 
             elif task_type in ["segment", "obb"]:
                 points = []
-                for i in range(1, len(parts), 2):
-                    x = float(parts[i]) * 640
-                    y = float(parts[i+1]) * 640
-                    points.append([x, y])
+                for i in range(1, len(parts) - 1, 2):
+                    try:
+                        x = float(parts[i]) * W
+                        y = float(parts[i + 1]) * H
+                        points.append([x, y])
+                    except ValueError:
+                        continue
                 annotations.append({
                     "class": class_name,
-                    "points": points
+                    "class_id": class_id,
+                    "points": points,
                 })
 
             elif task_type == "pose":
+                if len(parts) < 5:
+                    continue
                 x_center, y_center, width, height = map(float, parts[1:5])
                 keypoints = []
                 for i in range(5, len(parts), 3):
-                    kp = [float(parts[i]) * 640, float(parts[i+1]) * 640]
-                    if i+2 < len(parts):
-                        kp.append(float(parts[i+2]))
+                    try:
+                        kp = [float(parts[i]) * W, float(parts[i + 1]) * H]
+                    except (ValueError, IndexError):
+                        continue
+                    if i + 2 < len(parts):
+                        try:
+                            kp.append(float(parts[i + 2]))
+                        except ValueError:
+                            kp.append(1)
                     keypoints.append(kp)
                 annotations.append({
                     "class": class_name,
+                    "class_id": class_id,
                     "bbox": [
-                        (x_center - width/2) * 640,
-                        (y_center - height/2) * 640,
-                        (x_center + width/2) * 640,
-                        (y_center + height/2) * 640
+                        (x_center - width / 2) * W,
+                        (y_center - height / 2) * H,
+                        (x_center + width / 2) * W,
+                        (y_center + height / 2) * H,
                     ],
-                    "keypoints": keypoints
+                    "keypoints": keypoints,
                 })
 
         return annotations
@@ -462,17 +597,347 @@ class AnnotationService:
         format: str = "yolo",
         split: str = "all"
     ) -> Dict[str, Any]:
-        """导出数据集"""
+        """导出数据集（兼容旧接口）：内部调用 generate_version 默认参数。"""
+        return self.generate_version(project_name=project_name)
+
+    # ==================== 生成数据集版本（Generate New Version） ====================
+
+    IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+
+    def list_versions(self, project_name: str) -> List[Dict[str, Any]]:
+        """列出某项目已生成的所有数据集版本（最新在前）。"""
         project = self._load_project(project_name)
         if not project:
-            return {"success": False, "message": "项目不存在"}
+            return []
+        versions = list(project.get("versions", []) or [])
+        # 校验每个版本对应的数据集目录是否仍然存在
+        for v in versions:
+            ds_name = v.get("dataset_name")
+            if ds_name:
+                v["exists"] = (settings.DATASETS_DIR / ds_name).exists()
+        versions.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return versions
 
-        # TODO: 实现数据集导出功能
+    def generate_version(
+        self,
+        project_name: str,
+        dataset_name: Optional[str] = None,
+        val_ratio: float = 0.2,
+        test_ratio: float = 0.0,
+        seed: int = 42,
+        preprocessing: Optional[Dict[str, Any]] = None,
+        augmentation: Optional[Dict[str, Any]] = None,
+        overwrite: bool = False,
+    ) -> Dict[str, Any]:
+        """从标注项目派生一个可训练的数据集版本（Roboflow 风格）。
+
+        步骤：
+        1. 配对 images/<x> 与 labels/<x>.txt（仅纳入已标注的图片）
+        2. 按 (1 - val - test, val, test) 打乱切分
+        3. 复制到 DATASETS_DIR/<dataset_name>/{images,labels}/{train,val,test}
+        4. 可选预处理（resize 长边到 size，YOLO 归一化标签无需改写）
+        5. 可选数据增强（仅作用于 train 切分）
+        6. 写入 data.yaml（path / train / val / test / nc / names）
+        7. 在 project.json 的 versions 数组追加版本元数据
+
+        Args:
+            preprocessing: {"resize": True, "size": 640}
+            augmentation: {"enabled": True, "horizontal_flip": True, "brightness_contrast": True, "num_augmented": 2, ...}
+        """
+        import shutil
+        import random
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        project = self._load_project(project_name)
+        if not project:
+            return {"success": False, "message": f"项目不存在: {project_name}"}
+
+        project_dir = settings.ANNOTATION_PROJECTS_DIR / project_name
+        images_dir = project_dir / "images"
+        labels_dir = project_dir / "labels"
+
+        if not images_dir.exists():
+            return {"success": False, "message": "项目尚未上传任何图片"}
+        if not labels_dir.exists():
+            return {"success": False, "message": "项目尚未保存任何标注"}
+
+        # 1) 配对 image/label，跳过没有标注或标注为空的
+        pairs: List[tuple] = []
+        skipped_unannotated: List[str] = []
+        for img_path in sorted(images_dir.iterdir()):
+            if img_path.suffix.lower() not in self.IMAGE_SUFFIXES:
+                continue
+            label_path = labels_dir / f"{img_path.stem}.txt"
+            if label_path.exists() and label_path.stat().st_size > 0:
+                pairs.append((img_path, label_path))
+            else:
+                skipped_unannotated.append(img_path.name)
+
+        if not pairs:
+            return {
+                "success": False,
+                "message": "项目内尚无已标注图片，无法生成数据集版本",
+            }
+
+        # 2) 校验比例
+        try:
+            val_ratio = max(0.0, min(0.9, float(val_ratio or 0)))
+            test_ratio = max(0.0, min(0.9, float(test_ratio or 0)))
+        except (TypeError, ValueError):
+            return {"success": False, "message": "val_ratio/test_ratio 需要为数值"}
+        if val_ratio + test_ratio >= 1.0:
+            return {"success": False, "message": "val_ratio + test_ratio 必须小于 1"}
+
+        # 3) 决定数据集名（自动 v1, v2, ...）
+        existing_versions: List[Dict[str, Any]] = list(project.get("versions", []) or [])
+        next_index = len(existing_versions) + 1
+        if not dataset_name:
+            base_name = self._slugify_dataset_name(project_name)
+            candidate = f"{base_name}_v{next_index}"
+            while (settings.DATASETS_DIR / candidate).exists():
+                next_index += 1
+                candidate = f"{base_name}_v{next_index}"
+            dataset_name = candidate
+        else:
+            # 用户显式传入：只清洗特殊字符，不强制 v{N}
+            dataset_name = self._slugify_dataset_name(dataset_name)
+
+        dataset_dir = settings.DATASETS_DIR / dataset_name
+        if dataset_dir.exists():
+            if not overwrite:
+                return {
+                    "success": False,
+                    "message": f"数据集已存在: {dataset_name}（设置 overwrite=true 可覆盖）",
+                }
+            shutil.rmtree(dataset_dir, ignore_errors=True)
+
+        # 4) 创建目录结构
+        splits = ["train", "val"]
+        if test_ratio > 0:
+            splits.append("test")
+        for split in splits:
+            (dataset_dir / "images" / split).mkdir(parents=True, exist_ok=True)
+            (dataset_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+        # 5) 切分
+        rng = random.Random(int(seed) if seed is not None else 42)
+        pairs_shuffled = list(pairs)
+        rng.shuffle(pairs_shuffled)
+
+        n = len(pairs_shuffled)
+        n_val = int(round(n * val_ratio))
+        n_test = int(round(n * test_ratio)) if test_ratio > 0 else 0
+        # 至少留 1 张给 train
+        n_train = max(1, n - n_val - n_test)
+        # 防止上面 round 之后超过总量
+        n_val = min(n_val, n - n_train)
+        n_test = max(0, n - n_train - n_val)
+
+        train_pairs = pairs_shuffled[:n_train]
+        val_pairs = pairs_shuffled[n_train:n_train + n_val]
+        test_pairs = pairs_shuffled[n_train + n_val:n_train + n_val + n_test]
+
+        split_pairs = {"train": train_pairs, "val": val_pairs}
+        if test_ratio > 0:
+            split_pairs["test"] = test_pairs
+
+        # 6) 预处理
+        resize_enabled = bool(preprocessing and preprocessing.get("resize"))
+        target_size = 0
+        if resize_enabled:
+            try:
+                target_size = int((preprocessing or {}).get("size") or 640)
+                target_size = max(64, min(2048, target_size))
+            except Exception:
+                target_size = 640
+
+        # 7) 写出图像与标签
+        counts = {"train": 0, "val": 0, "test": 0}
+        for split, items in split_pairs.items():
+            img_out = dataset_dir / "images" / split
+            lab_out = dataset_dir / "labels" / split
+            for img_path, label_path in items:
+                dst_img = img_out / img_path.name
+                dst_lab = lab_out / f"{img_path.stem}.txt"
+
+                wrote_img = False
+                if resize_enabled:
+                    try:
+                        img = cv2.imread(str(img_path))
+                        if img is not None:
+                            h, w = img.shape[:2]
+                            if max(h, w) != target_size:
+                                scale = target_size / float(max(h, w))
+                                new_w = max(1, int(round(w * scale)))
+                                new_h = max(1, int(round(h * scale)))
+                                interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+                                img = cv2.resize(img, (new_w, new_h), interpolation=interp)
+                            cv2.imwrite(str(dst_img), img)
+                            wrote_img = True
+                    except Exception as e:
+                        logger.warning(f"resize 失败，回退到直接复制 {img_path.name}: {e}")
+
+                if not wrote_img:
+                    shutil.copy2(img_path, dst_img)
+
+                # YOLO 标签是归一化坐标，等比 / 任意 resize 都不需要改写
+                shutil.copy2(label_path, dst_lab)
+                counts[split] += 1
+
+        # 8) 数据增强（仅作用于 train 切分）
+        augmented_count = 0
+        if augmentation and augmentation.get("enabled"):
+            try:
+                augmented_count = self._augment_train_split(dataset_dir, augmentation)
+            except Exception as e:
+                logger.warning(f"数据增强失败（已跳过）: {e}")
+
+        # 9) 生成 data.yaml
+        classes = list(project.get("classes") or ["object"])
+        if not classes:
+            classes = ["object"]
+        yaml_lines: List[str] = [
+            f"# 由「生成新版本」自动生成 - {datetime.now().isoformat()}",
+            f"path: {dataset_dir.as_posix()}",
+            "train: images/train",
+            "val: images/val",
+        ]
+        if test_ratio > 0:
+            yaml_lines.append("test: images/test")
+        yaml_lines.append("")
+        yaml_lines.append(f"nc: {len(classes)}")
+        yaml_lines.append("names:")
+        for i, cname in enumerate(classes):
+            safe_name = str(cname).replace("\n", " ").replace(":", "_")
+            yaml_lines.append(f"  {i}: {safe_name}")
+
+        (dataset_dir / "data.yaml").write_text(
+            "\n".join(yaml_lines) + "\n", encoding="utf-8"
+        )
+
+        # 10) 元数据写回 project.json
+        version_label = f"v{next_index}"
+        version_info = {
+            "version": version_label,
+            "dataset_name": dataset_name,
+            "dataset_path": str(dataset_dir),
+            "created_at": datetime.now().isoformat(),
+            "task_type": project.get("task_type", "detect"),
+            "classes": classes,
+            "split_counts": {
+                "train": counts["train"],
+                "val": counts["val"],
+                "test": counts["test"],
+            },
+            "ratios": {
+                "train": round(1 - val_ratio - test_ratio, 4),
+                "val": val_ratio,
+                "test": test_ratio,
+            },
+            "seed": int(seed) if seed is not None else 42,
+            "preprocessing": dict(preprocessing or {}),
+            "augmentation": {
+                **dict(augmentation or {}),
+                "augmented_images": augmented_count,
+            },
+            "skipped_unannotated": len(skipped_unannotated),
+        }
+        existing_versions.append(version_info)
+        project["versions"] = existing_versions
+        self._save_project(project_name, project)
+
         return {
             "success": True,
-            "message": "数据集导出功能开发中",
-            "project": project_name
+            "message": (
+                f"已生成 {version_label}: 训练 {counts['train']}, 验证 {counts['val']}, "
+                f"测试 {counts['test']}（增强 {augmented_count} 张）"
+            ),
+            "version": version_info,
+            "dataset_path": str(dataset_dir),
+            "skipped_unannotated_examples": skipped_unannotated[:10],
         }
+
+    @staticmethod
+    def _slugify_dataset_name(name: str) -> str:
+        """清洗数据集目录名：保留中英文/数字/_-，其余替换成 _"""
+        import re
+        cleaned = re.sub(r"[^\w\u4e00-\u9fa5\-]+", "_", str(name).strip())
+        cleaned = cleaned.strip("_") or "dataset"
+        return cleaned[:120]
+
+    def _augment_train_split(
+        self,
+        dataset_dir: Path,
+        augmentation_options: Dict[str, Any],
+    ) -> int:
+        """对 dataset_dir/images/train 应用数据增强，输出回写到同一 train 目录。
+
+        通过创建临时输入/输出目录复用 AugmentationService（其期望 input_dir/{images,labels}）。
+        """
+        import shutil
+        import tempfile
+
+        from backend.modules.data_preparation.augmentation_service import (
+            augmentation_service,
+            AugmentationConfig,
+            ALBUMENTATIONS_AVAILABLE,
+        )
+
+        if not ALBUMENTATIONS_AVAILABLE:
+            raise RuntimeError("Albumentations 未安装，无法进行数据增强")
+
+        train_img = dataset_dir / "images" / "train"
+        train_lab = dataset_dir / "labels" / "train"
+
+        cfg = AugmentationConfig(
+            horizontal_flip=bool(augmentation_options.get("horizontal_flip", True)),
+            vertical_flip=bool(augmentation_options.get("vertical_flip", False)),
+            rotate=bool(augmentation_options.get("rotate", False)),
+            scale=bool(augmentation_options.get("scale", False)),
+            translate=bool(augmentation_options.get("translate", False)),
+            brightness_contrast=bool(augmentation_options.get("brightness_contrast", True)),
+            hue_saturation=bool(augmentation_options.get("hue_saturation", False)),
+            blur=bool(augmentation_options.get("blur", False)),
+            noise=bool(augmentation_options.get("noise", False)),
+            cutout=bool(augmentation_options.get("cutout", False)),
+            num_augmented=max(1, int(augmentation_options.get("num_augmented", 2))),
+            output_format=str(augmentation_options.get("output_format", "jpg")),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            in_dir = tmp_path / "in"
+            out_dir = tmp_path / "out"
+            (in_dir / "images").mkdir(parents=True, exist_ok=True)
+            (in_dir / "labels").mkdir(parents=True, exist_ok=True)
+
+            for f in train_img.iterdir():
+                if f.is_file():
+                    shutil.copy2(f, in_dir / "images" / f.name)
+            for f in train_lab.iterdir():
+                if f.is_file():
+                    shutil.copy2(f, in_dir / "labels" / f.name)
+
+            result = augmentation_service.augment_dataset(in_dir, out_dir, cfg)
+            if not getattr(result, "success", False):
+                return 0
+
+            moved = 0
+            out_img_dir = out_dir / "images"
+            out_lab_dir = out_dir / "labels"
+            if out_img_dir.exists():
+                for f in out_img_dir.iterdir():
+                    if f.is_file() and f.suffix.lower() in self.IMAGE_SUFFIXES:
+                        shutil.copy2(f, train_img / f.name)
+                        moved += 1
+            if out_lab_dir.exists():
+                for f in out_lab_dir.iterdir():
+                    if f.is_file() and f.suffix.lower() == ".txt":
+                        shutil.copy2(f, train_lab / f.name)
+
+            return moved
 
 
 # 全局实例

@@ -30,7 +30,7 @@ from backend.models.schemas import (
 )
 from backend.services.yolo_service import yolo_service
 from backend.core.yolo_engine import yolo_engine
-from backend.services import annotation_service, arbitration_service, dataset_service, solutions_service
+from backend.services import annotation_service, arbitration_service, dataset_service, rule_service, solutions_service
 from backend.services.supervision_service import supervision_service
 from backend.modules.training.training_service import training_service
 from backend.modules.training.project_service import project_service
@@ -46,6 +46,26 @@ class DatasetProjectCreate(BaseModel):
 
 class DatasetProjectRename(BaseModel):
     new_name: str = Field(..., min_length=1)
+
+
+class GovernanceRulePayload(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    content: str = Field(..., min_length=1)
+    tags: List[str] = Field(default_factory=list)
+    status: Optional[str] = None
+
+
+class GovernanceRulePatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    content: Optional[str] = None
+    tags: Optional[List[str]] = None
+    status: Optional[str] = None
+
+
+class RuleStatusPayload(BaseModel):
+    comment: Optional[str] = None
 
 
 class ArbitrationAnnotationPayload(BaseModel):
@@ -866,6 +886,169 @@ async def visualize_annotations(project_id: str, image_name: str):
         return FileResponse(path=str(output_path))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Governance Rules ====================
+
+@router.get("/governance/rules")
+async def list_governance_rules(
+    page: int = 1,
+    page_size: int = 20,
+    q: Optional[str] = None,
+):
+    """List governance rules for the rule library menu."""
+    try:
+        return {
+            "success": True,
+            "data": rule_service.list_rules(page=page, page_size=page_size, q=q),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/governance/rules")
+async def create_governance_rule(payload: GovernanceRulePayload):
+    """Create a governance rule."""
+    try:
+        rule = rule_service.create_rule(payload.model_dump(exclude_none=True))
+        return {"success": True, "data": rule}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/governance/rules/{rule_id}/versions")
+async def list_governance_rule_versions(rule_id: str):
+    """List rule version history."""
+    try:
+        if not rule_service.get_rule(rule_id):
+            raise HTTPException(status_code=404, detail="Rule not found")
+        return {
+            "success": True,
+            "data": {"versions": rule_service.list_versions(rule_id)},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/governance/rules/{rule_id}/publish")
+async def publish_governance_rule(rule_id: str, payload: RuleStatusPayload = RuleStatusPayload()):
+    """Publish a rule."""
+    try:
+        rule = rule_service.set_status(rule_id, "published")
+        if not rule:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        return {"success": True, "data": rule, "message": payload.comment or "Rule published"}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/governance/rules/{rule_id}/archive")
+async def archive_governance_rule(rule_id: str, payload: RuleStatusPayload = RuleStatusPayload()):
+    """Archive a rule."""
+    try:
+        rule = rule_service.set_status(rule_id, "archived")
+        if not rule:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        return {"success": True, "data": rule, "message": payload.comment or "Rule archived"}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/governance/rules/{rule_id}")
+async def get_governance_rule(rule_id: str):
+    """Get rule detail."""
+    try:
+        rule = rule_service.get_rule(rule_id)
+        if not rule:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        return {"success": True, "data": rule}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/governance/rules/{rule_id}")
+async def update_governance_rule(rule_id: str, payload: GovernanceRulePatch):
+    """Update a governance rule."""
+    try:
+        rule = rule_service.update_rule(rule_id, payload.model_dump(exclude_unset=True, exclude_none=True))
+        if not rule:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        return {"success": True, "data": rule}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/governance/rules/{rule_id}")
+async def delete_governance_rule(rule_id: str):
+    """Delete a governance rule."""
+    try:
+        if not rule_service.delete_rule(rule_id):
+            raise HTTPException(status_code=404, detail="Rule not found")
+        return {"success": True, "message": "Rule deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Governance Annotation Enhancement ====================
+
+@router.get("/governance/annotation/samples")
+async def get_governance_annotation_samples():
+    """Provide sample payloads for the annotation enhancement menu."""
+    return {
+        "success": True,
+        "data": {
+            "crack": {
+                "annotation_id": "demo-crack-001",
+                "defect_type": "crack",
+                "source": {"project": "demo", "image_name": "sample-crack.jpg"},
+                "agent_annotation": {
+                    "label": "crack",
+                    "bbox": [40, 80, 200, 120],
+                    "attributes": {"area": 2500, "width_length_ratio": 0.06},
+                },
+                "human_annotation": {
+                    "label": "crack",
+                    "bbox": [40, 80, 200, 120],
+                    "attributes": {"area": 5000, "width_length_ratio": 0.12},
+                },
+            },
+            "seepage": {
+                "annotation_id": "demo-seepage-001",
+                "defect_type": "seepage",
+                "source": {"project": "demo", "image_name": "sample-seepage.jpg"},
+                "agent_annotation": {
+                    "label": "seepage",
+                    "bbox": [60, 40, 210, 180],
+                    "attributes": {"wetness_index": 0.34, "connected_components": 7},
+                },
+                "human_annotation": {
+                    "label": "seepage",
+                    "bbox": [60, 40, 210, 180],
+                    "attributes": {"wetness_index": 0.62, "connected_components": 3},
+                },
+            },
+        },
+    }
 
 
 @router.post("/governance/arbitration/evaluate")

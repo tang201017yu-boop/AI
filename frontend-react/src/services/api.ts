@@ -222,6 +222,40 @@ export const annotationApi = {
     api.get(`/annotation/projects/${projectId}/export/ndjson`, { responseType: 'blob' }),
   getStatistics: (projectId: string) =>
     api.get(`/annotation/projects/${projectId}/statistics`),
+  /**
+   * 生成数据集新版本（Roboflow 风格）：
+   * 将当前标注项目切分为 train/val(/test)，写入 data/datasets/<dataset_name>/，并生成 data.yaml。
+   * 后端会把版本元数据回写到 project.json 的 versions 数组。
+   */
+  generateVersion: (
+    projectId: string,
+    payload: {
+      dataset_name?: string;
+      val_ratio?: number;
+      test_ratio?: number;
+      seed?: number;
+      overwrite?: boolean;
+      preprocessing?: { resize?: boolean; size?: number };
+      augmentation?: {
+        enabled?: boolean;
+        horizontal_flip?: boolean;
+        vertical_flip?: boolean;
+        rotate?: boolean;
+        scale?: boolean;
+        brightness_contrast?: boolean;
+        hue_saturation?: boolean;
+        blur?: boolean;
+        noise?: boolean;
+        num_augmented?: number;
+      };
+    } = {},
+  ) =>
+    api.post(`/annotation/projects/${projectId}/generate-version`, payload, {
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  /** 列出项目已生成的所有数据集版本 */
+  listVersions: (projectId: string) =>
+    api.get(`/annotation/projects/${projectId}/versions`),
 };
 
 // ============ SAM 智能标注 API ============

@@ -123,8 +123,27 @@ class TrainingService:
         # 磁盘上无权重的旧项目被复用同名时，避免因旧文件误判：权重须不早于实验创建时间（允许时钟偏差）
         if mtime + 120 < start_ts:
             return False
-        # 无可读 csv、仅有本实验开始后写出的权重时，兜底认为已结束（finish 回调漏写但仍写了权重）
-        return csv_max is None
+        # 无可读 csv：仅能依据权重 + 本轮时间兜底
+        if csv_max is None:
+            return True
+
+        # csv 推导轮数 < 配置的 epochs（换机不完整同步、CSV 不完整、或仍为早停快照）；
+        # 若权重文件已静止超过 TRAINING_WEIGHT_STALE_SECONDS（默认 7 天），且进程内也无训练，按「已结束仅状态未写」处理。
+        stale_str = os.getenv("TRAINING_WEIGHT_STALE_SECONDS", "").strip()
+        default_stale = 86400 * 7
+        try:
+            stale_sec = float(stale_str) if stale_str else default_stale
+        except ValueError:
+            stale_sec = default_stale
+        if stale_sec > 0 and (time.time() - mtime) >= stale_sec:
+            logger.info(
+                "[训练] 僵尸训练中: csv_max=%s < epochs=%s，但权重已 %.0f 秒未更新，按已完成校对",
+                csv_max,
+                expected_epochs,
+                time.time() - mtime,
+            )
+            return True
+        return False
 
     def _is_task_active_in_yolo_engine(self, task_id: str) -> bool:
         try:

@@ -26,6 +26,10 @@ interface Props {
   onToolChange: (tool: AnnotationTool) => void;
   onClassChange: (className: string) => void;
   onAddClass?: (className: string) => void;
+  /** 重命名类别（同时同步更新所有引用此类别的标注与当前选中类别） */
+  onRenameClass?: (oldName: string, newName: string) => void;
+  /** 删除类别（同时清除所有引用此类别的标注的类别归属） */
+  onRemoveClass?: (className: string) => void;
   onAutoLabel: () => void;
   onDetectAll?: () => void;
   detectAllModel?: string;
@@ -67,6 +71,8 @@ export const AnnotationToolbar: React.FC<Props> = ({
   onToolChange,
   onClassChange,
   onAddClass,
+  onRenameClass,
+  onRemoveClass,
   onAutoLabel,
   onDetectAll,
   detectAllModel = 'yolo11n.pt',
@@ -200,10 +206,19 @@ export const AnnotationToolbar: React.FC<Props> = ({
       {/* 分隔线 */}
       <div style={{ width: '1px', height: '28px', background: line }} />
 
-      {/* 类别选择（弹窗必须放在 position:relative 内部，否则 absolute 会相对整页定位，看起来像「加不了类别」） */}
+      {/* 类别选择 + 类别管理（增删改查）。弹窗必须放在 position:relative 内部，否则 absolute 会相对整页定位 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <label style={{ fontSize: '13px', color: fgMuted, fontWeight: 500 }}>类别:</label>
-        <div ref={classPickerRef} style={{ position: 'relative', zIndex: showAddClass ? 50 : undefined }}>
+        <div
+          ref={classPickerRef}
+          style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            zIndex: showAddClass ? 50 : undefined,
+          }}
+        >
           <select
             value={classes.includes(currentClass) ? currentClass : ''}
             onChange={(e) => onClassChange(e.target.value)}
@@ -223,25 +238,30 @@ export const AnnotationToolbar: React.FC<Props> = ({
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
+          {/* 管理按钮：放在 select 外侧，避免与原生下拉箭头重叠 */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               setShowAddClass((v) => !v);
             }}
+            title="管理类别（新增 / 重命名 / 删除）"
+            aria-label="管理类别"
             style={{
-              position: 'absolute',
-              right: '2px',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              border: 'none',
-              background: 'transparent',
+              width: '28px',
+              height: '28px',
+              border: `1px solid ${line}`,
+              borderRadius: '6px',
+              background: surface2,
+              color: fg,
               cursor: 'pointer',
               fontSize: '16px',
-              color: fgMuted,
-              padding: '4px',
+              lineHeight: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
             }}
-            title="添加新类别"
           >
             +
           </button>
@@ -249,62 +269,175 @@ export const AnnotationToolbar: React.FC<Props> = ({
           {showAddClass && (
             <div
               role="dialog"
-              aria-label="添加新类别"
+              aria-label="类别管理"
               style={{
                 position: 'absolute',
                 top: '100%',
                 left: 0,
                 marginTop: '6px',
-                padding: '8px',
+                padding: '10px',
                 background: surface,
                 border: `1px solid ${line}`,
-                borderRadius: '6px',
+                borderRadius: '8px',
                 boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
                 zIndex: 2000,
                 display: 'flex',
-                gap: '6px',
-                alignItems: 'center',
-                whiteSpace: 'nowrap',
+                flexDirection: 'column',
+                gap: '8px',
+                minWidth: '260px',
+                maxWidth: '320px',
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <input
-                type="text"
-                value={newClassName}
-                onChange={(e) => setNewClassName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddClass();
-                  }
-                }}
-                placeholder="新类别名"
-                autoFocus
+              {/* 新增 */}
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={newClassName}
+                  onChange={(e) => setNewClassName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddClass();
+                    }
+                  }}
+                  placeholder="新类别名"
+                  autoFocus
+                  style={{
+                    flex: 1,
+                    padding: '6px 10px',
+                    border: `1px solid ${line}`,
+                    borderRadius: '4px',
+                    fontSize: '13px',
+                    background: studio ? '#1e1e1e' : '#fff',
+                    color: fg,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAddClass()}
+                  style={{
+                    padding: '6px 12px',
+                    border: 'none',
+                    borderRadius: '4px',
+                    background: '#3b82f6',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                  }}
+                >
+                  添加
+                </button>
+              </div>
+
+              {/* 已有类别列表（查 / 改 / 删） */}
+              <div
                 style={{
-                  padding: '6px 10px',
-                  border: `1px solid ${line}`,
-                  borderRadius: '4px',
-                  fontSize: '13px',
-                  width: '140px',
-                  background: studio ? '#1e1e1e' : '#fff',
-                  color: fg,
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => handleAddClass()}
-                style={{
-                  padding: '6px 10px',
-                  border: 'none',
-                  borderRadius: '4px',
-                  background: '#3b82f6',
-                  color: '#fff',
-                  cursor: 'pointer',
-                  fontSize: '13px',
+                  borderTop: `1px solid ${line}`,
+                  paddingTop: '8px',
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
                 }}
               >
-                添加
-              </button>
+                {classes.length === 0 ? (
+                  <span style={{ fontSize: '12px', color: fgMuted }}>暂无类别，先在上方添加</span>
+                ) : (
+                  classes.map((c) => (
+                    <div
+                      key={c}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '4px 6px',
+                        borderRadius: '4px',
+                        background: studio ? '#1e1e1e' : '#f8fafc',
+                      }}
+                    >
+                      <span
+                        aria-hidden
+                        style={{
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '2px',
+                          background: colorForClassName(c),
+                          flex: 'none',
+                        }}
+                      />
+                      <span
+                        style={{
+                          flex: 1,
+                          fontSize: '13px',
+                          color: fg,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={c}
+                      >
+                        {c}
+                      </span>
+                      <button
+                        type="button"
+                        title="重命名"
+                        aria-label={`重命名类别 ${c}`}
+                        onClick={() => {
+                          if (!onRenameClass) {
+                            alert('当前页面未启用「重命名类别」');
+                            return;
+                          }
+                          const next = window.prompt(`重命名类别「${c}」为：`, c);
+                          if (next == null) return;
+                          const trimmed = next.trim();
+                          if (!trimmed || trimmed === c) return;
+                          if (classes.includes(trimmed)) {
+                            alert(`类别「${trimmed}」已存在`);
+                            return;
+                          }
+                          onRenameClass(c, trimmed);
+                        }}
+                        style={{
+                          border: `1px solid ${line}`,
+                          background: 'transparent',
+                          color: fg,
+                          borderRadius: '4px',
+                          padding: '2px 6px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        改名
+                      </button>
+                      <button
+                        type="button"
+                        title="删除"
+                        aria-label={`删除类别 ${c}`}
+                        onClick={() => {
+                          if (!onRemoveClass) {
+                            alert('当前页面未启用「删除类别」');
+                            return;
+                          }
+                          onRemoveClass(c);
+                        }}
+                        style={{
+                          border: `1px solid ${line}`,
+                          background: 'transparent',
+                          color: '#ef4444',
+                          borderRadius: '4px',
+                          padding: '2px 6px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -656,40 +789,77 @@ export const AnnotationToolbar: React.FC<Props> = ({
             const col = colorForClassName(c);
             const active = c === currentClass;
             return (
-              <button
+              <span
                 key={`${c}-${i}`}
-                type="button"
-                onClick={() => onClassChange(c)}
-                title={i < 9 ? `快捷键 ${i + 1}` : c}
+                className="annot-chip"
                 style={{
-                  padding: '4px 10px',
+                  position: 'relative',
+                  display: 'inline-flex',
+                  alignItems: 'stretch',
                   border: active ? `2px solid ${col}` : `1px solid ${line}`,
                   borderRadius: '6px',
                   background: active ? `${col}18` : surface,
-                  cursor: 'pointer',
-                  fontSize: '12px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontWeight: active ? 600 : 500,
-                  color: fg,
+                  overflow: 'hidden',
                 }}
               >
-                {i < 9 && (
-                  <span style={{
-                    fontSize: '10px',
-                    background: '#1e293b',
-                    color: '#fff',
-                    borderRadius: '4px',
-                    padding: '0 4px',
-                    fontFamily: 'monospace',
-                  }}>
-                    {i + 1}
-                  </span>
+                <button
+                  type="button"
+                  onClick={() => onClassChange(c)}
+                  title={i < 9 ? `快捷键 ${i + 1}` : c}
+                  style={{
+                    padding: '4px 10px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontWeight: active ? 600 : 500,
+                    color: fg,
+                  }}
+                >
+                  {i < 9 && (
+                    <span style={{
+                      fontSize: '10px',
+                      background: '#1e293b',
+                      color: '#fff',
+                      borderRadius: '4px',
+                      padding: '0 4px',
+                      fontFamily: 'monospace',
+                    }}>
+                      {i + 1}
+                    </span>
+                  )}
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: col }} />
+                  {c}
+                </button>
+                {onRemoveClass && (
+                  <button
+                    type="button"
+                    aria-label={`删除类别 ${c}`}
+                    title={`删除类别「${c}」`}
+                    className="annot-chip-del"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveClass(c);
+                    }}
+                    style={{
+                      width: '20px',
+                      border: 'none',
+                      borderLeft: `1px solid ${line}`,
+                      background: 'transparent',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      lineHeight: 1,
+                      padding: 0,
+                    }}
+                  >
+                    ×
+                  </button>
                 )}
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: col }} />
-                {c}
-              </button>
+              </span>
             );
           })}
         </div>
@@ -709,8 +879,9 @@ export const AnnotationToolbar: React.FC<Props> = ({
               type="checkbox"
               checked={autoClassifyOnBox}
               onChange={(e) => onAutoClassifyChange(e.target.checked)}
+              title="仅在『当前类别』为空时生效；已经手动选了类别会被视为最终意图，不会被 YOLO 覆盖"
             />
-            框选后 YOLO 识别类别
+            框选后 YOLO 识别类别（仅当未选类别时）
           </label>
         )}
       </div>

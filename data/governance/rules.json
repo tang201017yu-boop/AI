@@ -1,0 +1,50 @@
+[
+  {
+    "id": "R_crack_001",
+    "name": "裂缝宽长比",
+    "description": "裂缝目标应满足细长形态约束，用于物理合法性判定。",
+    "content": "defect_type=crack; metric=width_length_ratio; operator=<=; threshold=0.08",
+    "tags": [
+      "crack",
+      "physical",
+      "arbitration"
+    ],
+    "version": "1.0.0",
+    "status": "published",
+    "createdBy": "system",
+    "createdAt": "2026-05-07T15:18:00.421601",
+    "updatedAt": "2026-05-07T15:18:00.421601"
+  },
+  {
+    "id": "R_crack_002",
+    "name": "裂缝最小像素面积",
+    "description": "过滤过小疑似噪声目标。",
+    "content": "defect_type=crack; metric=area; operator=>=; threshold=180",
+    "tags": [
+      "crack",
+      "area",
+      "arbitration"
+    ],
+    "version": "1.0.0",
+    "status": "published",
+    "createdBy": "system",
+    "createdAt": "2026-05-07T15:18:00.421601",
+    "updatedAt": "2026-05-07T15:18:00.421601"
+  },
+  {
+    "id": "R_seep_001",
+    "name": "渗水湿润指数下限",
+    "description": "渗水区域需要达到湿润指数阈值。",
+    "content": "defect_type=seepage; metric=wetness_index; operator=>=; threshold=0.45",
+    "tags": [
+      "seepage",
+      "wetness",
+      "arbitration"
+    ],
+    "version": "1.0.0",
+    "status": "published",
+    "createdBy": "system",
+    "createdAt": "2026-05-07T15:18:00.421601",
+    "updatedAt": "2026-05-07T15:18:00.421601"
+  }
+]

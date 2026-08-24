@@ -13,5 +13,9 @@ export const rulesApi = {
     api.put<ApiResponse<RuleDetail>>(`/governance/rules/${id}`, body),
   history: (id: string) =>
     api.get<ApiResponse<{ versions: RuleVersionEntry[] }>>(`/governance/rules/${id}/versions`),
+  publish: (id: string, comment?: string) =>
+    api.post<ApiResponse<RuleDetail>>(`/governance/rules/${id}/publish`, { comment }),
+  archive: (id: string, comment?: string) =>
+    api.post<ApiResponse<RuleDetail>>(`/governance/rules/${id}/archive`, { comment }),
   delete: (id: string) => api.delete<ApiResponse<void>>(`/governance/rules/${id}`),
 };

@@ -1,0 +1,41 @@
+[
+  {
+    "user_id": "u_admin",
+    "username": "admin",
+    "salt": "476ef8f88a1b94a122eb4db9173838ca",
+    "password_hash": "033ba8babc362d2ba82f2a8d7d19629bc0bf5d11ca84320aa3426947f184b9a1",
+    "roles": [
+      "admin"
+    ],
+    "hospital_id": "h_001",
+    "department_id": null,
+    "disabled": false,
+    "created_at": "2026-05-09T09:12:01.736453"
+  },
+  {
+    "user_id": "u_doctor",
+    "username": "doctor_a",
+    "salt": "e84e4b034efd1042c5527ceef74c28f6",
+    "password_hash": "8b247d7ee25b95cd50bc9f1cb0818a385010335349449e813959d24da73ff6ed",
+    "roles": [
+      "doctor"
+    ],
+    "hospital_id": "h_001",
+    "department_id": "d_001",
+    "disabled": false,
+    "created_at": "2026-05-09T09:12:01.797365"
+  },
+  {
+    "user_id": "u_qc",
+    "username": "qc_lead",
+    "salt": "10e0ee2c3d49fb2e856d6b32986bc73d",
+    "password_hash": "c11fb3380456dc1671ef3e5a2ff4c139a640fedeca34b459922836e409697d35",
+    "roles": [
+      "quality_control"
+    ],
+    "hospital_id": "h_001",
+    "department_id": null,
+    "disabled": false,
+    "created_at": "2026-05-09T09:12:01.857720"
+  }
+]

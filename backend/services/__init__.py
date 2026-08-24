@@ -5,6 +5,7 @@ from backend.modules.data_preparation.dataset_service import dataset_service
 from backend.modules.data_preparation.annotation_service import AnnotationService as _AnnotationService
 from backend.modules.solutions.solutions_service import solutions_service as _solutions_service
 from backend.services.arbitration_service import arbitration_service
+from backend.services.rule_service import rule_service
 from backend.services.supervision_service import supervision_service
 from backend.services.yolo_service import yolo_service
 
@@ -195,6 +196,7 @@ __all__ = [
     'dataset_service',
     'annotation_service',
     'arbitration_service',
+    'rule_service',
     'solutions_service',
     'supervision_service',
     'yolo_service'
